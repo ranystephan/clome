@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clome — Features</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,400;0,500;0,700;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --copper: #B5613F;
+    --copper-light: #D4845E;
+    --copper-glow: rgba(181, 97, 63, 0.15);
+    --dark: #06060A;
+    --surface: #0C0C12;
+    --surface-elevated: #10101A;
+    --border: #1C1C28;
+    --border-hover: #2A2A3A;
+    --text-primary: #E8E6E3;
+    --text-secondary: #7A7A8E;
+    --text-dim: #3A3A4E;
+    --font-display: 'Syne', sans-serif;
+    --font-body: 'DM Sans', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  *, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    background: var(--dark);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  .features-section {
+    padding: 10rem 0 12rem;
+    position: relative;
+  }
+
+  /* ——— Section Intro ——— */
+
+  .features-intro {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 4rem;
+    margin-bottom: 10rem;
+    position: relative;
+  }
+
+  .features-label {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--copper);
+    margin-bottom: 2.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .features-label::before {
+    content: '';
+    display: block;
+    width: 2rem;
+    height: 1px;
+    background: var(--copper);
+  }
+
+  .features-heading {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: clamp(3.5rem, 7vw, 6.5rem);
+    line-height: 1.05;
+    letter-spacing: -0.03em;
+    margin-bottom: 3rem;
+    max-width: 700px;
+  }
+
+  .features-heading .dim {
+    color: var(--text-dim);
+    transition: color 0.6s ease;
+  }
+
+  .features-heading:hover .dim {
+    color: var(--text-secondary);
+  }
+
+  .features-description {
+    font-size: 1.15rem;
+    line-height: 1.7;
+    color: var(--text-secondary);
+    max-width: 520px;
+    font-weight: 400;
+  }
+
+  /* ——— Decorative line ——— */
+
+  .features-intro::after {
+    content: '';
+    position: absolute;
+    right: 4rem;
+    top: 0;
+    width: 1px;
+    height: 100%;
+    background: linear-gradient(to bottom, transparent, var(--border) 30%, var(--border) 70%, transparent);
+  }
+
+  /* ——— Bento Grid ——— */
+
+  .features-grid {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 4rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto;
+    gap: 1.5rem;
+  }
+
+  /* Card sizing: large cards span more height via aspect-ratio tricks */
+  .feature-card:nth-child(1) { grid-row: span 2; }
+  .feature-card:nth-child(4) { grid-row: span 2; }
+
+  /* Shift right column down for stagger */
+  .feature-card:nth-child(2) {
+    margin-top: 6rem;
+  }
+
+  /* ——— Feature Card ——— */
+
+  .feature-card {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+    padding: 3rem 2.5rem;
+    overflow: hidden;
+    transition: border-color 0.5s ease, transform 0.5s cubic-bezier(0.23, 1, 0.32, 1), box-shadow 0.5s ease;
+    cursor: default;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+  }
+
+  .feature-card:hover {
+    border-color: var(--border-hover);
+    transform: translateY(-4px);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4), 0 0 80px var(--copper-glow);
+  }
+
+  /* ——— Giant Background Number ——— */
+
+  .feature-number {
+    position: absolute;
+    top: -0.15em;
+    right: -0.05em;
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: clamp(10rem, 18vw, 18rem);
+    line-height: 1;
+    color: transparent;
+    -webkit-text-stroke: 1px var(--border);
+    user-select: none;
+    pointer-events: none;
+    transition: -webkit-text-stroke-color 0.6s ease, opacity 0.6s ease;
+    opacity: 0.5;
+  }
+
+  /* Tall cards get even bigger numbers */
+  .feature-card:nth-child(1) .feature-number,
+  .feature-card:nth-child(4) .feature-number {
+    font-size: clamp(14rem, 24vw, 24rem);
+    top: -0.1em;
+  }
+
+  .feature-card:hover .feature-number {
+    -webkit-text-stroke-color: var(--copper);
+    opacity: 0.3;
+  }
+
+  /* ——— Copper accent line that grows on hover ——— */
+
+  .feature-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 2.5rem;
+    width: 2rem;
+    height: 2px;
+    background: var(--copper);
+    transition: width 0.6s cubic-bezier(0.23, 1, 0.32, 1);
+  }
+
+  .feature-card:hover::before {
+    width: calc(100% - 5rem);
+  }
+
+  /* ——— Corner glow on hover ——— */
+
+  .feature-card::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 200px;
+    height: 200px;
+    background: radial-gradient(circle at top left, var(--copper-glow), transparent 70%);
+    opacity: 0;
+    transition: opacity 0.6s ease;
+    pointer-events: none;
+  }
+
+  .feature-card:hover::after {
+    opacity: 1;
+  }
+
+  /* ——— Card Content ——— */
+
+  .feature-content {
+    position: relative;
+    z-index: 2;
+  }
+
+  .feature-title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 1.6rem;
+    letter-spacing: -0.02em;
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+    transition: color 0.4s ease;
+  }
+
+  .feature-card:hover .feature-title {
+    color: #fff;
+  }
+
+  .feature-body {
+    font-family: var(--font-body);
+    font-size: 0.95rem;
+    line-height: 1.7;
+    color: var(--text-secondary);
+    max-width: 400px;
+    transition: color 0.4s ease;
+  }
+
+  .feature-card:hover .feature-body {
+    color: #9A9AB0;
+  }
+
+  /* ——— Tag pill ——— */
+
+  .feature-tag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--copper-light);
+    border: 1px solid rgba(181, 97, 63, 0.25);
+    border-radius: 100px;
+    padding: 0.35rem 0.9rem;
+    margin-bottom: 1.25rem;
+    transition: background 0.4s ease, border-color 0.4s ease;
+  }
+
+  .feature-card:hover .feature-tag {
+    background: rgba(181, 97, 63, 0.08);
+    border-color: rgba(181, 97, 63, 0.4);
+  }
+
+  /* ——— Special styling for tall cards ——— */
+
+  .feature-card--tall {
+    min-height: 480px;
+    padding: 3.5rem 3rem;
+  }
+
+  .feature-card--tall .feature-title {
+    font-size: 2rem;
+  }
+
+  .feature-card--tall .feature-body {
+    font-size: 1rem;
+    max-width: 440px;
+  }
+
+  /* ——— Divider line between features in a column ——— */
+
+  .feature-card--regular {
+    min-height: 260px;
+  }
+
+  /* ——— Responsive ——— */
+
+  @media (max-width: 900px) {
+    .features-grid {
+      grid-template-columns: 1fr;
+      padding: 0 2rem;
+    }
+
+    .feature-card:nth-child(1),
+    .feature-card:nth-child(4) {
+      grid-row: span 1;
+    }
+
+    .feature-card:nth-child(2) {
+      margin-top: 0;
+    }
+
+    .features-intro {
+      padding: 0 2rem;
+      margin-bottom: 5rem;
+    }
+
+    .features-intro::after {
+      display: none;
+    }
+
+    .feature-number {
+      font-size: 10rem !important;
+    }
+
+    .features-heading {
+      font-size: 3rem;
+    }
+  }
+
+  /* ——— Subtle scanline texture on the section ——— */
+
+  .features-section::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      to bottom,
+      transparent,
+      transparent 2px,
+      rgba(6, 6, 10, 0.03) 2px,
+      rgba(6, 6, 10, 0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .features-section > * {
+    position: relative;
+    z-index: 1;
+  }
+</style>
+</head>
+<body>
+
+<section class="features-section">
+
+  <!-- ——— Intro ——— -->
+  <div class="features-intro">
+    <div class="features-label">Features</div>
+    <h2 class="features-heading">
+      Not another<br>
+      <span class="dim">Electron wrapper.</span>
+    </h2>
+    <p class="features-description">
+      Every layer — terminal, editor, renderer — is native code talking directly
+      to your hardware. No JavaScript runtime. No web views.
+    </p>
+  </div>
+
+  <!-- ——— Grid ——— -->
+  <div class="features-grid">
+
+    <!-- 01 — GPU Terminal (tall, left) -->
+    <div class="feature-card feature-card--tall">
+      <div class="feature-number">01</div>
+      <div class="feature-content">
+        <div class="feature-tag">Metal</div>
+        <h3 class="feature-title">GPU Terminal</h3>
+        <p class="feature-body">
+          Full terminal emulation via libghostty with Metal rendering.
+          Sub-millisecond latency from keystroke to pixel.
+        </p>
+      </div>
+    </div>
+
+    <!-- 02 — Code Editor (regular, right, pushed down) -->
+    <div class="feature-card feature-card--regular">
+      <div class="feature-number">02</div>
+      <div class="feature-content">
+        <div class="feature-tag">CoreText</div>
+        <h3 class="feature-title">Code Editor</h3>
+        <p class="feature-body">
+          CoreText rendering, rope-backed buffer, LSP completions and diagnostics,
+          multi-cursor, find &amp; replace with regex.
+        </p>
+      </div>
+    </div>
+
+    <!-- 03 — 30+ Languages (regular, right) -->
+    <div class="feature-card feature-card--regular">
+      <div class="feature-number">03</div>
+      <div class="feature-content">
+        <div class="feature-tag">LSP</div>
+        <h3 class="feature-title">30+ Languages</h3>
+        <p class="feature-body">
+          Syntax highlighting and LSP support for Swift, Rust, Python,
+          TypeScript, Go, Zig, C++, LaTeX, and more.
+        </p>
+      </div>
+    </div>
+
+    <!-- 04 — File Explorer (tall, left) -->
+    <div class="feature-card feature-card--tall">
+      <div class="feature-number">04</div>
+      <div class="feature-content">
+        <div class="feature-tag">Git</div>
+        <h3 class="feature-title">File Explorer</h3>
+        <p class="feature-body">
+          Project tree with live git status, inline rename, brand-colored
+          file type icons, and drag-drop support.
+        </p>
+      </div>
+    </div>
+
+    <!-- 05 — Notebooks (regular, right) -->
+    <div class="feature-card feature-card--regular">
+      <div class="feature-number">05</div>
+      <div class="feature-content">
+        <div class="feature-tag">Jupyter</div>
+        <h3 class="feature-title">Notebooks</h3>
+        <p class="feature-body">
+          Native Jupyter .ipynb rendering and execution. Markdown cells,
+          code cells, image outputs. No browser needed.
+        </p>
+      </div>
+    </div>
+
+    <!-- 06 — Workspaces (regular, right) -->
+    <div class="feature-card feature-card--regular">
+      <div class="feature-number">06</div>
+      <div class="feature-content">
+        <div class="feature-tag">SQLite</div>
+        <h3 class="feature-title">Workspaces</h3>
+        <p class="feature-body">
+          Binary split panes, multi-tab surfaces, session persistence
+          via SQLite. Your layout survives restarts.
+        </p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+</body>
+</html>

@@ -35,7 +35,7 @@ Clome is a native macOS development environment built with Swift and Metal, feat
 brew install zig xcodegen
 
 # Clone the repository
-git clone --recursive https://github.com/user/clome.git
+git clone --recursive https://github.com/ranystephan/clome.git
 cd clome
 
 # Build libghostty (only needed once)
@@ -48,7 +48,7 @@ xcodebuild -project Clome.xcodeproj -scheme Clome -configuration Debug build
 
 ## Download
 
-Download the latest release from the [Releases](https://github.com/user/clome/releases) page.
+Download the latest release from the [Releases](https://github.com/ranystephan/clome/releases) page.
 
 ## Contributing
 
