@@ -54,4 +54,5 @@ jobs:
           xcodebuild -project Clome.xcodeproj -scheme Clome \
             -configuration Debug \
             -derivedDataPath build/DerivedData \
+            SWIFT_STRICT_CONCURRENCY=minimal \
             build
