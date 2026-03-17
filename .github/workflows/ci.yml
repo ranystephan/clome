@@ -39,6 +39,13 @@ jobs:
         env:
           MACOSX_DEPLOYMENT_TARGET: "14.0"
 
+      - name: Fix xcframework paths
+        run: |
+          XC="vendor/ghostty/macos/GhosttyKit.xcframework"
+          if [ ! -d "$XC/macos-arm64_x86_64" ] && [ -d "$XC/macos-arm64" ]; then
+            ln -s macos-arm64 "$XC/macos-arm64_x86_64"
+          fi
+
       - name: Generate Xcode project
         run: xcodegen generate
 
