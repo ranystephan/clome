@@ -55,6 +55,7 @@ jobs:
           xcodebuild -project Clome.xcodeproj -scheme Clome \
             -configuration Release \
             -derivedDataPath build/DerivedData \
+            SWIFT_STRICT_CONCURRENCY=minimal \
             build
 
       - name: Package DMG and ZIP
