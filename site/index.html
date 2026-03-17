@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clome — AI-Native Development Environment</title>
+  <meta name="description" content="A native, GPU-accelerated development environment built for the agentic era. macOS.">
+  <meta name="theme-color" content="#1C1B1F">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <meta property="og:title" content="Clome — AI-Native Development Environment">
+  <meta property="og:description" content="A native, GPU-accelerated development environment built for the agentic era.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://clome.dev">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500&family=Geist+Mono:wght@400&display=swap" rel="stylesheet">
+
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg:       #1C1B1F;
+      --bg-2:     #232228;
+      --bg-3:     #2A292F;
+      --border:   #333238;
+      --text:     #EDEBE7;
+      --text-2:   #9D9B95;
+      --text-3:   #5E5C58;
+      --copper:   #D4724A;
+      --copper-2: #E8956E;
+      --serif:    'Instrument Serif', Georgia, serif;
+      --sans:     'Geist', -apple-system, sans-serif;
+      --mono:     'Geist Mono', 'SF Mono', monospace;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* ═══ GRAIN OVERLAY ═══ */
+    #grain {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      pointer-events: none;
+      opacity: 0.045;
+      mix-blend-mode: screen;
+    }
+
+    ::selection { background: var(--copper); color: #fff; }
+    a { color: inherit; text-decoration: none; }
+
+    /* ═══ NAV ═══ */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      padding: 20px 48px;
+      display: flex; align-items: center; justify-content: space-between;
+      transition: all 0.5s;
+    }
+    nav.scrolled {
+      background: rgba(28, 27, 31, 0.85);
+      backdrop-filter: blur(20px);
+      padding: 12px 48px;
+    }
+    .nav-left { display: flex; align-items: center; gap: 14px; }
+    .nav-left img { width: 30px; height: 30px; border-radius: 8px; }
+    .nav-left span { font-family: var(--sans); font-size: 17px; font-weight: 500; letter-spacing: -0.01em; }
+    .nav-center {
+      display: flex; align-items: center; gap: 0;
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      padding: 4px;
+    }
+    .nav-center a {
+      padding: 8px 20px; font-size: 13px; color: var(--text-2);
+      border-radius: 100px; transition: all 0.25s;
+    }
+    .nav-center a:hover { color: var(--text); background: var(--bg-3); }
+    .nav-right { display: flex; align-items: center; gap: 10px; }
+    .nav-btn {
+      padding: 9px 22px; font-size: 13px; font-weight: 500;
+      border-radius: 100px; border: 1px solid var(--border);
+      color: var(--text-2); transition: all 0.25s;
+      font-family: var(--sans);
+    }
+    .nav-btn:hover { color: var(--text); border-color: var(--text-3); }
+    .nav-btn.primary {
+      background: var(--copper); border-color: var(--copper);
+      color: #fff;
+    }
+    .nav-btn.primary:hover {
+      background: var(--copper-2); border-color: var(--copper-2);
+    }
+
+    /* ═══ HERO ═══ */
+    .hero {
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      text-align: center;
+      padding: 120px 48px 80px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-label {
+      font-size: 15px;
+      color: var(--text-3);
+      margin-bottom: 32px;
+      letter-spacing: 0.02em;
+    }
+
+    .hero h1 {
+      font-family: var(--serif);
+      font-size: clamp(52px, 8vw, 96px);
+      font-weight: 400;
+      line-height: 1.05;
+      letter-spacing: -0.02em;
+      margin-bottom: 32px;
+      max-width: 800px;
+    }
+
+    .hero-sub {
+      font-size: 17px;
+      color: var(--text-2);
+      font-weight: 300;
+      max-width: 520px;
+      line-height: 1.7;
+      margin-bottom: 48px;
+    }
+
+    .hero-cta {
+      padding: 14px 36px;
+      font-size: 15px; font-weight: 500;
+      border-radius: 100px;
+      border: 1px solid var(--copper);
+      background: transparent;
+      color: var(--copper-2);
+      font-family: var(--sans);
+      cursor: pointer;
+      transition: all 0.3s;
+      display: inline-flex; align-items: center; gap: 10px;
+    }
+    .hero-cta:hover {
+      background: var(--copper);
+      color: #fff;
+      box-shadow: 0 0 40px rgba(212,114,74,0.2);
+    }
+
+    /* hero canvas — DNA helix */
+    #helix-canvas {
+      position: absolute;
+      bottom: -40px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 900px;
+      height: 440px;
+      pointer-events: none;
+    }
+
+    .hero-footnote {
+      position: absolute; bottom: 40px;
+      font-size: 12px; color: var(--text-3);
+      letter-spacing: 0.04em;
+      font-family: var(--mono);
+    }
+
+    /* ═══ STRIP ═══ */
+    .strip {
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 18px 0;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .strip-track {
+      display: inline-flex;
+      animation: marquee 35s linear infinite;
+    }
+    .strip-item {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text-3);
+      padding: 0 36px;
+      display: inline-flex; align-items: center; gap: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .strip-item .d {
+      width: 4px; height: 4px; border-radius: 50%;
+      background: var(--copper);
+      opacity: 0.5;
+    }
+    @keyframes marquee {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(-50%); }
+    }
+
+    /* ═══ DOT GRID SECTION ═══ */
+    .dot-section {
+      position: relative;
+      padding: 200px 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .dot-grid {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+    .dot-section h2 {
+      font-family: var(--serif);
+      font-size: clamp(36px, 5vw, 60px);
+      font-weight: 400;
+      text-align: center;
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .dot-section h2 .accent {
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--copper);
+      display: inline-block;
+      flex-shrink: 0;
+    }
+
+    /* ═══ FEATURES ═══ */
+    .features {
+      padding: 0 48px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .features-header {
+      margin-bottom: 80px;
+    }
+    .features-header .label {
+      font-size: 13px;
+      color: var(--text-3);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-family: var(--mono);
+      margin-bottom: 20px;
+    }
+    .features-header h2 {
+      font-family: var(--serif);
+      font-size: clamp(32px, 4vw, 52px);
+      font-weight: 400;
+      line-height: 1.15;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 0;
+    }
+    .feat {
+      padding: 48px 40px;
+      border-top: 1px solid var(--border);
+      position: relative;
+      transition: background 0.4s;
+    }
+    .feat:nth-child(3n+1) { border-left: none; }
+    .feat:nth-child(3n+2) { border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
+    .feat:nth-child(3n+3) { border-right: none; }
+    .feat:last-child, .feat:nth-last-child(2), .feat:nth-last-child(3) {
+      border-bottom: 1px solid var(--border);
+    }
+    .feat:hover { background: var(--bg-2); }
+    .feat-num {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-3);
+      margin-bottom: 28px;
+    }
+    .feat h3 {
+      font-family: var(--serif);
+      font-size: 22px;
+      font-weight: 400;
+      margin-bottom: 12px;
+    }
+    .feat p {
+      font-size: 14px;
+      color: var(--text-2);
+      line-height: 1.65;
+      font-weight: 300;
+    }
+
+    /* ═══ ARCH SECTION ═══ */
+    .arch {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      min-height: 90vh;
+      border-top: 1px solid var(--border);
+    }
+    .arch-left {
+      padding: 120px 80px 120px 48px;
+      display: flex; flex-direction: column; justify-content: center;
+      border-right: 1px solid var(--border);
+    }
+    .arch-left .label {
+      font-size: 13px;
+      color: var(--text-3);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-family: var(--mono);
+      margin-bottom: 20px;
+    }
+    .arch-left h2 {
+      font-family: var(--serif);
+      font-size: clamp(32px, 4vw, 52px);
+      font-weight: 400;
+      line-height: 1.15;
+      margin-bottom: 28px;
+    }
+    .arch-left p {
+      font-size: 16px;
+      color: var(--text-2);
+      line-height: 1.7;
+      max-width: 440px;
+      font-weight: 300;
+      margin-bottom: 16px;
+    }
+    .arch-right {
+      padding: 120px 48px 120px 80px;
+      display: flex; flex-direction: column; justify-content: center;
+    }
+    .arch-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 24px 0;
+      border-bottom: 1px solid var(--border);
+      transition: all 0.3s;
+    }
+    .arch-row:first-child { border-top: 1px solid var(--border); }
+    .arch-row:hover { padding-left: 16px; }
+    .arch-row:hover .ar-name { color: var(--copper-2); }
+    .ar-name { font-size: 16px; font-weight: 400; transition: color 0.3s; }
+    .ar-tech { font-family: var(--mono); font-size: 12px; color: var(--text-3); }
+
+    /* ═══ OSS BANNER ═══ */
+    .oss {
+      padding: 200px 48px;
+      text-align: center;
+      position: relative;
+    }
+    .oss .label {
+      font-size: 13px;
+      color: var(--text-3);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-family: var(--mono);
+      margin-bottom: 20px;
+    }
+    .oss h2 {
+      font-family: var(--serif);
+      font-size: clamp(36px, 5vw, 56px);
+      font-weight: 400;
+      margin-bottom: 16px;
+    }
+    .oss > p {
+      font-size: 17px;
+      color: var(--text-2);
+      font-weight: 300;
+      max-width: 460px;
+      margin: 0 auto 48px;
+      line-height: 1.7;
+    }
+    .oss-card {
+      max-width: 620px;
+      margin: 0 auto;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+      background: var(--bg-2);
+    }
+    .oss-cmd {
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--text-2);
+      background: var(--bg);
+      padding: 16px 24px;
+      border-radius: 10px;
+      text-align: left;
+      margin-bottom: 20px;
+      user-select: all;
+      border: 1px solid var(--border);
+    }
+    .oss-cmd .pr { color: var(--copper); }
+    .oss-btns {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+    }
+    .oss-btn {
+      padding: 10px 22px;
+      font-size: 13px;
+      font-weight: 400;
+      font-family: var(--sans);
+      border-radius: 100px;
+      border: 1px solid var(--border);
+      color: var(--text-2);
+      transition: all 0.25s;
+      display: inline-flex; align-items: center; gap: 8px;
+    }
+    .oss-btn:hover {
+      color: var(--text);
+      border-color: var(--text-3);
+      background: var(--bg-3);
+    }
+
+    /* ═══ FINAL CTA ═══ */
+    .final {
+      text-align: center;
+      padding: 160px 48px 200px;
+      position: relative;
+    }
+    .final::before {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 600px; height: 400px;
+      background: radial-gradient(circle, rgba(212,114,74,0.06) 0%, transparent 60%);
+      pointer-events: none;
+    }
+    .final h2 {
+      font-family: var(--serif);
+      font-size: clamp(44px, 6vw, 80px);
+      font-weight: 400;
+      margin-bottom: 20px;
+    }
+    .final p {
+      font-size: 17px;
+      color: var(--text-2);
+      font-weight: 300;
+      margin-bottom: 48px;
+    }
+
+    /* ═══ FOOTER ═══ */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    footer span {
+      font-size: 12px; color: var(--text-3); font-family: var(--mono);
+    }
+    .f-links { display: flex; gap: 28px; }
+    .f-links a {
+      font-size: 12px; color: var(--text-3);
+      font-family: var(--mono); transition: color 0.2s;
+    }
+    .f-links a:hover { color: var(--text-2); }
+
+    /* ═══ REVEAL ═══ */
+    .rv {
+      opacity: 0; transform: translateY(24px);
+      transition: opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+                  transform 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .rv.vis { opacity: 1; transform: none; }
+    .rv-d1 { transition-delay: 0.1s; }
+    .rv-d2 { transition-delay: 0.2s; }
+    .rv-d3 { transition-delay: 0.3s; }
+
+    /* ═══ RESPONSIVE ═══ */
+    @media (max-width: 900px) {
+      .features-grid { grid-template-columns: 1fr; }
+      .feat { border-left: none !important; border-right: none !important; }
+      .arch { grid-template-columns: 1fr; }
+      .arch-left { border-right: none; border-bottom: 1px solid var(--border); padding: 80px 24px; }
+      .arch-right { padding: 60px 24px; }
+      nav { padding: 16px 24px; }
+      .nav-center { display: none; }
+      .hero, .features, .dot-section, .oss, .final { padding-left: 24px; padding-right: 24px; }
+      footer { padding: 32px 24px; flex-direction: column; gap: 16px; }
+    }
+    @media (max-width: 520px) {
+      .nav-right { gap: 6px; }
+      .nav-btn { padding: 8px 16px; font-size: 12px; }
+      .oss-btns { flex-direction: column; align-items: center; }
+    }
+  </style>
+</head>
+<body>
+<canvas id="grain"></canvas>
+
+<!-- NAV -->
+<nav id="nav">
+  <a href="/" class="nav-left">
+    <img src="logo-dark.png" alt="Clome">
+    <span>Clome</span>
+  </a>
+  <div class="nav-center">
+    <a href="#features">Features</a>
+    <a href="#architecture">Architecture</a>
+    <a href="https://github.com/ranystephan/clome" target="_blank">GitHub</a>
+  </div>
+  <div class="nav-right">
+    <a href="https://github.com/ranystephan/clome" target="_blank" class="nav-btn">Source</a>
+    <a href="https://github.com/ranystephan/clome/releases" class="nav-btn primary">Download</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <p class="hero-label rv">AI-native development environment for macOS</p>
+  <h1 class="rv rv-d1">A New Way to Code<br>Without Limits</h1>
+  <p class="hero-sub rv rv-d2">Native Swift app with a GPU-accelerated terminal, built-in editor, and deep AI integration. No Electron. No compromise.</p>
+  <a href="https://github.com/ranystephan/clome/releases" class="hero-cta rv rv-d3">
+    <svg width="15" height="15" fill="none" viewBox="0 0 16 16"><path d="M8 12L3 7h3.5V2h3v5H13L8 12z" fill="currentColor"/><path d="M2 13v1h12v-1H2z" fill="currentColor"/></svg>
+    Download for macOS
+  </a>
+  <canvas id="helix-canvas"></canvas>
+  <span class="hero-footnote rv">macOS 14.0+ &middot; Apple Silicon &middot; v0.1.0-alpha</span>
+</section>
+
+<!-- STRIP -->
+<div class="strip">
+  <div class="strip-track">
+    <span class="strip-item"><span class="d"></span>Swift + AppKit</span>
+    <span class="strip-item"><span class="d"></span>Metal Rendering</span>
+    <span class="strip-item"><span class="d"></span>libghostty</span>
+    <span class="strip-item"><span class="d"></span>Rope Buffer</span>
+    <span class="strip-item"><span class="d"></span>LSP Protocol</span>
+    <span class="strip-item"><span class="d"></span>CoreText</span>
+    <span class="strip-item"><span class="d"></span>SQLite</span>
+    <span class="strip-item"><span class="d"></span>Zig FFI</span>
+    <span class="strip-item"><span class="d"></span>Tree-sitter</span>
+    <span class="strip-item"><span class="d"></span>Swift + AppKit</span>
+    <span class="strip-item"><span class="d"></span>Metal Rendering</span>
+    <span class="strip-item"><span class="d"></span>libghostty</span>
+    <span class="strip-item"><span class="d"></span>Rope Buffer</span>
+    <span class="strip-item"><span class="d"></span>LSP Protocol</span>
+    <span class="strip-item"><span class="d"></span>CoreText</span>
+    <span class="strip-item"><span class="d"></span>SQLite</span>
+    <span class="strip-item"><span class="d"></span>Zig FFI</span>
+    <span class="strip-item"><span class="d"></span>Tree-sitter</span>
+  </div>
+</div>
+
+<!-- DOT GRID DIVIDER -->
+<section class="dot-section">
+  <canvas class="dot-grid" id="dots1"></canvas>
+  <h2 class="rv">Beyond an editor.<span class="accent"></span>Into the future.</h2>
+</section>
+
+<!-- FEATURES -->
+<section class="features rv" id="features">
+  <div class="features-header">
+    <div class="label">What's inside</div>
+    <h2>Every layer is native code<br>talking to your hardware</h2>
+  </div>
+  <div class="features-grid">
+    <div class="feat">
+      <div class="feat-num">01</div>
+      <h3>GPU Terminal</h3>
+      <p>Full terminal emulation powered by libghostty with Metal rendering. Sub-millisecond latency from keystroke to pixel.</p>
+    </div>
+    <div class="feat">
+      <div class="feat-num">02</div>
+      <h3>Code Editor</h3>
+      <p>CoreText rendering with a rope-backed buffer. LSP completions, diagnostics, go-to-definition, and multi-cursor editing.</p>
+    </div>
+    <div class="feat">
+      <div class="feat-num">03</div>
+      <h3>30+ Languages</h3>
+      <p>Syntax highlighting and language server support for Swift, Rust, Python, TypeScript, Go, Zig, C++, LaTeX, and more.</p>
+    </div>
+    <div class="feat">
+      <div class="feat-num">04</div>
+      <h3>File Explorer</h3>
+      <p>Project tree with real-time git status indicators, inline rename, brand-colored file icons, and drag-drop support.</p>
+    </div>
+    <div class="feat">
+      <div class="feat-num">05</div>
+      <h3>Notebooks &amp; LaTeX</h3>
+      <p>Native Jupyter notebook rendering with kernel execution. LaTeX compilation to PDF. No browser required.</p>
+    </div>
+    <div class="feat">
+      <div class="feat-num">06</div>
+      <h3>Workspaces</h3>
+      <p>Binary split panes, multi-tab surfaces, persistent sessions via SQLite. Your layout survives every restart.</p>
+    </div>
+  </div>
+</section>
+
+<!-- SPACER -->
+<div style="height: 160px;"></div>
+
+<!-- ARCHITECTURE -->
+<section class="arch rv" id="architecture">
+  <div class="arch-left">
+    <div class="label">Architecture</div>
+    <h2>Native all the way down</h2>
+    <p>Every pixel is rendered by AppKit and Metal. The editor uses a rope for O(log n) text operations. The terminal runs through libghostty's Zig-compiled engine.</p>
+    <p style="color: var(--text-3);">No 500MB RAM baseline. No web runtime. A macOS app that respects your machine.</p>
+  </div>
+  <div class="arch-right">
+    <div class="arch-row"><span class="ar-name">Interface</span><span class="ar-tech">Swift 6 + AppKit</span></div>
+    <div class="arch-row"><span class="ar-name">Editor Core</span><span class="ar-tech">CoreText + Rope</span></div>
+    <div class="arch-row"><span class="ar-name">Terminal</span><span class="ar-tech">libghostty (Zig)</span></div>
+    <div class="arch-row"><span class="ar-name">Rendering</span><span class="ar-tech">Metal</span></div>
+    <div class="arch-row"><span class="ar-name">Intelligence</span><span class="ar-tech">LSP + Tree-sitter</span></div>
+    <div class="arch-row"><span class="ar-name">Persistence</span><span class="ar-tech">SQLite</span></div>
+  </div>
+</section>
+
+<!-- OPEN SOURCE -->
+<section class="oss rv" id="source">
+  <div class="label">Open Source</div>
+  <h2>Built in the open</h2>
+  <p>MIT licensed. Read every line, build from source, shape the roadmap. This is your editor too.</p>
+  <div class="oss-card">
+    <div class="oss-cmd"><span class="pr">$</span> git clone --recursive https://github.com/ranystephan/clome.git</div>
+    <div class="oss-btns">
+      <a href="https://github.com/ranystephan/clome" target="_blank" class="oss-btn">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+      <a href="https://github.com/ranystephan/clome/issues" target="_blank" class="oss-btn">Issues</a>
+      <a href="https://github.com/ranystephan/clome/releases" target="_blank" class="oss-btn">Releases</a>
+    </div>
+  </div>
+</section>
+
+<!-- DOT GRID DIVIDER 2 -->
+<section class="dot-section" style="padding: 120px 48px;">
+  <canvas class="dot-grid" id="dots2"></canvas>
+  <h2 class="rv">Code native.<span class="accent"></span>Think different.</h2>
+</section>
+
+<!-- FINAL CTA -->
+<section class="final">
+  <h2 class="rv">Try Clome</h2>
+  <p class="rv rv-d1">Download the alpha. Break things. Tell us what's missing.</p>
+  <div class="rv rv-d2">
+    <a href="https://github.com/ranystephan/clome/releases" class="hero-cta">
+      <svg width="15" height="15" fill="none" viewBox="0 0 16 16"><path d="M8 12L3 7h3.5V2h3v5H13L8 12z" fill="currentColor"/><path d="M2 13v1h12v-1H2z" fill="currentColor"/></svg>
+      Download for macOS
+    </a>
+  </div>
+</section>
+
+<footer>
+  <span>&copy; 2026 Clome</span>
+  <div class="f-links">
+    <a href="https://github.com/ranystephan/clome">Source</a>
+    <a href="https://github.com/ranystephan/clome/releases">Releases</a>
+    <a href="https://github.com/ranystephan/clome/blob/main/LICENSE">MIT License</a>
+  </div>
+</footer>
+
+<script>
+// ── FILM GRAIN ──
+(function() {
+  const g = document.getElementById('grain');
+  const ctx = g.getContext('2d');
+  let w, h;
+
+  function resize() {
+    w = g.width = window.innerWidth;
+    h = g.height = window.innerHeight;
+  }
+  resize();
+  addEventListener('resize', resize);
+
+  let frame = 0;
+  function render() {
+    if (frame++ % 3 !== 0) { requestAnimationFrame(render); return; } // ~20fps for film look
+    const img = ctx.createImageData(w, h);
+    const d = img.data;
+    for (let i = 0, len = d.length; i < len; i += 4) {
+      const v = (Math.random() * 255) | 0;
+      d[i] = d[i+1] = d[i+2] = v;
+      d[i+3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    requestAnimationFrame(render);
+  }
+  render();
+})();
+
+// nav
+const nav = document.getElementById('nav');
+addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 60));
+
+// reveal
+const obs = new IntersectionObserver(es => {
+  es.forEach(e => { if (e.isIntersecting) e.target.classList.add('vis'); });
+}, { threshold: 0.06 });
+document.querySelectorAll('.rv').forEach(el => obs.observe(el));
+
+// ── DNA HELIX CANVAS ──
+(function() {
+  const c = document.getElementById('helix-canvas');
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  let w, h, dpr;
+
+  function resize() {
+    dpr = window.devicePixelRatio || 1;
+    const rect = c.parentElement.getBoundingClientRect();
+    w = 900; h = 440;
+    c.width = w * dpr;
+    c.height = h * dpr;
+    c.style.width = w + 'px';
+    c.style.height = h + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  resize();
+  addEventListener('resize', resize);
+
+  let time = 0;
+  function draw() {
+    ctx.clearRect(0, 0, w, h);
+    const cx = w / 2, cy = h * 0.55;
+    const curves = 14;
+    const maxR = 340;
+
+    for (let i = 0; i < curves; i++) {
+      const phase = (i / curves) * Math.PI * 2 + time * 0.3;
+      const alpha = 0.08 + 0.06 * Math.sin(phase);
+      ctx.beginPath();
+      ctx.strokeStyle = `rgba(212, 114, 74, ${alpha})`;
+      ctx.lineWidth = 0.8;
+
+      for (let t = 0; t <= 200; t++) {
+        const a = (t / 200) * Math.PI * 2;
+        const r = maxR * Math.sin(a * 0.5);
+        const x = cx + r * Math.cos(a + phase);
+        const y = cy + r * 0.6 * Math.sin(a + phase) * Math.cos(a * 0.5);
+        t === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+
+    // center copper dot
+    ctx.beginPath();
+    ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#D4724A';
+    ctx.fill();
+
+    // glow
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, 30);
+    g.addColorStop(0, 'rgba(212,114,74,0.25)');
+    g.addColorStop(1, 'rgba(212,114,74,0)');
+    ctx.beginPath();
+    ctx.arc(cx, cy, 30, 0, Math.PI * 2);
+    ctx.fillStyle = g;
+    ctx.fill();
+
+    time += 0.008;
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
+// ── DOT GRIDS ──
+function drawDots(canvasId) {
+  const c = document.getElementById(canvasId);
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const parent = c.parentElement;
+
+  function render() {
+    const rect = parent.getBoundingClientRect();
+    c.width = rect.width * dpr;
+    c.height = rect.height * dpr;
+    c.style.width = rect.width + 'px';
+    c.style.height = rect.height + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const spacing = 28;
+    const radius = 3;
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const maxDist = Math.max(rect.width, rect.height) * 0.5;
+
+    for (let x = spacing; x < rect.width; x += spacing) {
+      for (let y = spacing; y < rect.height; y += spacing) {
+        const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
+        const fade = Math.max(0, 1 - dist / maxDist);
+        const alpha = 0.08 + fade * 0.18;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(100, 98, 94, ${alpha})`;
+        ctx.fill();
+      }
+    }
+  }
+
+  render();
+  addEventListener('resize', render);
+}
+
+drawDots('dots1');
+drawDots('dots2');
+</script>
+</body>
+</html>
