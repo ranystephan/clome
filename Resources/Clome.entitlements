@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Enable for distribution (requires Apple Developer Program provisioning profile):
+    <key>com.apple.developer.web-browser</key>
+    <true/>
+    This entitlement enables:
+    - Password AutoFill from iCloud Keychain in WKWebView
+    - Passkey/WebAuthn support through system flow
+    - Default browser registration capability
+    -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+    <key>com.apple.security.files.downloads.read-write</key>
+    <true/>
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+</dict>
+</plist>

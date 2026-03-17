@@ -1,0 +1,982 @@
+import AppKit
+
+/// Delegate for file explorer actions.
+@MainActor
+protocol FileExplorerDelegate: AnyObject {
+    func fileExplorer(_ explorer: FileExplorerView, didSelectFile path: String)
+    func fileExplorer(_ explorer: FileExplorerView, didRequestNewFileIn directory: String)
+}
+
+/// Custom row view that draws a subtle background for the active file.
+class FileExplorerRowView: NSTableRowView {
+    var isActiveFile: Bool = false {
+        didSet { needsDisplay = true }
+    }
+
+    override func drawBackground(in dirtyRect: NSRect) {
+        if isActiveFile {
+            NSColor(white: 1.0, alpha: 0.10).setFill()
+            let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 1), xRadius: 4, yRadius: 4)
+            path.fill()
+
+            // Left accent bar
+            NSColor(red: 0.45, green: 0.65, blue: 0.90, alpha: 0.7).setFill()
+            let accent = NSRect(x: 2, y: bounds.minY + 4, width: 2, height: bounds.height - 8)
+            NSBezierPath(roundedRect: accent, xRadius: 1, yRadius: 1).fill()
+        }
+    }
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        // Don't draw default selection — we handle it ourselves
+    }
+}
+
+/// A file tree view for the sidebar, using NSOutlineView.
+class FileExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
+    weak var delegate: FileExplorerDelegate?
+    private var rootNode: FileTreeNode?
+    private let outlineView = NSOutlineView()
+    private let scrollView = NSScrollView()
+    private let gitTracker = GitStatusTracker()
+    private var headerBar: NSView!
+
+    /// Tracks an in-progress inline creation (file or folder).
+    private var pendingCreation: PendingCreation?
+    /// Standalone text field overlaid on the outline view for inline rename.
+    private var inlineTextField: NSTextField?
+
+    private struct PendingCreation {
+        let parentPath: String
+        let isDirectory: Bool
+        /// Temporary placeholder node inserted into the tree.
+        let placeholderNode: FileTreeNode
+    }
+
+    /// Path of the currently active/open file, set by ProjectPanel
+    var activeFilePath: String? {
+        didSet {
+            if oldValue != activeFilePath {
+                outlineView.enumerateAvailableRowViews { rowView, row in
+                    if let fileRow = rowView as? FileExplorerRowView,
+                       let node = self.outlineView.item(atRow: row) as? FileTreeNode {
+                        fileRow.isActiveFile = (!node.isDirectory && node.path == self.activeFilePath)
+                    }
+                }
+            }
+        }
+    }
+
+    var rootPath: String? {
+        didSet {
+            guard let path = rootPath else { rootNode = nil; return }
+            rootNode = FileTreeNode(path: path)
+            rootNode?.loadChildren()
+            rootNode?.isExpanded = true
+            refreshGitStatus()
+            outlineView.reloadData()
+            if let root = rootNode {
+                outlineView.expandItem(root)
+            }
+        }
+    }
+
+    override init(frame: NSRect = .zero) {
+        super.init(frame: frame)
+        setupUI()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appearanceDidChange),
+            name: .appearanceSettingsChanged, object: nil
+        )
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        // Keep the table column width in sync with the outline view's visible width
+        // so that cell text fields expand/contract properly on sidebar resize.
+        if let col = outlineView.tableColumns.first {
+            let visibleWidth = scrollView.contentSize.width
+            if visibleWidth > 0 && abs(col.width - visibleWidth) > 1 {
+                col.width = visibleWidth
+            }
+        }
+    }
+
+    @objc private func appearanceDidChange() {
+        FileTypeIconProvider.shared.clearCache()
+        outlineView.reloadData()
+        if let root = rootNode { outlineView.expandItem(root) }
+        expandPreviouslyExpanded(rootNode)
+    }
+
+    private func setupUI() {
+        wantsLayer = true
+
+        // Header bar with new file / new folder buttons
+        headerBar = NSView()
+        headerBar.translatesAutoresizingMaskIntoConstraints = false
+        headerBar.wantsLayer = true
+        headerBar.layer?.backgroundColor = NSColor(white: 0.0, alpha: 0.0).cgColor
+        addSubview(headerBar)
+
+        let titleLabel = NSTextField(labelWithString: "")
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.attributedStringValue = NSAttributedString(string: "EXPLORER", attributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+            .foregroundColor: NSColor(white: 1.0, alpha: 0.45),
+            .kern: 1.2,
+        ])
+        headerBar.addSubview(titleLabel)
+
+        let iconCfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+
+        let newFileBtn = NSButton()
+        newFileBtn.translatesAutoresizingMaskIntoConstraints = false
+        newFileBtn.bezelStyle = .texturedRounded
+        newFileBtn.isBordered = false
+        newFileBtn.image = NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: "New File")?.withSymbolConfiguration(iconCfg)
+        newFileBtn.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+        newFileBtn.target = self
+        newFileBtn.action = #selector(newFileClicked(_:))
+        newFileBtn.toolTip = "New File"
+        headerBar.addSubview(newFileBtn)
+
+        let newFolderBtn = NSButton()
+        newFolderBtn.translatesAutoresizingMaskIntoConstraints = false
+        newFolderBtn.bezelStyle = .texturedRounded
+        newFolderBtn.isBordered = false
+        newFolderBtn.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "New Folder")?.withSymbolConfiguration(iconCfg)
+        newFolderBtn.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+        newFolderBtn.target = self
+        newFolderBtn.action = #selector(newFolderClicked(_:))
+        newFolderBtn.toolTip = "New Folder"
+        headerBar.addSubview(newFolderBtn)
+
+        let refreshBtn = NSButton()
+        refreshBtn.translatesAutoresizingMaskIntoConstraints = false
+        refreshBtn.bezelStyle = .texturedRounded
+        refreshBtn.isBordered = false
+        refreshBtn.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh")?.withSymbolConfiguration(iconCfg)
+        refreshBtn.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+        refreshBtn.target = self
+        refreshBtn.action = #selector(refreshClicked(_:))
+        refreshBtn.toolTip = "Refresh"
+        headerBar.addSubview(refreshBtn)
+
+        NSLayoutConstraint.activate([
+            headerBar.topAnchor.constraint(equalTo: topAnchor),
+            headerBar.leadingAnchor.constraint(equalTo: leadingAnchor),
+            headerBar.trailingAnchor.constraint(equalTo: trailingAnchor),
+            headerBar.heightAnchor.constraint(equalToConstant: 32),
+
+            titleLabel.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor, constant: 14),
+            titleLabel.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+
+            refreshBtn.trailingAnchor.constraint(equalTo: headerBar.trailingAnchor, constant: -8),
+            refreshBtn.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            refreshBtn.widthAnchor.constraint(equalToConstant: 24),
+            refreshBtn.heightAnchor.constraint(equalToConstant: 24),
+
+            newFolderBtn.trailingAnchor.constraint(equalTo: refreshBtn.leadingAnchor, constant: -4),
+            newFolderBtn.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            newFolderBtn.widthAnchor.constraint(equalToConstant: 24),
+            newFolderBtn.heightAnchor.constraint(equalToConstant: 24),
+
+            newFileBtn.trailingAnchor.constraint(equalTo: newFolderBtn.leadingAnchor, constant: -4),
+            newFileBtn.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            newFileBtn.widthAnchor.constraint(equalToConstant: 24),
+            newFileBtn.heightAnchor.constraint(equalToConstant: 24),
+        ])
+
+        // Outline view
+        let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("FileTree"))
+        col.title = ""
+        col.resizingMask = .autoresizingMask
+        outlineView.addTableColumn(col)
+        outlineView.outlineTableColumn = col
+        outlineView.headerView = nil
+        outlineView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        outlineView.dataSource = self
+        outlineView.delegate = self
+        outlineView.rowHeight = 26
+        outlineView.indentationPerLevel = 16
+        outlineView.backgroundColor = .clear
+        outlineView.selectionHighlightStyle = .none
+        outlineView.target = self
+        outlineView.doubleAction = #selector(doubleClickedRow(_:))
+        outlineView.intercellSpacing = NSSize(width: 0, height: 2)
+
+        // Enable drag and drop
+        outlineView.registerForDraggedTypes([.fileURL])
+        outlineView.setDraggingSourceOperationMask([.copy, .move], forLocal: false)
+        outlineView.setDraggingSourceOperationMask(.move, forLocal: true)
+        outlineView.draggingDestinationFeedbackStyle = .regular
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = outlineView
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+        scrollView.scrollerKnobStyle = .light
+        scrollView.contentInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
+        if let scroller = scrollView.verticalScroller {
+            scroller.controlSize = .small
+        }
+        addSubview(scrollView)
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: headerBar.bottomAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    func reload() {
+        // Don't reload while user is typing a new file/folder name
+        guard pendingCreation == nil else { return }
+        rootNode?.reload()
+        refreshGitStatus()
+        outlineView.reloadData()
+        if let root = rootNode {
+            outlineView.expandItem(root)
+        }
+    }
+
+    private func refreshGitStatus() {
+        guard let path = rootPath else { return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            self?.gitTracker.refresh(for: path)
+            DispatchQueue.main.async {
+                // Don't reload while user is typing a new file/folder name
+                guard self?.pendingCreation == nil else { return }
+                self?.outlineView.reloadData()
+                if let root = self?.rootNode {
+                    self?.outlineView.expandItem(root)
+                }
+            }
+        }
+    }
+
+    // MARK: - NSOutlineViewDataSource
+
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        if item == nil {
+            return rootNode?.children?.count ?? 0
+        }
+        guard let node = item as? FileTreeNode else { return 0 }
+        node.loadChildren()
+        return node.children?.count ?? 0
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        if item == nil {
+            return rootNode!.children![index]
+        }
+        let node = item as! FileTreeNode
+        return node.children![index]
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+        guard let node = item as? FileTreeNode else { return false }
+        return node.isDirectory
+    }
+
+    // MARK: - Drag and Drop (NSOutlineViewDataSource)
+
+    /// Provide pasteboard data for dragging items OUT of the explorer.
+    func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> (any NSPasteboardWriting)? {
+        guard let node = item as? FileTreeNode, !node.isPlaceholder else { return nil }
+        return URL(fileURLWithPath: node.path) as NSURL
+    }
+
+    /// Validate a proposed drop. Allows dropping on directories (or the root area).
+    func outlineView(_ outlineView: NSOutlineView, validateDrop info: any NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int) -> NSDragOperation {
+        guard let rootPath else { return [] }
+
+        // Determine the target directory
+        let targetDir: String
+        if let node = item as? FileTreeNode {
+            if node.isDirectory {
+                targetDir = node.path
+            } else {
+                // Retarget: drop alongside file → into its parent
+                let parentPath = (node.path as NSString).deletingLastPathComponent
+                if let parentNode = findNodeForPath(parentPath) {
+                    outlineView.setDropItem(parentNode, dropChildIndex: NSOutlineViewDropOnItemIndex)
+                } else {
+                    outlineView.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex)
+                }
+                targetDir = parentPath
+            }
+        } else {
+            targetDir = rootPath
+        }
+
+        // Read dragged file URLs
+        guard let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [
+            .urlReadingFileURLsOnly: true
+        ]) as? [URL], !urls.isEmpty else {
+            return []
+        }
+
+        // Don't allow dropping a folder onto itself or into its own subtree
+        for url in urls {
+            let srcPath = url.path
+            if targetDir == srcPath || targetDir.hasPrefix(srcPath + "/") {
+                return []
+            }
+            // Don't drop onto the same parent (would be a no-op)
+            let srcParent = (srcPath as NSString).deletingLastPathComponent
+            if srcParent == targetDir && info.draggingSource is NSOutlineView {
+                return []
+            }
+        }
+
+        // Option held → copy, otherwise move for local, copy for external
+        if info.draggingSourceOperationMask.contains(.move) && isLocalDrag(info) {
+            return .move
+        }
+        return .copy
+    }
+
+    /// Perform the drop — move or copy files into the target directory.
+    func outlineView(_ outlineView: NSOutlineView, acceptDrop info: any NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
+        guard let rootPath else { return false }
+
+        let targetDir: String
+        if let node = item as? FileTreeNode, node.isDirectory {
+            targetDir = node.path
+        } else if let node = item as? FileTreeNode {
+            targetDir = (node.path as NSString).deletingLastPathComponent
+        } else {
+            targetDir = rootPath
+        }
+
+        guard let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [
+            .urlReadingFileURLsOnly: true
+        ]) as? [URL], !urls.isEmpty else {
+            return false
+        }
+
+        let fm = FileManager.default
+        let shouldMove = info.draggingSourceOperationMask.contains(.move) && isLocalDrag(info)
+        var didChange = false
+
+        for url in urls {
+            let srcPath = url.path
+            let fileName = (srcPath as NSString).lastPathComponent
+            var destPath = (targetDir as NSString).appendingPathComponent(fileName)
+
+            // Resolve name conflicts
+            destPath = uniqueDestinationPath(destPath)
+
+            do {
+                if shouldMove {
+                    try fm.moveItem(atPath: srcPath, toPath: destPath)
+                } else {
+                    try fm.copyItem(atPath: srcPath, toPath: destPath)
+                }
+                didChange = true
+            } catch {
+                NSLog("FileExplorer drop failed: \(error)")
+            }
+        }
+
+        if didChange {
+            reload()
+            // If a file was dropped, open it
+            if urls.count == 1, let url = urls.first {
+                let fileName = (url.path as NSString).lastPathComponent
+                let destPath = (targetDir as NSString).appendingPathComponent(fileName)
+                var isDir: ObjCBool = false
+                if fm.fileExists(atPath: destPath, isDirectory: &isDir), !isDir.boolValue {
+                    delegate?.fileExplorer(self, didSelectFile: destPath)
+                }
+            }
+        }
+
+        return didChange
+    }
+
+    /// Check if this drag originated from within Clome (local drag).
+    private func isLocalDrag(_ info: NSDraggingInfo) -> Bool {
+        return info.draggingSource is NSOutlineView
+    }
+
+    /// Generate a unique file path by appending " copy", " copy 2", etc.
+    private func uniqueDestinationPath(_ path: String) -> String {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: path) else { return path }
+
+        let nsPath = path as NSString
+        let dir = nsPath.deletingLastPathComponent
+        let ext = nsPath.pathExtension
+        let baseName: String
+        if ext.isEmpty {
+            baseName = nsPath.lastPathComponent
+        } else {
+            baseName = (nsPath.lastPathComponent as NSString).deletingPathExtension
+        }
+
+        for i in 1...100 {
+            let suffix = i == 1 ? " copy" : " copy \(i)"
+            let newName = ext.isEmpty ? "\(baseName)\(suffix)" : "\(baseName)\(suffix).\(ext)"
+            let newPath = (dir as NSString).appendingPathComponent(newName)
+            if !fm.fileExists(atPath: newPath) { return newPath }
+        }
+        return path // give up after 100
+    }
+
+    // MARK: - NSOutlineViewDelegate
+
+    func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
+        let rowView = FileExplorerRowView()
+        if let node = item as? FileTreeNode {
+            rowView.isActiveFile = (!node.isDirectory && node.path == activeFilePath)
+        }
+        return rowView
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
+        guard let node = item as? FileTreeNode else { return nil }
+
+        let cellId = NSUserInterfaceItemIdentifier("FileCell")
+        let cell: NSTableCellView
+        if let existing = outlineView.makeView(withIdentifier: cellId, owner: self) as? NSTableCellView {
+            cell = existing
+            // Remove old git status badges
+            for sub in cell.subviews where sub.tag == 99 {
+                sub.removeFromSuperview()
+            }
+        } else {
+            cell = NSTableCellView()
+            cell.identifier = cellId
+
+            let img = NSImageView()
+            img.translatesAutoresizingMaskIntoConstraints = false
+            img.imageScaling = .scaleProportionallyDown
+            cell.addSubview(img)
+            cell.imageView = img
+
+            let txt = NSTextField(labelWithString: "")
+            txt.translatesAutoresizingMaskIntoConstraints = false
+            txt.font = .systemFont(ofSize: 12)
+            txt.lineBreakMode = .byTruncatingTail
+            cell.addSubview(txt)
+            cell.textField = txt
+
+            NSLayoutConstraint.activate([
+                img.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                img.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                img.widthAnchor.constraint(equalToConstant: 16),
+                img.heightAnchor.constraint(equalToConstant: 16),
+
+                txt.leadingAnchor.constraint(equalTo: img.trailingAnchor, constant: 7),
+                txt.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -24),
+                txt.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+        }
+
+        // Placeholder node — show editable text field
+        if node.isPlaceholder {
+            let iconCfg = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+            if node.isDirectory {
+                cell.imageView?.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
+                cell.imageView?.contentTintColor = NSColor(red: 0.45, green: 0.65, blue: 0.85, alpha: 0.7)
+            } else {
+                cell.imageView?.image = NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
+                cell.imageView?.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+            }
+            cell.textField?.stringValue = ""
+            cell.textField?.placeholderString = node.isDirectory ? "folder name" : "filename.ext"
+            cell.textField?.textColor = NSColor(white: 0.9, alpha: 1.0)
+            return cell
+        }
+
+        // Text — consistent colors, no git tinting
+        let isActive = (!node.isDirectory && node.path == activeFilePath)
+        cell.textField?.stringValue = node.name
+        cell.textField?.placeholderString = nil
+        cell.textField?.isEditable = false
+        cell.textField?.drawsBackground = false
+        cell.textField?.textColor = node.isDirectory
+            ? NSColor(white: 0.67, alpha: 1.0)
+            : (isActive ? NSColor(white: 0.95, alpha: 1.0) : NSColor(white: 0.78, alpha: 1.0))
+
+        // Icon
+        let useColorful = AppearanceSettings.shared.colorfulFileIcons
+        let colorIcon: NSImage? = useColorful && !node.isDirectory
+            ? (node.fileExtension.flatMap { FileTypeIconProvider.shared.icon(forExtension: $0) }
+               ?? FileTypeIconProvider.shared.icon(forFilename: node.name))
+            : nil
+        if let colorIcon {
+            cell.imageView?.image = colorIcon
+            cell.imageView?.contentTintColor = nil
+        } else {
+            let iconCfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+            cell.imageView?.image = NSImage(systemSymbolName: node.iconName, accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
+            cell.imageView?.contentTintColor = node.isDirectory
+                ? NSColor(red: 0.45, green: 0.65, blue: 0.85, alpha: 1.0)
+                : NSColor(white: 0.52, alpha: 1.0)
+        }
+
+        // Git badge — only the letter, only colored
+        let gitStatus = gitTracker.status(for: node.path)
+        if let status = gitStatus, !node.isDirectory {
+            let label = statusLabel(status)
+            if !label.isEmpty {
+                let badge = NSTextField(labelWithString: label)
+                badge.translatesAutoresizingMaskIntoConstraints = false
+                badge.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold)
+                badge.textColor = statusBadgeColor(status)
+                badge.alignment = .right
+                badge.tag = 99
+                cell.addSubview(badge)
+
+                NSLayoutConstraint.activate([
+                    badge.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+                    badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                ])
+            }
+        }
+
+        return cell
+    }
+
+    private func statusLabel(_ status: GitFileStatus) -> String {
+        switch status {
+        case .modified: return "M"
+        case .staged: return "A"
+        case .stagedModified: return "M"
+        case .deleted: return "D"
+        case .renamed: return "R"
+        case .untracked: return "U"
+        case .conflict: return "!"
+        case .ignored: return ""
+        }
+    }
+
+    private func statusBadgeColor(_ status: GitFileStatus) -> NSColor {
+        switch status {
+        case .staged, .renamed:
+            return NSColor(red: 0.40, green: 0.72, blue: 0.40, alpha: 0.9)
+        case .modified, .stagedModified:
+            return NSColor(red: 0.88, green: 0.70, blue: 0.30, alpha: 0.9)
+        case .untracked:
+            return NSColor(red: 0.40, green: 0.72, blue: 0.40, alpha: 0.75)
+        case .deleted:
+            return NSColor(red: 0.82, green: 0.38, blue: 0.38, alpha: 0.9)
+        case .conflict:
+            return NSColor(red: 0.88, green: 0.42, blue: 0.42, alpha: 0.95)
+        case .ignored:
+            return NSColor(white: 0.35, alpha: 1.0)
+        }
+    }
+
+    func outlineViewItemDidExpand(_ notification: Notification) {
+        if let node = notification.userInfo?["NSObject"] as? FileTreeNode {
+            node.isExpanded = true
+            node.loadChildren()
+        }
+    }
+
+    func outlineViewItemDidCollapse(_ notification: Notification) {
+        if let node = notification.userInfo?["NSObject"] as? FileTreeNode {
+            node.isExpanded = false
+        }
+    }
+
+    func outlineViewSelectionDidChange(_ notification: Notification) {
+        let row = outlineView.selectedRow
+        guard row >= 0, let node = outlineView.item(atRow: row) as? FileTreeNode else { return }
+        // Don't try to open placeholder nodes
+        guard !node.isPlaceholder else { return }
+        if !node.isDirectory {
+            delegate?.fileExplorer(self, didSelectFile: node.path)
+        }
+    }
+
+    // MARK: - New File / Folder (inline editing)
+
+    @objc private func newFileClicked(_ sender: Any?) {
+        beginInlineCreation(isDirectory: false)
+    }
+
+    @objc private func newFolderClicked(_ sender: Any?) {
+        beginInlineCreation(isDirectory: true)
+    }
+
+    @objc private func refreshClicked(_ sender: Any?) {
+        reload()
+    }
+
+    /// Determines the target directory for new item creation.
+    /// If a directory is selected, creates inside it. If a file is selected, creates alongside it.
+    /// Falls back to root.
+    private func targetDirectoryForCreation() -> (path: String, parentNode: FileTreeNode?) {
+        let row = outlineView.selectedRow
+        if row >= 0, let node = outlineView.item(atRow: row) as? FileTreeNode {
+            if node.isDirectory {
+                return (node.path, node)
+            } else {
+                // Use the file's parent directory
+                let parentPath = (node.path as NSString).deletingLastPathComponent
+                // Find the parent node
+                let parentNode = findParentNode(of: node)
+                return (parentPath, parentNode)
+            }
+        }
+        // Default to root
+        return (rootPath ?? "", rootNode)
+    }
+
+    private func findParentNode(of child: FileTreeNode) -> FileTreeNode? {
+        guard let root = rootNode else { return nil }
+        return findParent(of: child, in: root)
+    }
+
+    private func findParent(of target: FileTreeNode, in node: FileTreeNode) -> FileTreeNode? {
+        guard let children = node.children else { return nil }
+        for child in children {
+            if child === target { return node }
+            if child.isDirectory, let found = findParent(of: target, in: child) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    private func beginInlineCreation(isDirectory: Bool) {
+        // Cancel any existing pending creation
+        cancelPendingCreation()
+
+        let (dirPath, parentNode) = targetDirectoryForCreation()
+        guard !dirPath.isEmpty else { return }
+
+        // Ensure the parent directory node is expanded
+        if let parent = parentNode, parent.isDirectory {
+            if !outlineView.isItemExpanded(parent) {
+                outlineView.expandItem(parent)
+            }
+        }
+
+        // Create a placeholder node
+        let placeholderPath = (dirPath as NSString).appendingPathComponent("")
+        let placeholder = FileTreeNode.placeholder(parentPath: dirPath, isDirectory: isDirectory)
+
+        pendingCreation = PendingCreation(
+            parentPath: dirPath,
+            isDirectory: isDirectory,
+            placeholderNode: placeholder
+        )
+
+        // Insert placeholder into the parent's children at the top
+        if let parent = parentNode {
+            parent.loadChildren()
+            if parent.children == nil { parent.children = [] }
+            // Insert at position 0 among files (after dirs) for files, or position 0 for dirs
+            if isDirectory {
+                parent.children?.insert(placeholder, at: 0)
+            } else {
+                let firstFileIdx = parent.children?.firstIndex(where: { !$0.isDirectory }) ?? (parent.children?.count ?? 0)
+                parent.children?.insert(placeholder, at: firstFileIdx)
+            }
+        }
+
+        outlineView.reloadData()
+        // Re-expand everything that was expanded
+        expandPreviouslyExpanded(rootNode)
+
+        // Find the row of the placeholder and begin editing
+        let row = outlineView.row(forItem: placeholder)
+        if row >= 0 {
+            outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            outlineView.scrollRowToVisible(row)
+            // Start editing the text field in the cell
+            DispatchQueue.main.async { [weak self] in
+                self?.beginEditingRow(row)
+            }
+        }
+    }
+
+    private func expandPreviouslyExpanded(_ node: FileTreeNode?) {
+        guard let node = node else { return }
+        if node.isExpanded {
+            outlineView.expandItem(node)
+        }
+        node.children?.forEach { expandPreviouslyExpanded($0) }
+    }
+
+    private func beginEditingRow(_ row: Int) {
+        // Remove any previous overlay
+        inlineTextField?.removeFromSuperview()
+        inlineTextField = nil
+
+        // Get the row rect in the outline view, then convert to scroll view coords
+        let rowRect = outlineView.rect(ofRow: row)
+        guard !rowRect.isEmpty else { return }
+
+        // Determine the indent + icon offset so the field aligns with where text would be
+        let level = outlineView.level(forRow: row)
+        let indent = CGFloat(level + 1) * outlineView.indentationPerLevel + 24 // icon + spacing
+
+        let field = NSTextField()
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.stringValue = ""
+        field.placeholderString = pendingCreation?.isDirectory == true ? "folder name" : "filename.ext"
+        field.font = .systemFont(ofSize: 12)
+        field.textColor = NSColor(white: 0.95, alpha: 1.0)
+        field.backgroundColor = NSColor(white: 0.15, alpha: 1.0)
+        field.drawsBackground = true
+        field.isBezeled = false
+        field.isBordered = true
+        field.focusRingType = .none
+        field.isEditable = true
+        field.delegate = self
+        field.cell?.sendsActionOnEndEditing = true
+
+        // Add as a subview of the outline view so it scrolls with it
+        outlineView.addSubview(field)
+        field.frame = NSRect(
+            x: rowRect.minX + indent,
+            y: rowRect.minY + 1,
+            width: rowRect.width - indent - 20,
+            height: rowRect.height - 2
+        )
+
+        inlineTextField = field
+        window?.makeFirstResponder(field)
+    }
+
+    private func commitCreation(name: String) {
+        guard let pending = pendingCreation else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Clean up overlay
+        inlineTextField?.removeFromSuperview()
+        inlineTextField = nil
+
+        guard !trimmed.isEmpty else {
+            cancelPendingCreation()
+            return
+        }
+
+        let newPath = (pending.parentPath as NSString).appendingPathComponent(trimmed)
+
+        // Remove placeholder before reload
+        if let parent = findNodeForPath(pending.parentPath) {
+            parent.children?.removeAll(where: { $0 === pending.placeholderNode })
+        }
+        pendingCreation = nil
+
+        if pending.isDirectory {
+            try? FileManager.default.createDirectory(atPath: newPath, withIntermediateDirectories: true)
+        } else {
+            FileManager.default.createFile(atPath: newPath, contents: nil)
+        }
+
+        reload()
+
+        // Open the newly created file
+        if !pending.isDirectory {
+            delegate?.fileExplorer(self, didSelectFile: newPath)
+        }
+    }
+
+    private func cancelPendingCreation() {
+        guard let pending = pendingCreation else { return }
+
+        // Clean up overlay
+        inlineTextField?.removeFromSuperview()
+        inlineTextField = nil
+
+        // Remove placeholder from parent's children
+        if let parent = findNodeForPath(pending.parentPath) {
+            parent.children?.removeAll(where: { $0 === pending.placeholderNode })
+        }
+        pendingCreation = nil
+        outlineView.reloadData()
+        expandPreviouslyExpanded(rootNode)
+    }
+
+    private func findNodeForPath(_ path: String) -> FileTreeNode? {
+        guard let root = rootNode else { return nil }
+        if root.path == path { return root }
+        return findNode(path: path, in: root)
+    }
+
+    private func findNode(path: String, in node: FileTreeNode) -> FileTreeNode? {
+        guard let children = node.children else { return nil }
+        for child in children {
+            if child.path == path { return child }
+            if child.isDirectory, let found = findNode(path: path, in: child) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Context Menu
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = outlineView.convert(event.locationInWindow, from: nil)
+        let row = outlineView.row(at: point)
+
+        let menu = NSMenu()
+
+        if row >= 0, let node = outlineView.item(atRow: row) as? FileTreeNode {
+            if node.isDirectory {
+                let newFile = NSMenuItem(title: "New File…", action: #selector(contextNewFile(_:)), keyEquivalent: "")
+                newFile.target = self
+                newFile.representedObject = node.path
+                menu.addItem(newFile)
+
+                let newFolder = NSMenuItem(title: "New Folder…", action: #selector(contextNewFolder(_:)), keyEquivalent: "")
+                newFolder.target = self
+                newFolder.representedObject = node.path
+                menu.addItem(newFolder)
+
+                menu.addItem(NSMenuItem.separator())
+            }
+
+            let reveal = NSMenuItem(title: "Reveal in Finder", action: #selector(contextRevealInFinder(_:)), keyEquivalent: "")
+            reveal.target = self
+            reveal.representedObject = node.path
+            menu.addItem(reveal)
+
+            menu.addItem(NSMenuItem.separator())
+
+            let delete = NSMenuItem(title: "Delete", action: #selector(contextDelete(_:)), keyEquivalent: "")
+            delete.target = self
+            delete.representedObject = node
+            menu.addItem(delete)
+        } else {
+            if let root = rootPath {
+                let newFile = NSMenuItem(title: "New File…", action: #selector(contextNewFile(_:)), keyEquivalent: "")
+                newFile.target = self
+                newFile.representedObject = root
+                menu.addItem(newFile)
+
+                let newFolder = NSMenuItem(title: "New Folder…", action: #selector(contextNewFolder(_:)), keyEquivalent: "")
+                newFolder.target = self
+                newFolder.representedObject = root
+                menu.addItem(newFolder)
+            }
+        }
+
+        return menu.items.isEmpty ? nil : menu
+    }
+
+    @objc private func contextNewFile(_ sender: NSMenuItem) {
+        guard let dir = sender.representedObject as? String else { return }
+        promptForName(title: "New File", message: "Enter file name:") { [weak self] name in
+            let path = (dir as NSString).appendingPathComponent(name)
+            FileManager.default.createFile(atPath: path, contents: nil)
+            self?.reload()
+            self?.delegate?.fileExplorer(self!, didSelectFile: path)
+        }
+    }
+
+    @objc private func contextNewFolder(_ sender: NSMenuItem) {
+        guard let dir = sender.representedObject as? String else { return }
+        promptForName(title: "New Folder", message: "Enter folder name:") { [weak self] name in
+            let path = (dir as NSString).appendingPathComponent(name)
+            try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+            self?.reload()
+        }
+    }
+
+    @objc private func contextRevealInFinder(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
+    }
+
+    @objc private func contextDelete(_ sender: NSMenuItem) {
+        guard let node = sender.representedObject as? FileTreeNode else { return }
+        let alert = NSAlert()
+        alert.messageText = "Delete \(node.name)?"
+        alert.informativeText = "This will move it to the Trash."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        if alert.runModal() == .alertFirstButtonReturn {
+            try? FileManager.default.trashItem(at: URL(fileURLWithPath: node.path), resultingItemURL: nil)
+            reload()
+        }
+    }
+
+    @objc private func doubleClickedRow(_ sender: Any?) {
+        let row = outlineView.clickedRow
+        guard row >= 0, let node = outlineView.item(atRow: row) as? FileTreeNode else { return }
+        if node.isDirectory {
+            if outlineView.isItemExpanded(node) {
+                outlineView.collapseItem(node)
+            } else {
+                outlineView.expandItem(node)
+            }
+        } else {
+            delegate?.fileExplorer(self, didSelectFile: node.path)
+        }
+    }
+
+    private func promptForName(title: String, message: String, completion: @escaping (String) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        alert.accessoryView = field
+        if alert.runModal() == .alertFirstButtonReturn {
+            let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty { completion(name) }
+        }
+    }
+}
+
+// MARK: - NSTextFieldDelegate (inline editing)
+
+extension FileExplorerView: NSTextFieldDelegate {
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard let textField = obj.object as? NSTextField,
+              textField === inlineTextField,
+              pendingCreation != nil else { return }
+
+        // Check if this was triggered by Return key vs focus loss
+        let movement = (obj.userInfo?["NSTextMovement"] as? Int) ?? 0
+        if movement == NSReturnTextMovement {
+            // Enter pressed — commit
+            commitCreation(name: textField.stringValue)
+        } else {
+            // Focus was stolen — re-focus the field without selecting all text
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, let field = self.inlineTextField, self.pendingCreation != nil else { return }
+                self.window?.makeFirstResponder(field)
+                // Move cursor to end instead of selecting all
+                if let editor = field.currentEditor() as? NSTextView {
+                    let end = editor.string.count
+                    editor.setSelectedRange(NSRange(location: end, length: 0))
+                }
+            }
+        }
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard control === inlineTextField else { return false }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            // Escape — cancel
+            cancelPendingCreation()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            // Enter — commit
+            commitCreation(name: inlineTextField?.stringValue ?? "")
+            return true
+        }
+        return false
+    }
+}
