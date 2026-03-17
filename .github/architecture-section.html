@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clome — Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --copper: #B5613F;
+    --copper-light: #D4845E;
+    --copper-glow: rgba(181, 97, 63, 0.35);
+    --dark: #06060A;
+    --surface: #0C0C12;
+    --surface-raised: #101018;
+    --border: #1C1C28;
+    --border-hover: #2A2A3A;
+    --text-primary: #E8E4E0;
+    --text-secondary: #9A9AAE;
+    --text-dim: #5E5E72;
+    --font-display: 'Syne', sans-serif;
+    --font-body: 'DM Sans', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  *, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    background: var(--dark);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  .architecture-section {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 120px 80px;
+    position: relative;
+  }
+
+  /* Subtle background grain */
+  .architecture-section::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 80% 60% at 70% 50%, rgba(181, 97, 63, 0.03) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .arch-container {
+    max-width: 1320px;
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 100px;
+    align-items: center;
+  }
+
+  /* ---- Left: Text ---- */
+  .arch-text {
+    position: relative;
+  }
+
+  .arch-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--copper);
+    margin-bottom: 28px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .arch-label::before {
+    content: '';
+    width: 24px;
+    height: 1px;
+    background: var(--copper);
+    display: inline-block;
+  }
+
+  .arch-heading {
+    font-family: var(--font-display);
+    font-size: clamp(36px, 4vw, 56px);
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--text-primary);
+    margin-bottom: 36px;
+    letter-spacing: -0.02em;
+  }
+
+  .arch-heading em {
+    font-style: normal;
+    background: linear-gradient(135deg, var(--copper-light), var(--copper));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .arch-desc {
+    font-size: 17px;
+    line-height: 1.7;
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+    max-width: 480px;
+  }
+
+  .arch-desc-dim {
+    font-size: 15px;
+    line-height: 1.7;
+    color: var(--text-dim);
+    max-width: 460px;
+    font-style: italic;
+  }
+
+  /* ---- Right: Stack ---- */
+  .arch-stack-wrapper {
+    perspective: 1200px;
+    position: relative;
+    display: flex;
+    justify-content: center;
+  }
+
+  .arch-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: relative;
+    width: 100%;
+    max-width: 480px;
+    transform-style: preserve-3d;
+  }
+
+  .stack-layer {
+    position: relative;
+    padding: 0;
+    cursor: pointer;
+    transform-style: preserve-3d;
+    transition: all 0.5s cubic-bezier(0.23, 1, 0.32, 1);
+    z-index: var(--z);
+  }
+
+  .stack-layer-inner {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    transition: all 0.5s cubic-bezier(0.23, 1, 0.32, 1);
+    transform: rotateX(var(--rx, 0deg)) translateZ(var(--tz, 0px)) translateY(var(--ty, 0px));
+    transform-style: preserve-3d;
+    box-shadow:
+      0 1px 0 rgba(255,255,255,0.02) inset,
+      0 4px 16px rgba(0,0,0,0.3),
+      0 1px 3px rgba(0,0,0,0.2);
+  }
+
+  /* Overlap: each card peeks out from behind the one above */
+  .stack-layer:nth-child(1) { --z: 6; margin-bottom: -6px; }
+  .stack-layer:nth-child(2) { --z: 5; margin-bottom: -6px; }
+  .stack-layer:nth-child(3) { --z: 4; margin-bottom: -6px; }
+  .stack-layer:nth-child(4) { --z: 3; margin-bottom: -6px; }
+  .stack-layer:nth-child(5) { --z: 2; margin-bottom: -6px; }
+  .stack-layer:nth-child(6) { --z: 1; }
+
+  /* Initial 3D splay: cards fan out slightly */
+  .stack-layer:nth-child(1) .stack-layer-inner { --rx: -2deg; --tz: 30px; --ty: 0px; }
+  .stack-layer:nth-child(2) .stack-layer-inner { --rx: -1.2deg; --tz: 20px; --ty: 0px; }
+  .stack-layer:nth-child(3) .stack-layer-inner { --rx: -0.5deg; --tz: 10px; --ty: 0px; }
+  .stack-layer:nth-child(4) .stack-layer-inner { --rx: 0.5deg; --tz: 5px; --ty: 0px; }
+  .stack-layer:nth-child(5) .stack-layer-inner { --rx: 1.2deg; --tz: 0px; --ty: 0px; }
+  .stack-layer:nth-child(6) .stack-layer-inner { --rx: 2deg; --tz: -5px; --ty: 0px; }
+
+  /* Hover: card lifts out of stack */
+  .stack-layer:hover {
+    z-index: 20 !important;
+  }
+
+  .stack-layer:hover .stack-layer-inner {
+    --rx: 0deg;
+    --tz: 60px;
+    --ty: -4px;
+    border-color: var(--border-hover);
+    background: var(--surface-raised);
+    box-shadow:
+      0 1px 0 rgba(255,255,255,0.04) inset,
+      0 20px 60px rgba(0,0,0,0.5),
+      0 8px 24px rgba(0,0,0,0.3),
+      0 0 0 1px rgba(181, 97, 63, 0.08);
+  }
+
+  /* Left accent bar per layer — copper gradient, darker = deeper */
+  .layer-accent {
+    width: 4px;
+    flex-shrink: 0;
+    background: var(--accent-color);
+    transition: width 0.5s cubic-bezier(0.23, 1, 0.32, 1),
+                filter 0.5s cubic-bezier(0.23, 1, 0.32, 1);
+  }
+
+  .stack-layer:hover .layer-accent {
+    width: 6px;
+    filter: brightness(1.3);
+  }
+
+  .stack-layer:nth-child(1) { --accent-color: #D4845E; }
+  .stack-layer:nth-child(2) { --accent-color: #C8734D; }
+  .stack-layer:nth-child(3) { --accent-color: #B5613F; }
+  .stack-layer:nth-child(4) { --accent-color: #9E5336; }
+  .stack-layer:nth-child(5) { --accent-color: #87452D; }
+  .stack-layer:nth-child(6) { --accent-color: #703824; }
+
+  .layer-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 22px 28px;
+    gap: 16px;
+  }
+
+  .layer-left {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .layer-name {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+    transition: color 0.3s ease;
+  }
+
+  .stack-layer:hover .layer-name {
+    color: #fff;
+  }
+
+  .layer-tech {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    letter-spacing: 0.02em;
+    transition: color 0.3s ease;
+  }
+
+  .stack-layer:hover .layer-tech {
+    color: var(--copper-light);
+  }
+
+  /* Depth badge */
+  .layer-depth {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: rgba(181, 97, 63, 0.06);
+    border: 1px solid rgba(181, 97, 63, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-dim);
+    flex-shrink: 0;
+    transition: all 0.4s cubic-bezier(0.23, 1, 0.32, 1);
+  }
+
+  .stack-layer:hover .layer-depth {
+    background: rgba(181, 97, 63, 0.12);
+    border-color: rgba(181, 97, 63, 0.25);
+    color: var(--copper-light);
+    transform: scale(1.08);
+  }
+
+  /* Arrow connector between layers */
+  .layer-connector {
+    width: 1px;
+    height: 12px;
+    margin: 0 auto;
+    position: relative;
+    z-index: 0;
+  }
+
+  .layer-connector::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 0;
+    width: 1px;
+    height: 100%;
+    background: linear-gradient(to bottom, var(--border), transparent);
+    opacity: 0.4;
+  }
+
+  /* "Native stack" header above the cards */
+  .stack-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 28px;
+    padding-left: 4px;
+  }
+
+  .stack-header-line {
+    width: 16px;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .stack-header-text {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .stack-header-line-end {
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(to right, var(--border), transparent);
+  }
+
+  /* Responsive */
+  @media (max-width: 1024px) {
+    .architecture-section {
+      padding: 80px 40px;
+    }
+    .arch-container {
+      grid-template-columns: 1fr;
+      gap: 60px;
+    }
+    .arch-stack-wrapper {
+      max-width: 520px;
+      margin: 0 auto;
+    }
+  }
+
+  @media (max-width: 600px) {
+    .architecture-section {
+      padding: 60px 20px;
+    }
+    .layer-content {
+      padding: 18px 20px;
+    }
+    .arch-heading {
+      font-size: 32px;
+    }
+  }
+
+  /* Entrance animation */
+  @keyframes layerSlideIn {
+    from {
+      opacity: 0;
+      transform: translateY(30px) rotateX(-8deg);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) rotateX(0deg);
+    }
+  }
+
+  .stack-layer {
+    animation: layerSlideIn 0.6s cubic-bezier(0.23, 1, 0.32, 1) backwards;
+  }
+
+  .stack-layer:nth-child(1) { animation-delay: 0.1s; }
+  .stack-layer:nth-child(2) { animation-delay: 0.18s; }
+  .stack-layer:nth-child(3) { animation-delay: 0.26s; }
+  .stack-layer:nth-child(4) { animation-delay: 0.34s; }
+  .stack-layer:nth-child(5) { animation-delay: 0.42s; }
+  .stack-layer:nth-child(6) { animation-delay: 0.50s; }
+
+  @keyframes textFadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .arch-label { animation: textFadeIn 0.6s ease backwards; animation-delay: 0s; }
+  .arch-heading { animation: textFadeIn 0.6s ease backwards; animation-delay: 0.08s; }
+  .arch-desc { animation: textFadeIn 0.6s ease backwards; animation-delay: 0.16s; }
+  .arch-desc-dim { animation: textFadeIn 0.6s ease backwards; animation-delay: 0.24s; }
+</style>
+</head>
+<body>
+
+<section class="architecture-section">
+  <div class="arch-container">
+
+    <!-- Left: Text -->
+    <div class="arch-text">
+      <div class="arch-label">Architecture</div>
+      <h2 class="arch-heading">Native <em>all the way</em> down</h2>
+      <p class="arch-desc">
+        Every pixel is rendered by AppKit and Metal. The editor uses a rope for O(log&thinsp;n) text operations. The terminal runs through libghostty's Zig engine.
+      </p>
+      <p class="arch-desc-dim">
+        No 500&thinsp;MB RAM baseline. No spinning beach balls. Just a macOS app that respects your machine.
+      </p>
+    </div>
+
+    <!-- Right: Stack -->
+    <div class="arch-stack-wrapper">
+      <div class="arch-stack">
+        <div class="stack-header">
+          <span class="stack-header-line"></span>
+          <span class="stack-header-text">Native Stack</span>
+          <span class="stack-header-line-end"></span>
+        </div>
+
+        <div class="stack-layer">
+          <div class="stack-layer-inner">
+            <div class="layer-accent"></div>
+            <div class="layer-content">
+              <div class="layer-left">
+                <span class="layer-name">Interface</span>
+                <span class="layer-tech">Swift 6 + AppKit</span>
+              </div>
+              <div class="layer-depth">L1</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="layer-connector"></div>
+
+        <div class="stack-layer">
+          <div class="stack-layer-inner">
+            <div class="layer-accent"></div>
+            <div class="layer-content">
+              <div class="layer-left">
+                <span class="layer-name">Editor Core</span>
+                <span class="layer-tech">CoreText + Rope</span>
+              </div>
+              <div class="layer-depth">L2</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="layer-connector"></div>
+
+        <div class="stack-layer">
+          <div class="stack-layer-inner">
+            <div class="layer-accent"></div>
+            <div class="layer-content">
+              <div class="layer-left">
+                <span class="layer-name">Terminal</span>
+                <span class="layer-tech">libghostty (Zig)</span>
+              </div>
+              <div class="layer-depth">L3</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="layer-connector"></div>
+
+        <div class="stack-layer">
+          <div class="stack-layer-inner">
+            <div class="layer-accent"></div>
+            <div class="layer-content">
+              <div class="layer-left">
+                <span class="layer-name">Rendering</span>
+                <span class="layer-tech">Metal</span>
+              </div>
+              <div class="layer-depth">L4</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="layer-connector"></div>
+
+        <div class="stack-layer">
+          <div class="stack-layer-inner">
+            <div class="layer-accent"></div>
+            <div class="layer-content">
+              <div class="layer-left">
+                <span class="layer-name">Intelligence</span>
+                <span class="layer-tech">LSP + Tree-sitter</span>
+              </div>
+              <div class="layer-depth">L5</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="layer-connector"></div>
+
+        <div class="stack-layer">
+          <div class="stack-layer-inner">
+            <div class="layer-accent"></div>
+            <div class="layer-content">
+              <div class="layer-left">
+                <span class="layer-name">Persistence</span>
+                <span class="layer-tech">SQLite</span>
+              </div>
+              <div class="layer-depth">L6</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</section>
+
+</body>
+</html>

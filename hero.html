@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clome — Code in the Agentic Era</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300;1,9..40,400&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<style>
+  :root {
+    --copper: #B5613F;
+    --copper-light: #D4845E;
+    --copper-glow: #D4845E33;
+    --void: #06060A;
+    --void-soft: #0C0C14;
+    --white: #F0EDE8;
+    --white-dim: #F0EDE899;
+    --white-muted: #F0EDE850;
+    --font-display: 'Syne', sans-serif;
+    --font-body: 'DM Sans', sans-serif;
+  }
+
+  *, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    background: var(--void);
+    color: var(--white);
+    font-family: var(--font-body);
+    overflow-x: hidden;
+  }
+
+  .hero {
+    position: relative;
+    width: 100%;
+    height: 100vh;
+    min-height: 700px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  /* Atmospheric layers */
+  .hero__atmosphere {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .hero__atmosphere::before {
+    content: '';
+    position: absolute;
+    top: -30%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 140%;
+    height: 80%;
+    background: radial-gradient(
+      ellipse 50% 50% at center,
+      #B5613F08 0%,
+      #B5613F04 30%,
+      transparent 70%
+    );
+  }
+
+  .hero__atmosphere::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 40%;
+    background: linear-gradient(to top, var(--void) 0%, transparent 100%);
+  }
+
+  /* Horizontal rule accents */
+  .hero__rule {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      #B5613F18 20%,
+      #B5613F30 50%,
+      #B5613F18 80%,
+      transparent 100%
+    );
+    z-index: 1;
+  }
+
+  .hero__rule--top {
+    top: 18%;
+    width: 60%;
+  }
+
+  .hero__rule--bottom {
+    bottom: 18%;
+    width: 45%;
+  }
+
+  /* Parallax container */
+  .hero__parallax {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 0;
+    will-change: transform;
+  }
+
+  /* Logo */
+  .hero__logo-wrap {
+    margin-bottom: 48px;
+    will-change: transform;
+  }
+
+  .hero__logo {
+    width: 72px;
+    height: auto;
+    display: block;
+    filter: drop-shadow(0 0 40px #B5613F20);
+  }
+
+  /* Title */
+  .hero__title-block {
+    margin-bottom: 28px;
+    will-change: transform;
+  }
+
+  .hero__title-line {
+    overflow: hidden;
+    display: block;
+  }
+
+  .hero__title-inner {
+    display: block;
+  }
+
+  .hero__title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+  }
+
+  .hero__title--line1 {
+    font-size: clamp(40px, 6.5vw, 88px);
+    color: var(--white);
+  }
+
+  .hero__title--line2 {
+    font-size: clamp(40px, 6.5vw, 88px);
+    font-weight: 400;
+    color: var(--copper-light);
+    font-style: italic;
+  }
+
+  /* Subtitle */
+  .hero__subtitle-wrap {
+    overflow: hidden;
+    margin-bottom: 44px;
+  }
+
+  .hero__subtitle {
+    font-family: var(--font-body);
+    font-size: clamp(15px, 1.6vw, 19px);
+    font-weight: 300;
+    color: var(--white-dim);
+    line-height: 1.6;
+    max-width: 520px;
+    letter-spacing: 0.01em;
+  }
+
+  /* Buttons */
+  .hero__actions {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 52px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .hero__btn {
+    font-family: var(--font-body);
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    padding: 14px 32px;
+    border-radius: 10px;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: transform 0.3s cubic-bezier(0.19, 1, 0.22, 1),
+                box-shadow 0.3s ease,
+                background 0.3s ease,
+                border-color 0.3s ease;
+    will-change: transform;
+  }
+
+  .hero__btn:hover {
+    transform: translateY(-2px);
+  }
+
+  .hero__btn:active {
+    transform: translateY(0) scale(0.98);
+  }
+
+  .hero__btn--primary {
+    background: var(--copper);
+    color: var(--void);
+    border: 1px solid var(--copper);
+    font-weight: 600;
+  }
+
+  .hero__btn--primary:hover {
+    background: var(--copper-light);
+    border-color: var(--copper-light);
+    box-shadow: 0 8px 30px -8px #B5613F55;
+  }
+
+  .hero__btn--primary svg {
+    width: 16px;
+    height: 16px;
+    fill: var(--void);
+  }
+
+  .hero__btn--ghost {
+    background: transparent;
+    color: var(--white-dim);
+    border: 1px solid #F0EDE820;
+  }
+
+  .hero__btn--ghost:hover {
+    color: var(--white);
+    border-color: #F0EDE840;
+    background: #F0EDE808;
+  }
+
+  /* Meta line */
+  .hero__meta {
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--white-muted);
+    letter-spacing: 0.04em;
+    font-weight: 300;
+  }
+
+  .hero__meta span {
+    margin: 0 6px;
+    opacity: 0.4;
+  }
+
+  /* Grain overlay */
+  .hero__grain {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 10;
+    opacity: 0.025;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-size: 128px 128px;
+  }
+
+  /* Visibility setup for GSAP */
+  .hero__logo-wrap,
+  .hero__title-inner,
+  .hero__subtitle,
+  .hero__btn,
+  .hero__meta,
+  .hero__rule {
+    visibility: hidden;
+  }
+</style>
+</head>
+<body>
+
+<section class="hero">
+  <div class="hero__atmosphere"></div>
+  <div class="hero__rule hero__rule--top"></div>
+  <div class="hero__rule hero__rule--bottom"></div>
+  <div class="hero__grain"></div>
+
+  <div class="hero__parallax" data-parallax="0.02">
+
+    <div class="hero__logo-wrap" data-parallax="0.04">
+      <img class="hero__logo" src="logo-dark.png" alt="Clome logo">
+    </div>
+
+    <div class="hero__title-block" data-parallax="0.015">
+      <div class="hero__title-line">
+        <div class="hero__title-inner">
+          <h1 class="hero__title hero__title--line1">Code in the</h1>
+        </div>
+      </div>
+      <div class="hero__title-line">
+        <div class="hero__title-inner">
+          <h1 class="hero__title hero__title--line2">agentic era</h1>
+        </div>
+      </div>
+    </div>
+
+    <div class="hero__subtitle-wrap">
+      <p class="hero__subtitle">Native macOS. GPU-accelerated terminal. Built from scratch for AI-assisted development.</p>
+    </div>
+
+    <div class="hero__actions">
+      <a href="#" class="hero__btn hero__btn--primary">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+        Download for macOS
+      </a>
+      <a href="#" class="hero__btn hero__btn--ghost">View source</a>
+    </div>
+
+    <p class="hero__meta">macOS 14.0+ <span>&middot;</span> Apple Silicon <span>&middot;</span> v0.1.0-alpha</p>
+
+  </div>
+</section>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+
+    // ── GSAP Entrance Timeline ──
+    const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+
+    // Rules fade in
+    tl.set(['.hero__rule'], { visibility: 'visible' })
+      .fromTo('.hero__rule--top',
+        { width: '0%', opacity: 0 },
+        { width: '60%', opacity: 1, duration: 1.4 }, 0)
+      .fromTo('.hero__rule--bottom',
+        { width: '0%', opacity: 0 },
+        { width: '45%', opacity: 1, duration: 1.4 }, 0.15);
+
+    // Logo drops in with scale
+    tl.set('.hero__logo-wrap', { visibility: 'visible' })
+      .fromTo('.hero__logo-wrap',
+        { opacity: 0, scale: 0.7, y: -20 },
+        { opacity: 1, scale: 1, y: 0, duration: 1.0, ease: 'back.out(1.4)' }, 0.2);
+
+    // Title line 1 — clip reveal upward
+    tl.set('.hero__title-inner', { visibility: 'visible' })
+      .fromTo('.hero__title-line:nth-child(1) .hero__title-inner',
+        { yPercent: 110, opacity: 0 },
+        { yPercent: 0, opacity: 1, duration: 0.9, ease: 'power4.out' }, 0.5);
+
+    // Title line 2 — clip reveal upward, staggered
+    tl.fromTo('.hero__title-line:nth-child(2) .hero__title-inner',
+        { yPercent: 110, opacity: 0 },
+        { yPercent: 0, opacity: 1, duration: 0.9, ease: 'power4.out' }, 0.65);
+
+    // Subtitle slides up
+    tl.set('.hero__subtitle', { visibility: 'visible' })
+      .fromTo('.hero__subtitle',
+        { y: 30, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.8 }, 0.9);
+
+    // Buttons stagger in
+    tl.set('.hero__btn', { visibility: 'visible' })
+      .fromTo('.hero__btn',
+        { y: 20, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.7, stagger: 0.12 }, 1.1);
+
+    // Meta fades in
+    tl.set('.hero__meta', { visibility: 'visible' })
+      .fromTo('.hero__meta',
+        { opacity: 0, y: 10 },
+        { opacity: 1, y: 0, duration: 0.6 }, 1.35);
+
+    // ── Logo Breathing Animation ──
+    gsap.to('.hero__logo', {
+      scale: 1.06,
+      duration: 3.2,
+      repeat: -1,
+      yoyo: true,
+      ease: 'sine.inOut',
+    });
+
+    // Subtle glow pulse on logo
+    gsap.to('.hero__logo', {
+      filter: 'drop-shadow(0 0 50px #B5613F35)',
+      duration: 3.2,
+      repeat: -1,
+      yoyo: true,
+      ease: 'sine.inOut',
+    });
+
+    // ── Mouse Parallax ──
+    const parallaxElements = document.querySelectorAll('[data-parallax]');
+    let mouseX = 0;
+    let mouseY = 0;
+    let currentX = 0;
+    let currentY = 0;
+
+    document.addEventListener('mousemove', (e) => {
+      mouseX = (e.clientX / window.innerWidth - 0.5) * 2;
+      mouseY = (e.clientY / window.innerHeight - 0.5) * 2;
+    });
+
+    function animateParallax() {
+      // Smooth lerp
+      currentX += (mouseX - currentX) * 0.06;
+      currentY += (mouseY - currentY) * 0.06;
+
+      parallaxElements.forEach(el => {
+        const depth = parseFloat(el.dataset.parallax);
+        const moveX = currentX * depth * 100;
+        const moveY = currentY * depth * 80;
+        gsap.set(el, {
+          x: moveX,
+          y: moveY,
+        });
+      });
+
+      requestAnimationFrame(animateParallax);
+    }
+
+    animateParallax();
+
+  });
+</script>
+
+</body>
+</html>

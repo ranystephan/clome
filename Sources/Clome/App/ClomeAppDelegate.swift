@@ -44,6 +44,9 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate {
         }
 
         NSApp.activate(ignoringOtherApps: true)
+
+        // Show onboarding on first launch
+        OnboardingWindowController.showIfNeeded()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -95,6 +98,7 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Clome", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "Welcome to Clome…", action: #selector(showOnboarding(_:)), keyEquivalent: "")
         appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ",")
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Quit Clome", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -162,6 +166,10 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Actions
+
+    @objc private func showOnboarding(_ sender: Any?) {
+        OnboardingWindowController.show()
+    }
 
     @objc private func openSettings(_ sender: Any?) {
         SettingsWindowController.show()
