@@ -1,6 +1,6 @@
 import AppKit
 
 let app = NSApplication.shared
-nonisolated(unsafe) let delegate = ClomeAppDelegate()
+let delegate = (ClomeAppDelegate.self as NSObject.Type).init() as! ClomeAppDelegate
 app.delegate = delegate
 app.run()
