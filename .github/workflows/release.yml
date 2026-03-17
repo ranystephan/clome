@@ -43,9 +43,15 @@ jobs:
       - name: Fix xcframework paths
         run: |
           XC="vendor/ghostty/macos/GhosttyKit.xcframework"
+          echo "XCFramework contents:"
+          ls -la "$XC/" || true
+          # Symlink for header/lib path compatibility
           if [ ! -d "$XC/macos-arm64_x86_64" ] && [ -d "$XC/macos-arm64" ]; then
             ln -s macos-arm64 "$XC/macos-arm64_x86_64"
           fi
+          # Also check if library exists at expected path
+          echo "Library search path contents:"
+          ls -la "$XC/macos-arm64_x86_64/" || true
 
       - name: Generate Xcode project
         run: xcodegen generate
