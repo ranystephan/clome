@@ -3,17 +3,26 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'site/**'
+      - '*.md'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'site/**'
+      - '*.md'
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -26,7 +35,9 @@ jobs:
       - name: Build libghostty
         run: |
           cd vendor/ghostty
-          zig build -Demit-xcframework -Doptimize=ReleaseFast
+          zig build -Demit-xcframework -Doptimize=ReleaseFast -Dxcframework-target=native
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
 
       - name: Generate Xcode project
         run: xcodegen generate
