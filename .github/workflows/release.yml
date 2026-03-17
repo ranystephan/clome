@@ -36,7 +36,7 @@ jobs:
       - name: Build libghostty
         run: |
           cd vendor/ghostty
-          zig build -Demit-xcframework -Doptimize=ReleaseFast -Dxcframework-target=native
+          zig build -Demit-xcframework -Demit-macos-app=false -Doptimize=ReleaseFast -Dxcframework-target=native
         env:
           MACOSX_DEPLOYMENT_TARGET: "14.0"
 
