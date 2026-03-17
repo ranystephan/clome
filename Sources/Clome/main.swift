@@ -1,6 +1,7 @@
 import AppKit
 
 let app = NSApplication.shared
-let delegate = { @MainActor in ClomeAppDelegate() }()
+@MainActor func createDelegate() -> ClomeAppDelegate { ClomeAppDelegate() }
+let delegate = createDelegate()
 app.delegate = delegate
 app.run()

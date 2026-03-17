@@ -60,8 +60,9 @@ class NotebookPanel: NSView {
     private let accentAmber = NSColor(red: 0.85, green: 0.70, blue: 0.30, alpha: 1.0)
     private let accentRed   = NSColor(red: 0.85, green: 0.30, blue: 0.30, alpha: 1.0)
 
-    init(store: NotebookStore = .init()) {
-        self.store = store
+    init(store: NotebookStore? = nil) {
+        let resolvedStore = store ?? NotebookStore()
+        self.store = resolvedStore
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = baseBg.cgColor
