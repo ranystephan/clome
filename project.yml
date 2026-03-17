@@ -1,0 +1,72 @@
+name: Clome
+options:
+  bundleIdPrefix: com.clome
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "16.0"
+  generateEmptyDirectories: true
+
+# SwiftTreeSitter SPM package — uncomment when grammars are ready to bundle:
+# packages:
+#   SwiftTreeSitter:
+#     url: https://github.com/ChimeHQ/SwiftTreeSitter
+#     from: "0.8.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    PRODUCT_BUNDLE_IDENTIFIER: com.clome.app
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.developer-tools"
+    INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Clome. All rights reserved."
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    ENABLE_HARDENED_RUNTIME: YES
+
+targets:
+  Clome:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/Clome
+        type: group
+      - path: Sources/CGhostty
+        type: group
+      - path: Resources
+        type: group
+        buildPhase: resources
+        excludes:
+          - "Info.plist"
+    settings:
+      base:
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/CGhostty/include/Clome-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - $(PROJECT_DIR)/vendor/ghostty/macos/GhosttyKit.xcframework/macos-arm64_x86_64/Headers
+        LIBRARY_SEARCH_PATHS:
+          - $(PROJECT_DIR)/vendor/ghostty/macos/GhosttyKit.xcframework/macos-arm64_x86_64
+        OTHER_LDFLAGS:
+          - -lghostty
+          - -lz
+          - -lc++
+          - -lsqlite3
+          - -framework Metal
+          - -framework MetalKit
+          - -framework AppKit
+          - -framework QuartzCore
+          - -framework CoreText
+          - -framework WebKit
+          - -framework UniformTypeIdentifiers
+          - -framework UserNotifications
+          - -framework Carbon
+          - -framework CoreGraphics
+          - -framework IOKit
+          - -framework CoreVideo
+          - -framework IOSurface
+          - -framework AuthenticationServices
+        INFOPLIST_FILE: Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Clome.entitlements
+    # dependencies:
+    #   - package: SwiftTreeSitter

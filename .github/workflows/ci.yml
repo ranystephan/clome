@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Build libghostty
+        run: |
+          cd vendor/ghostty
+          zig build -Demit-xcframework -Doptimize=ReleaseFast
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build Clome
+        run: |
+          xcodebuild -project Clome.xcodeproj -scheme Clome \
+            -configuration Debug \
+            -derivedDataPath build/DerivedData \
+            build

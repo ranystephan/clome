@@ -1,0 +1,35 @@
+# Xcode
+Clome.xcodeproj/
+xcuserdata/
+*.xcworkspace
+DerivedData/
+build/
+
+# Zig build cache
+vendor/ghostty/.zig-cache/
+vendor/ghostty/zig-out/
+
+# GhosttyKit xcframework (built from source)
+vendor/ghostty/macos/GhosttyKit.xcframework/
+
+# macOS
+.DS_Store
+*.swp
+*.swo
+
+# IDE
+.vscode/
+.idea/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Release artifacts
+dist/
+*.dmg
+*.zip
+!vendor/**/*.zip
+
+# App bundles
+*.app
