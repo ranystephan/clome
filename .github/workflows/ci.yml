@@ -45,6 +45,10 @@ jobs:
           if [ ! -d "$XC/macos-arm64_x86_64" ] && [ -d "$XC/macos-arm64" ]; then
             ln -s macos-arm64 "$XC/macos-arm64_x86_64"
           fi
+          # Symlink library name if needed
+          if [ -f "$XC/macos-arm64_x86_64/libghostty-fat.a" ] && [ ! -f "$XC/macos-arm64_x86_64/libghostty.a" ]; then
+            ln -s libghostty-fat.a "$XC/macos-arm64_x86_64/libghostty.a"
+          fi
 
       - name: Generate Xcode project
         run: xcodegen generate

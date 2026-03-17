@@ -50,8 +50,10 @@ jobs:
             ln -s macos-arm64 "$XC/macos-arm64_x86_64"
           fi
           # Also check if library exists at expected path
-          echo "Library search path contents:"
-          ls -la "$XC/macos-arm64_x86_64/" || true
+          # Symlink library name if needed
+          if [ -f "$XC/macos-arm64_x86_64/libghostty-fat.a" ] && [ ! -f "$XC/macos-arm64_x86_64/libghostty.a" ]; then
+            ln -s libghostty-fat.a "$XC/macos-arm64_x86_64/libghostty.a"
+          fi
 
       - name: Generate Xcode project
         run: xcodegen generate
