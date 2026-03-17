@@ -4,18 +4,26 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.0-alpha)'
+        required: true
 
 permissions:
   contents: write
 
 jobs:
   build-and-release:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -28,7 +36,9 @@ jobs:
       - name: Build libghostty
         run: |
           cd vendor/ghostty
-          zig build -Demit-xcframework -Doptimize=ReleaseFast
+          zig build -Demit-xcframework -Doptimize=ReleaseFast -Dxcframework-target=native
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
 
       - name: Generate Xcode project
         run: xcodegen generate
@@ -44,13 +54,17 @@ jobs:
         id: package
         run: |
           APP_PATH="build/DerivedData/Build/Products/Release/Clome.app"
-          VERSION="${GITHUB_REF_NAME#v}"
-          ARCH="arm64"
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+            TAG="${TAG#v}"
+          fi
+          ARCH="$(uname -m)"
 
           mkdir -p dist
 
           # Create DMG
-          DMG_NAME="Clome-${VERSION}-${ARCH}.dmg"
+          DMG_NAME="Clome-${TAG}-${ARCH}.dmg"
           mkdir -p dmg-staging
           cp -R "$APP_PATH" dmg-staging/
           ln -s /Applications dmg-staging/Applications
@@ -59,18 +73,19 @@ jobs:
           rm -rf dmg-staging
 
           # Create ZIP
-          ZIP_NAME="Clome-${VERSION}-${ARCH}.zip"
+          ZIP_NAME="Clome-${TAG}-${ARCH}.zip"
           cd "$(dirname "$APP_PATH")"
           zip -r -y "${GITHUB_WORKSPACE}/dist/${ZIP_NAME}" Clome.app
           cd "${GITHUB_WORKSPACE}"
 
           echo "dmg=dist/${DMG_NAME}" >> "$GITHUB_OUTPUT"
           echo "zip=dist/${ZIP_NAME}" >> "$GITHUB_OUTPUT"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
           name: Clome v${{ steps.package.outputs.version }}
           prerelease: true
           generate_release_notes: true
