@@ -52,11 +52,20 @@ class TerminalSurface: NSView {
     /// Context window usage percentage for Claude Code sessions (0-100), nil if not detected.
     var contextPercentage: Int?
 
+    /// Per-surface command override (e.g. a restore wrapper script). Set before the surface is added to a window.
+    var restoreCommand: String?
+
+    /// Per-surface working directory override. Set before the surface is added to a window.
+    var restoreWorkingDirectory: String?
+
     init(ghosttyApp: GhosttyAppManager) {
         self.ghosttyApp = ghosttyApp
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = AppearanceSettings.shared.mainPanelBgColor.cgColor
+
+        // Register for file drag and drop
+        registerForDraggedTypes([.fileURL])
     }
 
     required init?(coder: NSCoder) {
@@ -96,6 +105,8 @@ class TerminalSurface: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
         if result, let surface {
@@ -118,7 +129,18 @@ class TerminalSurface: NSView {
         guard let app = ghosttyApp, let ghosttyAppInstance = app.app else { return }
 
         var cfg = app.makeSurfaceConfig(for: self)
+
+        // Hold NSString references so their .utf8String pointers stay valid
+        // through the ghostty_surface_new call.
+        let wdNS = restoreWorkingDirectory.map { $0 as NSString }
+        let cmdNS = restoreCommand.map { $0 as NSString }
+        cfg.working_directory = wdNS?.utf8String
+        cfg.command = cmdNS?.utf8String
+
         surface = ghostty_surface_new(ghosttyAppInstance, &cfg)
+
+        // prevent the compiler from releasing the NSStrings before this point
+        withExtendedLifetime((wdNS, cmdNS)) {}
 
         if surface != nil {
             // Trigger initial layout
@@ -126,6 +148,10 @@ class TerminalSurface: NSView {
             // Register with activity monitor
             TerminalActivityMonitor.shared.register(self)
         }
+
+        // Clear restore properties after use
+        restoreCommand = nil
+        restoreWorkingDirectory = nil
     }
 
     func destroySurface() {
@@ -368,6 +394,41 @@ class TerminalSurface: NSView {
             detectedProgram = nil
             programIcon = "terminal"
         }
+    }
+
+    /// Read the entire scrollback buffer + visible screen as a single string.
+    func readFullScrollback() -> String? {
+        guard let surface else { return nil }
+
+        // Use GHOSTTY_POINT_SCREEN to capture the full scrollback history
+        var selection = ghostty_selection_s()
+        selection.top_left = ghostty_point_s(
+            tag: GHOSTTY_POINT_SCREEN,
+            coord: GHOSTTY_POINT_COORD_TOP_LEFT,
+            x: 0,
+            y: 0
+        )
+        selection.bottom_right = ghostty_point_s(
+            tag: GHOSTTY_POINT_SCREEN,
+            coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT,
+            x: 999,
+            y: UInt32.max / 2  // Large value to capture all scrollback
+        )
+        selection.rectangle = false
+
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_text(surface, selection, &text),
+              let ptr = text.text, text.text_len > 0 else { return nil }
+
+        let rawStr = String(cString: ptr)
+        ghostty_surface_free_text(surface, &text)
+
+        // Strip trailing blank lines to reduce file size
+        let lines = rawStr.split(separator: "\n", omittingEmptySubsequences: false)
+        let trimmed = lines.reversed()
+            .drop(while: { $0.trimmingCharacters(in: .whitespaces).isEmpty })
+            .reversed()
+        return trimmed.joined(separator: "\n")
     }
 
     /// Read the full visible terminal viewport as a single string.
@@ -751,6 +812,62 @@ class TerminalSurface: NSView {
             return "~" + path.dropFirst(home.count)
         }
         return path
+    }
+
+    // MARK: - Drag and Drop
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self],
+                                                       options: [.urlReadingFileURLsOnly: true]) else {
+            return []
+        }
+        return .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let surface else { return false }
+
+        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self],
+                                                                options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              !urls.isEmpty else {
+            return false
+        }
+
+        // Build space-separated, shell-escaped paths
+        let escapedPaths = urls.map { url -> String in
+            shellEscape(url.path)
+        }
+        let text = escapedPaths.joined(separator: " ")
+
+        // Type the paths into the terminal via ghostty key input
+        for scalar in text.unicodeScalars {
+            var input = ghostty_input_key_s()
+            input.action = GHOSTTY_ACTION_PRESS
+            input.mods = ghostty_input_mods_e(rawValue: 0)
+            input.keycode = 0
+            input.composing = false
+
+            let char = String(scalar)
+            char.withCString { ptr in
+                input.text = ptr
+                input.unshifted_codepoint = scalar.value
+                ghostty_surface_key(surface, input)
+            }
+        }
+
+        return true
+    }
+
+    /// Shell-escape a file path for safe pasting into a terminal.
+    private func shellEscape(_ path: String) -> String {
+        // If path contains no special characters, return as-is
+        let safeChars = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "/-_.~"))
+        if path.unicodeScalars.allSatisfy({ safeChars.contains($0) }) {
+            return path
+        }
+        // Wrap in single quotes; escape any existing single quotes
+        let escaped = path.replacingOccurrences(of: "'", with: "'\\''")
+        return "'\(escaped)'"
     }
 
     deinit {

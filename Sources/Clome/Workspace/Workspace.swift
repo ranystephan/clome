@@ -191,9 +191,11 @@ class Workspace: Identifiable {
     // MARK: - Tab Management
 
     @discardableResult
-    func addTerminalTab() -> WorkspaceTab? {
+    func addTerminalTab(workingDirectory: String? = nil, restoreCommand: String? = nil) -> WorkspaceTab? {
         guard let app = ghosttyApp else { return nil }
         let terminal = TerminalSurface(ghosttyApp: app)
+        terminal.restoreWorkingDirectory = workingDirectory
+        terminal.restoreCommand = restoreCommand
         let tab = WorkspaceTab(type: .terminal, view: terminal, title: "Terminal")
         addTab(tab)
         return tab

@@ -118,6 +118,25 @@ class TabBarView: NSView {
         }
     }
 
+    /// Lightweight selection update — only changes visual state on existing tab views.
+    func updateSelection(index: Int) {
+        guard index >= 0, index < tabs.count else { return }
+        let oldIndex = selectedIndex
+        guard index != oldIndex else { return }
+        selectedIndex = index
+
+        if oldIndex >= 0, oldIndex < tabs.count {
+            tabs[oldIndex].updateSelectionState(false)
+        }
+        tabs[index].updateSelectionState(true)
+    }
+
+    /// Update a single tab's title and icon without rebuilding all tabs.
+    func updateTabTitle(at index: Int, title: String, icon: NSImage?) {
+        guard index >= 0, index < tabs.count else { return }
+        tabs[index].updateContent(title: title, icon: icon)
+    }
+
     @objc private func tabTapped(_ sender: TabItemView) {
         delegate?.tabBar(self, didSelectTabAt: sender.index)
     }
@@ -131,9 +150,12 @@ class TabBarView: NSView {
 
 class TabItemView: NSControl {
     let index: Int
-    let isSelected: Bool
+    private(set) var isSelected: Bool
     var closeAction: ((Int) -> Void)?
     private var closeButton: NSButton!
+    private var label: NSTextField!
+    private var iconView: NSImageView!
+    private let hasCustomIcon: Bool
 
     private let activeColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
     private let inactiveColor = NSColor.clear
@@ -142,6 +164,7 @@ class TabItemView: NSControl {
     init(title: String, icon: NSImage? = nil, index: Int, isSelected: Bool) {
         self.index = index
         self.isSelected = isSelected
+        self.hasCustomIcon = icon != nil
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -152,7 +175,7 @@ class TabItemView: NSControl {
         let textColor = isSelected ? NSColor(white: 0.92, alpha: 1.0) : NSColor(white: 0.5, alpha: 1.0)
 
         // Icon
-        let iconView = NSImageView()
+        iconView = NSImageView()
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.imageScaling = .scaleProportionallyDown
         if let icon = icon {
@@ -164,7 +187,7 @@ class TabItemView: NSControl {
         }
         addSubview(iconView)
 
-        let label = NSTextField(labelWithString: title)
+        label = NSTextField(labelWithString: title)
         label.translatesAutoresizingMaskIntoConstraints = false
         label.font = .systemFont(ofSize: 11, weight: isSelected ? .medium : .regular)
         label.textColor = textColor
@@ -213,6 +236,27 @@ class TabItemView: NSControl {
         closeAction?(index)
     }
 
+    /// Update visual state without rebuilding the view.
+    func updateSelectionState(_ selected: Bool) {
+        isSelected = selected
+        let textColor = selected ? NSColor(white: 0.92, alpha: 1.0) : NSColor(white: 0.5, alpha: 1.0)
+        layer?.backgroundColor = selected ? activeColor.cgColor : inactiveColor.cgColor
+        label.textColor = textColor
+        label.font = .systemFont(ofSize: 11, weight: selected ? .medium : .regular)
+        if !hasCustomIcon { iconView.contentTintColor = textColor }
+        closeButton.alphaValue = selected ? 0.8 : 0.0
+    }
+
+    /// Update title and icon content without rebuilding the view.
+    func updateContent(title: String, icon: NSImage?) {
+        label.stringValue = title
+        if let icon {
+            iconView.image = icon
+        }
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     override func mouseDown(with event: NSEvent) {
         sendAction(action, to: target)
     }
@@ -222,7 +266,7 @@ class TabItemView: NSControl {
         trackingAreas.forEach { removeTrackingArea($0) }
         addTrackingArea(NSTrackingArea(
             rect: bounds,
-            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
+            options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect],
             owner: self
         ))
     }

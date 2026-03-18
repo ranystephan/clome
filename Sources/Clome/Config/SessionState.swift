@@ -81,6 +81,55 @@ class SessionState {
             sqlite3_exec(db, "ALTER TABLE workspaces ADD COLUMN color TEXT NOT NULL DEFAULT 'blue'", nil, nil, nil)
             upsert(key: "schema_version", value: "1")
         }
+        if version < 2 {
+            let sql = """
+            CREATE TABLE IF NOT EXISTS pinned_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL UNIQUE,
+                position INTEGER NOT NULL
+            )
+            """
+            sqlite3_exec(db, sql, nil, nil, nil)
+            upsert(key: "schema_version", value: "2")
+        }
+    }
+
+    // MARK: - Pinned Files
+
+    func savePinnedFiles(_ paths: [String]) {
+        guard db != nil else { return }
+        guard beginTransaction() else { return }
+        sqlite3_exec(db, "DELETE FROM pinned_files", nil, nil, nil)
+        let sql = "INSERT INTO pinned_files (path, position) VALUES (?, ?)"
+        for (index, path) in paths.enumerated() {
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, (path as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int(stmt, 2, Int32(index))
+                let rc = sqlite3_step(stmt)
+                if rc != SQLITE_DONE {
+                    print("SessionState: INSERT pinned_file failed: \(errorMessage())")
+                }
+                sqlite3_finalize(stmt)
+            }
+        }
+        commitTransaction()
+    }
+
+    func restorePinnedFiles() -> [String] {
+        guard db != nil else { return [] }
+        var paths: [String] = []
+        let sql = "SELECT path FROM pinned_files ORDER BY position"
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let ptr = sqlite3_column_text(stmt, 0) {
+                    paths.append(String(cString: ptr))
+                }
+            }
+            sqlite3_finalize(stmt)
+        }
+        return paths
     }
 
     // MARK: - Transaction Helpers
@@ -132,6 +181,9 @@ class SessionState {
     func saveWorkspaces(_ workspaces: [Workspace], activeIndex: Int) {
         guard db != nil else { return }
         guard beginTransaction() else { return }
+
+        // Clear old scrollback files before saving new ones
+        clearAllScrollback()
 
         var success = true
 
@@ -228,10 +280,18 @@ class SessionState {
                 break
             }
 
+            let surfaceId = UUID().uuidString
+
+            // For terminal tabs, save the scrollback content to a file
+            if tab.type == .terminal, let terminal = tab.view as? TerminalSurface {
+                if let scrollback = terminal.readFullScrollback(), !scrollback.isEmpty {
+                    saveTerminalScrollback(scrollback, forSurfaceId: surfaceId)
+                }
+            }
+
             let sql = "INSERT INTO surfaces (id, workspace_id, type, working_directory, title, position, url, split_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
             var stmt: OpaquePointer?
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
-                let surfaceId = UUID().uuidString
                 sqlite3_bind_text(stmt, 1, (surfaceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
                 sqlite3_bind_text(stmt, 2, (workspaceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
                 sqlite3_bind_text(stmt, 3, (tab.type.rawValue as NSString).utf8String, -1, SQLITE_TRANSIENT)
@@ -275,6 +335,7 @@ class SessionState {
     }
 
     struct SavedTab {
+        let id: String        // surface UUID (used for scrollback file lookup)
         let type: String      // terminal, browser, editor, project, pdf, notebook
         let title: String
         let resourcePath: String  // file path, URL, or working directory
@@ -330,31 +391,33 @@ class SessionState {
 
     private func restoreTabs(forWorkspaceId workspaceId: String) -> [SavedTab] {
         var tabs: [SavedTab] = []
-        let sql = "SELECT type, title, working_directory, position, split_path FROM surfaces WHERE workspace_id = ? ORDER BY position"
+        let sql = "SELECT id, type, title, working_directory, position, split_path FROM surfaces WHERE workspace_id = ? ORDER BY position"
         var stmt: OpaquePointer?
         if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
             sqlite3_bind_text(stmt, 1, (workspaceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
             while sqlite3_step(stmt) == SQLITE_ROW {
-                guard let typePtr = sqlite3_column_text(stmt, 0),
-                      let titlePtr = sqlite3_column_text(stmt, 1) else {
+                guard let idPtr = sqlite3_column_text(stmt, 0),
+                      let typePtr = sqlite3_column_text(stmt, 1),
+                      let titlePtr = sqlite3_column_text(stmt, 2) else {
                     continue
                 }
+                let id = String(cString: idPtr)
                 let type = String(cString: typePtr)
                 let title = String(cString: titlePtr)
                 let resourcePath: String
-                if let ptr = sqlite3_column_text(stmt, 2) {
+                if let ptr = sqlite3_column_text(stmt, 3) {
                     resourcePath = String(cString: ptr)
                 } else {
                     resourcePath = ""
                 }
-                let position = Int(sqlite3_column_int(stmt, 3))
+                let position = Int(sqlite3_column_int(stmt, 4))
                 let extraData: String
-                if let ptr = sqlite3_column_text(stmt, 4) {
+                if let ptr = sqlite3_column_text(stmt, 5) {
                     extraData = String(cString: ptr)
                 } else {
                     extraData = ""
                 }
-                tabs.append(SavedTab(type: type, title: title, resourcePath: resourcePath, position: position, extraData: extraData))
+                tabs.append(SavedTab(id: id, type: type, title: title, resourcePath: resourcePath, position: position, extraData: extraData))
             }
             sqlite3_finalize(stmt)
         }
@@ -412,6 +475,47 @@ class SessionState {
         let g = CGFloat((val >> 8) & 0xFF) / 255.0
         let b = CGFloat(val & 0xFF) / 255.0
         return NSColor(red: r, green: g, blue: b, alpha: 1.0)
+    }
+
+    // MARK: - Terminal Scrollback Persistence
+
+    /// Directory where terminal scrollback files are stored.
+    private var scrollbackDir: String {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport.appendingPathComponent("Clome/scrollback").path
+    }
+
+    /// Ensure the scrollback directory exists.
+    private func ensureScrollbackDir() {
+        try? FileManager.default.createDirectory(atPath: scrollbackDir, withIntermediateDirectories: true)
+    }
+
+    /// Save terminal scrollback text for a given surface ID.
+    func saveTerminalScrollback(_ text: String, forSurfaceId surfaceId: String) {
+        ensureScrollbackDir()
+        let path = (scrollbackDir as NSString).appendingPathComponent("\(surfaceId).txt")
+        try? text.write(toFile: path, atomically: true, encoding: .utf8)
+    }
+
+    /// Path to the scrollback file for a given surface ID, or nil if it doesn't exist.
+    func scrollbackPath(forSurfaceId surfaceId: String) -> String? {
+        let path = (scrollbackDir as NSString).appendingPathComponent("\(surfaceId).txt")
+        return FileManager.default.fileExists(atPath: path) ? path : nil
+    }
+
+    /// Remove a scrollback file after it has been restored.
+    func removeScrollback(forSurfaceId surfaceId: String) {
+        let path = (scrollbackDir as NSString).appendingPathComponent("\(surfaceId).txt")
+        try? FileManager.default.removeItem(atPath: path)
+    }
+
+    /// Remove all scrollback files (called before saving new ones).
+    func clearAllScrollback() {
+        let dir = scrollbackDir
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return }
+        for file in files where file.hasSuffix(".txt") {
+            try? FileManager.default.removeItem(atPath: (dir as NSString).appendingPathComponent(file))
+        }
     }
 
     // MARK: - LSP Custom Paths

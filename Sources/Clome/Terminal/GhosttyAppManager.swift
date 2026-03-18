@@ -92,7 +92,9 @@ class GhosttyAppManager {
     }
 
     /// Create a new terminal surface configuration for a given TerminalSurface.
-    func makeSurfaceConfig(for view: TerminalSurface, workingDirectory: String? = nil) -> ghostty_surface_config_s {
+    /// NOTE: working_directory and command are set by TerminalSurface.createSurface()
+    /// which manages the C string lifetimes properly.
+    func makeSurfaceConfig(for view: TerminalSurface) -> ghostty_surface_config_s {
         var cfg = ghostty_surface_config_new()
         cfg.platform_tag = GHOSTTY_PLATFORM_MACOS
         cfg.platform.macos.nsview = Unmanaged.passUnretained(view).toOpaque()
@@ -100,13 +102,6 @@ class GhosttyAppManager {
         cfg.scale_factor = Double(view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0)
         cfg.font_size = 0 // use config default
         cfg.context = GHOSTTY_SURFACE_CONTEXT_SPLIT
-
-        if let wd = workingDirectory {
-            // We need to keep the string alive during surface creation
-            // The caller should manage this
-            cfg.working_directory = (wd as NSString).utf8String
-        }
-
         return cfg
     }
 
