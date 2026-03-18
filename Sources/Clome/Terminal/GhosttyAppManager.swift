@@ -16,6 +16,16 @@ class GhosttyAppManager {
         let cfg = ghostty_config_new()
         ghostty_config_load_default_files(cfg)
         ghostty_config_load_recursive_files(cfg)
+
+        // Override command to launch the user's shell directly instead of
+        // using /usr/bin/login, which fails with PermissionDenied for
+        // ad-hoc signed apps due to macOS SIP.
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let overrideConfig = "command=\(shell) -l\n"
+        let tmpURL = FileManager.default.temporaryDirectory.appendingPathComponent("clome-ghostty-override.conf")
+        try? overrideConfig.write(to: tmpURL, atomically: true, encoding: .utf8)
+        ghostty_config_load_file(cfg, tmpURL.path)
+
         ghostty_config_finalize(cfg)
         self.config = cfg
 

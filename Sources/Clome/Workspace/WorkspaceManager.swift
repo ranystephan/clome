@@ -80,4 +80,122 @@ class WorkspaceManager {
         guard index >= 0, index < workspaces.count else { return }
         workspaces[index].name = name
     }
+
+    /// Restore workspaces from saved session state. Returns true if restoration occurred.
+    @discardableResult
+    func restoreFromSession() -> Bool {
+        let saved = SessionState.shared.restoreWorkspaces()
+        guard !saved.isEmpty else { return false }
+
+        // Remove the default workspace created at init
+        workspaces.removeAll()
+        activeWorkspaceIndex = -1
+
+        for savedWs in saved {
+            let color = WorkspaceColor(rawValue: savedWs.color) ?? WorkspaceColor.color(at: savedWs.position)
+            let workspace = Workspace(
+                name: savedWs.name,
+                icon: savedWs.icon,
+                color: color,
+                ghosttyApp: ghosttyApp,
+                skipInitialTab: true
+            )
+            workspaces.append(workspace)
+
+            // Restore tabs
+            for tab in savedWs.tabs {
+                restoreTab(tab, into: workspace)
+            }
+
+            // Re-enable auto-terminal creation now that restore is complete
+            workspace.finishRestore()
+
+            // If no tabs were restored, add a default terminal
+            if workspace.tabs.isEmpty {
+                workspace.addTerminalTab()
+            }
+
+            // Restore active tab (fall back to 0 if some tabs failed to restore)
+            if savedWs.activeTabIndex >= 0 && savedWs.activeTabIndex < workspace.tabs.count {
+                workspace.selectTab(savedWs.activeTabIndex)
+            } else if !workspace.tabs.isEmpty {
+                workspace.selectTab(0)
+            }
+        }
+
+        // Restore active workspace
+        let activeIndex = SessionState.shared.restoreActiveWorkspaceIndex()
+        if activeIndex >= 0 && activeIndex < workspaces.count {
+            switchTo(index: activeIndex)
+        } else if !workspaces.isEmpty {
+            switchTo(index: 0)
+        }
+
+        return true
+    }
+
+    private func restoreTab(_ savedTab: SessionState.SavedTab, into workspace: Workspace) {
+        guard let tabType = WorkspaceTab.TabType(rawValue: savedTab.type) else {
+            print("[Session] Unknown tab type in session: '\(savedTab.type)', skipping")
+            return
+        }
+
+        switch tabType {
+        case .terminal:
+            workspace.addTerminalTab()
+
+        case .browser:
+            let urlStr = savedTab.resourcePath.isEmpty ? nil : savedTab.resourcePath
+            if let urlStr, URL(string: urlStr) == nil {
+                print("[Session] Invalid browser URL: \(urlStr), opening blank")
+                workspace.addBrowserTab(url: nil)
+            } else {
+                workspace.addBrowserTab(url: urlStr)
+            }
+
+        case .editor:
+            guard !savedTab.resourcePath.isEmpty else { return }
+            guard FileManager.default.fileExists(atPath: savedTab.resourcePath) else {
+                print("[Session] Skipping editor tab: file not found at \(savedTab.resourcePath)")
+                return
+            }
+            try? workspace.addEditorTab(path: savedTab.resourcePath)
+
+        case .project:
+            guard !savedTab.resourcePath.isEmpty else { return }
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: savedTab.resourcePath, isDirectory: &isDir),
+                  isDir.boolValue else {
+                print("[Session] Skipping project tab: directory not found at \(savedTab.resourcePath)")
+                return
+            }
+            workspace.addProjectTab(directory: savedTab.resourcePath)
+            // Restore open sub-files within the project tab
+            if !savedTab.extraData.isEmpty,
+               let data = savedTab.extraData.data(using: .utf8),
+               let paths = try? JSONSerialization.jsonObject(with: data) as? [String],
+               let projectPanel = workspace.tabs.last?.view as? ProjectPanel {
+                projectPanel.restoreOpenFiles(paths)
+            }
+
+        case .pdf:
+            guard !savedTab.resourcePath.isEmpty else { return }
+            guard FileManager.default.fileExists(atPath: savedTab.resourcePath) else {
+                print("[Session] Skipping pdf tab: file not found at \(savedTab.resourcePath)")
+                return
+            }
+            workspace.addPDFTab(path: savedTab.resourcePath)
+
+        case .notebook:
+            guard !savedTab.resourcePath.isEmpty else { return }
+            guard FileManager.default.fileExists(atPath: savedTab.resourcePath) else {
+                print("[Session] Skipping notebook tab: file not found at \(savedTab.resourcePath)")
+                return
+            }
+            try? workspace.addNotebookTab(path: savedTab.resourcePath)
+
+        case .diff:
+            break  // Transient, skip
+        }
+    }
 }

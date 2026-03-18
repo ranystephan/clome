@@ -355,7 +355,7 @@ class ProjectPanel: NSView {
     }
 
     private func closeOtherFiles(_ keepIndex: Int) {
-        let pathToKeep = openFiles[keepIndex].path
+        _ = openFiles[keepIndex].path
         for i in stride(from: openFiles.count - 1, through: 0, by: -1) where i != keepIndex {
             openFiles[i].editor?.editorView.cleanup()
             openFiles.remove(at: i)
@@ -406,6 +406,19 @@ class ProjectPanel: NSView {
     /// The display title for the workspace tab bar
     var directoryName: String {
         (rootDirectory as NSString).lastPathComponent
+    }
+
+    /// Returns the file paths of all currently open files in this project panel.
+    var openFilePaths: [String] {
+        openFiles.compactMap { $0.path.isEmpty ? nil : $0.path }
+    }
+
+    /// Opens the given files (used during session restore).
+    func restoreOpenFiles(_ paths: [String]) {
+        for path in paths {
+            guard FileManager.default.fileExists(atPath: path) else { continue }
+            openFile(path)
+        }
     }
 }
 

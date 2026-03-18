@@ -127,10 +127,13 @@ class Workspace: Identifiable {
     var name: String
     var icon: String // SF Symbol name
     var color: WorkspaceColor
+    /// When true, suppresses auto-terminal creation in ghosttyApp didSet (used during session restore)
+    private var suppressAutoTerminal = false
+
     weak var ghosttyApp: GhosttyAppManager? {
         didSet {
             // If ghosttyApp was nil at init time (Workspace 1), create the initial terminal now
-            if oldValue == nil && ghosttyApp != nil && tabs.isEmpty {
+            if oldValue == nil && ghosttyApp != nil && tabs.isEmpty && !suppressAutoTerminal {
                 addTerminalTab()
             }
         }
@@ -154,6 +157,9 @@ class Workspace: Identifiable {
     /// Called when tabs change (add/remove/select) so sidebar + tab bar can update
     var onTabsChanged: (() -> Void)?
 
+    /// Lightweight callback — only the active tab selection changed (no add/remove/reorder)
+    var onActiveTabChanged: (() -> Void)?
+
     var activeTab: WorkspaceTab? {
         guard activeTabIndex >= 0, activeTabIndex < tabs.count else { return nil }
         return tabs[activeTabIndex]
@@ -163,17 +169,23 @@ class Workspace: Identifiable {
         activeTab?.view as? TerminalSurface
     }
 
-    init(name: String, icon: String = "terminal", color: WorkspaceColor = .blue, ghosttyApp: GhosttyAppManager?) {
+    init(name: String, icon: String = "terminal", color: WorkspaceColor = .blue, ghosttyApp: GhosttyAppManager?, skipInitialTab: Bool = false) {
         self.name = name
         self.icon = icon
         self.color = color
+        self.suppressAutoTerminal = skipInitialTab
         self.ghosttyApp = ghosttyApp
         contentContainer.wantsLayer = true
 
-        // Create initial terminal tab
-        if ghosttyApp != nil {
+        // Create initial terminal tab (unless restoring from session)
+        if ghosttyApp != nil && !skipInitialTab {
             addTerminalTab()
         }
+    }
+
+    /// Call after session restore is complete to re-enable auto-terminal creation
+    func finishRestore() {
+        suppressAutoTerminal = false
     }
 
     // MARK: - Tab Management
@@ -249,23 +261,32 @@ class Workspace: Identifiable {
         }
         observeTabView(tab.view)
         selectTab(tabs.count - 1)
+        onTabsChanged?()
     }
 
     func selectTab(_ index: Int) {
         guard index >= 0, index < tabs.count else { return }
+        let previousIndex = activeTabIndex
         activeTabIndex = index
 
-        // Swap content — show the tab's split container (which may have multiple panes)
-        contentContainer.subviews.forEach { $0.removeFromSuperview() }
+        // Hide previous tab's container instead of removing it
+        if previousIndex >= 0 && previousIndex < tabs.count {
+            tabs[previousIndex].splitContainer.isHidden = true
+        }
+
+        // Show the selected tab's container — add to hierarchy only on first show
         let container = tabs[index].splitContainer
-        container.translatesAutoresizingMaskIntoConstraints = false
-        contentContainer.addSubview(container)
-        NSLayoutConstraint.activate([
-            container.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            container.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            container.topAnchor.constraint(equalTo: contentContainer.topAnchor),
-            container.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
-        ])
+        if container.superview !== contentContainer {
+            container.translatesAutoresizingMaskIntoConstraints = false
+            contentContainer.addSubview(container)
+            NSLayoutConstraint.activate([
+                container.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+                container.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+                container.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+                container.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+            ])
+        }
+        container.isHidden = false
 
         // Focus the focused pane (or the original view)
         let focusTarget = tabs[index].focusedPane ?? tabs[index].view
@@ -273,7 +294,7 @@ class Workspace: Identifiable {
             focusTarget.window?.makeFirstResponder(terminal)
         }
 
-        onTabsChanged?()
+        onActiveTabChanged?()
     }
 
     func closeTab(_ index: Int) {
@@ -293,11 +314,14 @@ class Workspace: Identifiable {
         if tabs.isEmpty {
             activeTabIndex = -1
             contentContainer.subviews.forEach { $0.removeFromSuperview() }
-        } else if activeTabIndex >= tabs.count {
-            selectTab(tabs.count - 1)
-        } else {
+        } else if index == activeTabIndex {
+            // Closed the active tab — select the nearest remaining tab
             selectTab(min(activeTabIndex, tabs.count - 1))
+        } else if index < activeTabIndex {
+            // Closed a tab before the active one — adjust index to follow the same tab
+            activeTabIndex -= 1
         }
+        // If closed tab was after active, activeTabIndex is still valid — no change needed
         onTabsChanged?()
     }
 

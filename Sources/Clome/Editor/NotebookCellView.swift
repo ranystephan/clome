@@ -165,8 +165,7 @@ private enum Metrics {
     static let cellMarginH: CGFloat = 24
 }
 
-private enum Colors {
-    // baseBg removed — notebook uses AppearanceSettings.shared.mainPanelBgColor directly
+enum NotebookColors {
     // Cell bg: barely lifted — just enough to sense a surface
     static let cellBg = NSColor(white: 1.0, alpha: 0.03)
     static let cellBgFocused = NSColor(white: 1.0, alpha: 0.05)
@@ -178,6 +177,7 @@ private enum Colors {
     static let textSecondary = NSColor(white: 1.0, alpha: 0.50)
     static let textMuted = NSColor(white: 1.0, alpha: 0.30)
 
+    static let accentBlue = NSColor(red: 0.40, green: 0.55, blue: 1.0, alpha: 1.0)
     static let accentGreen = NSColor(red: 0.38, green: 0.78, blue: 0.48, alpha: 1.0)
     static let accentAmber = NSColor(red: 0.88, green: 0.72, blue: 0.32, alpha: 1.0)
     static let accentRed = NSColor(red: 0.88, green: 0.32, blue: 0.32, alpha: 1.0)
@@ -186,10 +186,8 @@ private enum Colors {
     static let errorText = NSColor(red: 0.88, green: 0.35, blue: 0.35, alpha: 1.0)
     static let errorBar = NSColor(red: 0.88, green: 0.32, blue: 0.32, alpha: 0.35)
 
-    // Badge
-    static let badgeBg = NSColor(white: 1.0, alpha: 0.06)
+    static let borderSubtle = NSColor(white: 1.0, alpha: 0.06)
     static let badgeText = NSColor(white: 1.0, alpha: 0.40)
-    static let badgeRunning = NSColor(red: 0.38, green: 0.78, blue: 0.48, alpha: 0.15)
 
     // Action pill
     static let pillBg = NSColor(white: 1.0, alpha: 0.08)
@@ -209,8 +207,6 @@ protocol NotebookCellViewDelegate: AnyObject {
     func cellDidRequestRun(_ cellView: NotebookCellView)
     func cellDidRequestRunAndAdvance(_ cellView: NotebookCellView)
     func cellDidRequestClearOutput(_ cellView: NotebookCellView)
-    func cellDidRequestToggleSource(_ cellView: NotebookCellView)
-    func cellDidRequestToggleOutput(_ cellView: NotebookCellView)
 }
 
 // MARK: - NotebookCellView
@@ -227,9 +223,8 @@ class NotebookCellView: NSView {
     private var isFocused = false
     private var isHovered = false
     private var executionState: NotebookStore.CellExecutionState = .idle
-    var isSourceCollapsed = false
-    var isOutputCollapsed = false
     private(set) var isMarkdownRendered = false
+    private var isUpdatingFromModel = false
 
     // Fonts
     private let codeFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -248,10 +243,9 @@ class NotebookCellView: NSView {
     private var sourceTextView: NotebookTextView!
     private var sourceHeightConstraint: NSLayoutConstraint?
 
-    // UI — Rendered markdown (WKWebView with KaTeX)
-    private var renderedWebView: WKWebView!
+    // UI — Rendered markdown (WKWebView with KaTeX) — lazily created
+    private var renderedWebView: WKWebView?
     private var renderedHeightConstraint: NSLayoutConstraint?
-    // Bottom constraint for rendered view (alternative to source/output chains)
     private var renderedToBottomConstraint: NSLayoutConstraint?
 
     // UI — Output (lives inside cellBody, below source)
@@ -305,6 +299,15 @@ class NotebookCellView: NSView {
         window?.makeFirstResponder(sourceTextView)
     }
 
+    /// Clean up resources before this view is removed from the hierarchy.
+    func prepareForRemoval() {
+        if let webView = renderedWebView {
+            webView.configuration.userContentController.removeScriptMessageHandler(forName: "clome")
+        }
+        badgeLabel.layer?.removeAllAnimations()
+        delegate = nil
+    }
+
     // MARK: - Layout
 
     private func setupUI() {
@@ -312,10 +315,10 @@ class NotebookCellView: NSView {
         cellBody = NSView()
         cellBody.translatesAutoresizingMaskIntoConstraints = false
         cellBody.wantsLayer = true
-        cellBody.layer?.backgroundColor = Colors.cellBg.cgColor
+        cellBody.layer?.backgroundColor = NotebookColors.cellBg.cgColor
         cellBody.layer?.cornerRadius = Metrics.cellCornerRadius
         cellBody.layer?.cornerCurve = .continuous
-        cellBody.layer?.borderColor = NSColor(white: 1.0, alpha: 0.06).cgColor
+        cellBody.layer?.borderColor = NotebookColors.borderSubtle.cgColor
         cellBody.layer?.borderWidth = 0.5
         addSubview(cellBody)
 
@@ -323,7 +326,7 @@ class NotebookCellView: NSView {
         focusBar = NSView()
         focusBar.translatesAutoresizingMaskIntoConstraints = false
         focusBar.wantsLayer = true
-        focusBar.layer?.backgroundColor = Colors.focusAccent.cgColor
+        focusBar.layer?.backgroundColor = NotebookColors.focusAccent.cgColor
         focusBar.layer?.cornerRadius = Metrics.focusBarWidth / 2
         focusBar.alphaValue = 0
         addSubview(focusBar)
@@ -333,9 +336,6 @@ class NotebookCellView: NSView {
 
         // Source editor
         setupSource()
-
-        // Rendered markdown view (hidden by default)
-        setupRenderedMarkdown()
 
         // Output area (below source, inside cell body)
         setupOutput()
@@ -371,7 +371,7 @@ class NotebookCellView: NSView {
         badgeLabel = NSTextField(labelWithString: "")
         badgeLabel.translatesAutoresizingMaskIntoConstraints = false
         badgeLabel.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
-        badgeLabel.textColor = Colors.badgeText
+        badgeLabel.textColor = NotebookColors.badgeText
         badgeLabel.alignment = .center
         badgeLabel.lineBreakMode = .byTruncatingTail
         badgeView.addSubview(badgeLabel)
@@ -406,7 +406,7 @@ class NotebookCellView: NSView {
         sourceTextView.isRichText = false
         sourceTextView.allowsUndo = true
         sourceTextView.font = codeFont
-        sourceTextView.textColor = Colors.textPrimary
+        sourceTextView.textColor = NotebookColors.textPrimary
         sourceTextView.backgroundColor = .clear
         sourceTextView.drawsBackground = false
         sourceTextView.isAutomaticQuoteSubstitutionEnabled = false
@@ -429,31 +429,39 @@ class NotebookCellView: NSView {
             sourceScrollView.trailingAnchor.constraint(equalTo: cellBody.trailingAnchor),
             sourceScrollView.topAnchor.constraint(equalTo: cellBody.topAnchor),
         ])
+
+        // Create height constraint once — updateSourceHeight() will only change .constant
+        sourceHeightConstraint = sourceScrollView.heightAnchor.constraint(equalToConstant: Metrics.minSourceHeight)
+        sourceHeightConstraint?.isActive = true
     }
 
-    // MARK: - Rendered Markdown
+    // MARK: - Rendered Markdown (Lazy)
 
-    private func setupRenderedMarkdown() {
+    /// Lazily creates the WKWebView for markdown rendering. Only called for markdown cells.
+    private func ensureRenderedMarkdownSetup() {
+        guard renderedWebView == nil else { return }
+
         let config = WKWebViewConfiguration()
         let userContentController = WKUserContentController()
         userContentController.add(MarkdownWebViewMessageHandler(cellView: self), name: "clome")
         config.userContentController = userContentController
 
-        renderedWebView = WKWebView(frame: .zero, configuration: config)
-        renderedWebView.translatesAutoresizingMaskIntoConstraints = false
-        renderedWebView.setValue(false, forKey: "drawsBackground")
-        renderedWebView.isHidden = true
-        renderedWebView.navigationDelegate = self
-        cellBody.addSubview(renderedWebView)
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        webView.setValue(false, forKey: "drawsBackground")
+        webView.isHidden = true
+        webView.navigationDelegate = self
+        cellBody.addSubview(webView)
 
         NSLayoutConstraint.activate([
-            renderedWebView.leadingAnchor.constraint(equalTo: cellBody.leadingAnchor),
-            renderedWebView.trailingAnchor.constraint(equalTo: cellBody.trailingAnchor),
-            renderedWebView.topAnchor.constraint(equalTo: cellBody.topAnchor),
+            webView.leadingAnchor.constraint(equalTo: cellBody.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: cellBody.trailingAnchor),
+            webView.topAnchor.constraint(equalTo: cellBody.topAnchor),
         ])
 
-        renderedHeightConstraint = renderedWebView.heightAnchor.constraint(equalToConstant: Metrics.minSourceHeight)
-        renderedToBottomConstraint = renderedWebView.bottomAnchor.constraint(equalTo: cellBody.bottomAnchor)
+        renderedHeightConstraint = webView.heightAnchor.constraint(equalToConstant: Metrics.minSourceHeight)
+        renderedToBottomConstraint = webView.bottomAnchor.constraint(equalTo: cellBody.bottomAnchor)
+        renderedWebView = webView
     }
 
     fileprivate func renderedMarkdownDoubleClicked() {
@@ -465,11 +473,12 @@ class NotebookCellView: NSView {
     /// Switch markdown cell to rendered mode.
     func enterMarkdownRendered() {
         guard cell.cell_type == .markdown else { return }
+        ensureRenderedMarkdownSetup()
         isMarkdownRendered = true
 
         // Load markdown into WKWebView with KaTeX
         let html = Self.buildMarkdownHTML(cell.sourceText)
-        renderedWebView.loadHTMLString(html, baseURL: nil)
+        renderedWebView?.loadHTMLString(html, baseURL: nil)
 
         // Set initial height, will be updated by JS callback
         renderedHeightConstraint?.isActive = true
@@ -477,7 +486,7 @@ class NotebookCellView: NSView {
         // Hide source, show rendered
         sourceScrollView.isHidden = true
         sourceHeightConstraint?.isActive = false
-        renderedWebView.isHidden = false
+        renderedWebView?.isHidden = false
 
         // Switch bottom constraints
         sourceToBottomConstraint?.isActive = false
@@ -497,8 +506,8 @@ class NotebookCellView: NSView {
         isMarkdownRendered = false
 
         // Show source, hide rendered
-        renderedWebView.isHidden = true
-        renderedWebView.loadHTMLString("", baseURL: nil)
+        renderedWebView?.isHidden = true
+        renderedWebView?.loadHTMLString("", baseURL: nil)
         renderedHeightConstraint?.isActive = false
         renderedToBottomConstraint?.isActive = false
 
@@ -741,7 +750,7 @@ class NotebookCellView: NSView {
         outputDivider = NSView()
         outputDivider.translatesAutoresizingMaskIntoConstraints = false
         outputDivider.wantsLayer = true
-        outputDivider.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.06).cgColor
+        outputDivider.layer?.backgroundColor = NotebookColors.borderSubtle.cgColor
         outputDivider.isHidden = true
         cellBody.addSubview(outputDivider)
 
@@ -797,6 +806,10 @@ class NotebookCellView: NSView {
         outputToBottomConstraint = outputScrollView.bottomAnchor.constraint(equalTo: cellBody.bottomAnchor, constant: -Metrics.cellPaddingV)
         // Start with source-to-bottom (no output by default)
         sourceToBottomConstraint?.isActive = true
+
+        // Create height constraint once — rebuildOutputViews() will only change .constant
+        outputHeightConstraint = outputScrollView.heightAnchor.constraint(equalToConstant: 0)
+        outputHeightConstraint?.isActive = true
     }
 
     // MARK: - Action Pill
@@ -805,10 +818,10 @@ class NotebookCellView: NSView {
         actionPill = NSView()
         actionPill.translatesAutoresizingMaskIntoConstraints = false
         actionPill.wantsLayer = true
-        actionPill.layer?.backgroundColor = Colors.pillBg.cgColor
+        actionPill.layer?.backgroundColor = NotebookColors.pillBg.cgColor
         actionPill.layer?.cornerRadius = 6
         actionPill.layer?.cornerCurve = .continuous
-        actionPill.layer?.borderColor = NSColor(white: 1.0, alpha: 0.06).cgColor
+        actionPill.layer?.borderColor = NotebookColors.borderSubtle.cgColor
         actionPill.layer?.borderWidth = 0.5
         actionPill.alphaValue = 0
         actionPill.isHidden = true
@@ -817,12 +830,12 @@ class NotebookCellView: NSView {
         var buttons: [NSButton] = []
 
         // Run (code cells only)
-        let runBtn = makeActionButton(systemImage: "play.fill", action: #selector(runCell), tint: Colors.accentGreen)
+        let runBtn = makeActionButton(systemImage: "play.fill", action: #selector(runCell), tint: NotebookColors.accentGreen)
         runButton = runBtn
         buttons.append(runBtn)
 
         // More (context menu)
-        let moreBtn = makeActionButton(systemImage: "ellipsis", action: #selector(showMoreMenu(_:)), tint: Colors.textMuted)
+        let moreBtn = makeActionButton(systemImage: "ellipsis", action: #selector(showMoreMenu(_:)), tint: NotebookColors.textMuted)
         moreButton = moreBtn
         buttons.append(moreBtn)
 
@@ -899,13 +912,13 @@ class NotebookCellView: NSView {
         }
 
         // Cell body tint
-        cellBody.layer?.backgroundColor = isFocused ? Colors.cellBgFocused.cgColor : Colors.cellBg.cgColor
+        cellBody.layer?.backgroundColor = isFocused ? NotebookColors.cellBgFocused.cgColor : NotebookColors.cellBg.cgColor
 
         // Focus glow (subtle shadow)
         if isFocused {
             cellBody.shadow = {
                 let s = NSShadow()
-                s.shadowColor = Colors.focusGlow
+                s.shadowColor = NotebookColors.focusGlow
                 s.shadowBlurRadius = 12
                 s.shadowOffset = .zero
                 return s
@@ -930,8 +943,10 @@ class NotebookCellView: NSView {
                 ctx.duration = 0.15
                 actionPill.animator().alphaValue = 0
             }, completionHandler: { [weak self] in
-                guard let self else { return }
-                if !self.isHovered && !self.isFocused { self.actionPill.isHidden = true }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if !self.isHovered && !self.isFocused { self.actionPill.isHidden = true }
+                }
             })
         }
     }
@@ -939,7 +954,7 @@ class NotebookCellView: NSView {
     // MARK: - Running Animation
 
     private func updateRunningAnimation() {
-        executionLabel.layer?.removeAllAnimations()
+        badgeLabel.layer?.removeAllAnimations()
         guard executionState == .running else { return }
         let anim = CABasicAnimation(keyPath: "opacity")
         anim.fromValue = 0.4
@@ -948,7 +963,7 @@ class NotebookCellView: NSView {
         anim.autoreverses = true
         anim.repeatCount = .infinity
         anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        executionLabel.layer?.add(anim, forKey: "pulse")
+        badgeLabel.layer?.add(anim, forKey: "pulse")
     }
 
     // MARK: - Populate
@@ -960,17 +975,17 @@ class NotebookCellView: NSView {
             switch executionState {
             case .running:
                 badgeLabel.stringValue = "\u{25CF}"  // filled dot
-                badgeLabel.textColor = Colors.accentGreen
+                badgeLabel.textColor = NotebookColors.accentGreen
             case .queued:
                 badgeLabel.stringValue = "\u{25CB}"  // hollow dot
-                badgeLabel.textColor = Colors.accentAmber
+                badgeLabel.textColor = NotebookColors.accentAmber
             case .idle:
                 if let count = cell.execution_count {
                     badgeLabel.stringValue = "\(count)"
                 } else {
                     badgeLabel.stringValue = ""
                 }
-                badgeLabel.textColor = Colors.badgeText
+                badgeLabel.textColor = NotebookColors.badgeText
             }
         } else {
             badgeView.isHidden = true
@@ -981,26 +996,31 @@ class NotebookCellView: NSView {
 
         // Source / rendered markdown
         if cell.cell_type == .markdown && isMarkdownRendered {
-            // Re-render in case source changed
+            ensureRenderedMarkdownSetup()
             let html = Self.buildMarkdownHTML(cell.sourceText)
-            renderedWebView.loadHTMLString(html, baseURL: nil)
+            renderedWebView?.loadHTMLString(html, baseURL: nil)
             renderedHeightConstraint?.isActive = true
             sourceScrollView.isHidden = true
-            renderedWebView.isHidden = false
+            renderedWebView?.isHidden = false
             renderedToBottomConstraint?.isActive = true
             sourceToBottomConstraint?.isActive = false
             outputToBottomConstraint?.isActive = false
             outputScrollView.isHidden = true
             outputDivider.isHidden = true
         } else {
-            // Trim trailing newlines — .ipynb stores lines with trailing \n which
-            // causes the layout manager to reserve space for an empty trailing line
+            // Trim trailing newlines for display — .ipynb stores lines with trailing \n
+            // which causes the layout manager to reserve space for an empty trailing line.
+            // Use isUpdatingFromModel to prevent textDidChange from writing stripped text back.
             let src = cell.sourceText.replacingOccurrences(of: "\\n+$", with: "", options: .regularExpression)
-            if sourceTextView.string != src { sourceTextView.string = src }
+            if sourceTextView.string != src {
+                isUpdatingFromModel = true
+                sourceTextView.string = src
+                isUpdatingFromModel = false
+            }
             if cell.cell_type == .code { applySyntaxColoring() }
             else if cell.cell_type == .markdown { applyMarkdownColoring() }
             updateSourceHeight()
-            renderedWebView.isHidden = true
+            renderedWebView?.isHidden = true
             renderedToBottomConstraint?.isActive = false
             sourceScrollView.isHidden = false
 
@@ -1011,17 +1031,19 @@ class NotebookCellView: NSView {
     }
 
     private func updateSourceHeight() {
-        sourceHeightConstraint?.isActive = false
         guard let lm = sourceTextView.layoutManager, let tc = sourceTextView.textContainer else {
-            sourceHeightConstraint = sourceScrollView.heightAnchor.constraint(equalToConstant: Metrics.minSourceHeight)
-            sourceHeightConstraint?.isActive = true
+            sourceHeightConstraint?.constant = Metrics.minSourceHeight
             return
         }
+        // Ensure the text container has a real width before computing layout.
+        let scrollWidth = sourceScrollView.bounds.width
+        if scrollWidth > 0 {
+            let inset = sourceTextView.textContainerInset.width
+            tc.size = NSSize(width: scrollWidth - inset * 2, height: CGFloat.greatestFiniteMagnitude)
+        }
         lm.ensureLayout(for: tc)
-        // textContainerInset adds cellPaddingV top and bottom
         let h = lm.usedRect(for: tc).height + (Metrics.cellPaddingV * 2)
-        sourceHeightConstraint = sourceScrollView.heightAnchor.constraint(equalToConstant: max(Metrics.minSourceHeight, h))
-        sourceHeightConstraint?.isActive = true
+        sourceHeightConstraint?.constant = max(Metrics.minSourceHeight, h)
     }
 
     // MARK: - Output Rendering
@@ -1035,10 +1057,7 @@ class NotebookCellView: NSView {
         guard let outputs = cell.outputs, !outputs.isEmpty else {
             outputScrollView.isHidden = true
             outputDivider.isHidden = true
-            outputHeightConstraint?.isActive = false
-            outputHeightConstraint = outputScrollView.heightAnchor.constraint(equalToConstant: 0)
-            outputHeightConstraint?.isActive = true
-            // Pin source directly to bottom (no dead space)
+            outputHeightConstraint?.constant = 0
             outputToBottomConstraint?.isActive = false
             sourceToBottomConstraint?.isActive = true
             return
@@ -1046,7 +1065,6 @@ class NotebookCellView: NSView {
 
         outputScrollView.isHidden = false
         outputDivider.isHidden = false
-        // Switch to output-to-bottom chain
         sourceToBottomConstraint?.isActive = false
         outputToBottomConstraint?.isActive = true
 
@@ -1057,13 +1075,10 @@ class NotebookCellView: NSView {
             v.widthAnchor.constraint(equalTo: outputStackView.widthAnchor).isActive = true
         }
 
+        outputStackView.needsLayout = true
         outputStackView.layoutSubtreeIfNeeded()
         let contentH = outputStackView.fittingSize.height + 8
-        outputHeightConstraint?.isActive = false
-        outputHeightConstraint = outputScrollView.heightAnchor.constraint(
-            equalToConstant: min(contentH, Metrics.maxOutputHeight)
-        )
-        outputHeightConstraint?.isActive = true
+        outputHeightConstraint?.constant = min(contentH, Metrics.maxOutputHeight)
     }
 
     private func renderOutput(_ output: CellOutput) -> NSView {
@@ -1077,7 +1092,7 @@ class NotebookCellView: NSView {
             if let jpg = output.data?.image_jpeg, let d = Data(base64Encoded: jpg), let img = NSImage(data: d) {
                 return renderImage(img)
             }
-            let text = output.data?.text_plain.map { cellSourceText($0) } ?? outputText(from: output)
+            let text = output.data?.text_plain?.text ?? outputText(from: output)
             return renderText(text, isError: false)
         case .error:
             let trace = output.traceback?.joined(separator: "\n") ?? "\(output.ename ?? "Error"): \(output.evalue ?? "")"
@@ -1087,14 +1102,7 @@ class NotebookCellView: NSView {
     }
 
     private func outputText(from output: CellOutput) -> String {
-        output.text.map { cellSourceText($0) } ?? ""
-    }
-
-    private func cellSourceText(_ src: CellSource) -> String {
-        switch src {
-        case .string(let s): return s
-        case .array(let a): return a.joined()
-        }
+        output.text?.text ?? ""
     }
 
     private func renderText(_ text: String, isError: Bool) -> NSView {
@@ -1110,7 +1118,7 @@ class NotebookCellView: NSView {
             let bar = NSView()
             bar.translatesAutoresizingMaskIntoConstraints = false
             bar.wantsLayer = true
-            bar.layer?.backgroundColor = Colors.errorBar.cgColor
+            bar.layer?.backgroundColor = NotebookColors.errorBar.cgColor
             bar.layer?.cornerRadius = 1.5
             container.addSubview(bar)
             NSLayoutConstraint.activate([
@@ -1128,7 +1136,7 @@ class NotebookCellView: NSView {
         tv.isEditable = false
         tv.isSelectable = true
         tv.font = outputFont
-        tv.textColor = isError ? Colors.errorText : Colors.outputText
+        tv.textColor = isError ? NotebookColors.errorText : NotebookColors.outputText
         tv.backgroundColor = .clear
         tv.drawsBackground = false
         tv.lineBreakMode = .byWordWrapping
@@ -1155,7 +1163,7 @@ class NotebookCellView: NSView {
         iv.layer?.cornerRadius = 8
         iv.layer?.cornerCurve = .continuous
         iv.layer?.masksToBounds = true
-        iv.layer?.borderColor = NSColor(white: 1.0, alpha: 0.06).cgColor
+        iv.layer?.borderColor = NotebookColors.borderSubtle.cgColor
         iv.layer?.borderWidth = 0.5
         NSLayoutConstraint.activate([
             iv.heightAnchor.constraint(lessThanOrEqualToConstant: Metrics.maxImageHeight),
@@ -1199,7 +1207,7 @@ class NotebookCellView: NSView {
         let deleteItem = NSMenuItem(title: "Delete Cell", action: #selector(deleteCell), keyEquivalent: "")
         deleteItem.attributedTitle = NSAttributedString(
             string: "Delete Cell",
-            attributes: [.foregroundColor: Colors.accentRed]
+            attributes: [.foregroundColor: NotebookColors.accentRed]
         )
         menu.addItem(deleteItem)
 
@@ -1221,9 +1229,6 @@ class NotebookCellView: NSView {
     @objc private func clearOutput() { delegate?.cellDidRequestClearOutput(self) }
     @objc private func deleteCell() { delegate?.cellDidRequestDelete(self) }
 
-    // Convenience used by badgeLabel
-    private var executionLabel: NSTextField { badgeLabel }
-
     // MARK: - Syntax Coloring
 
     private func applySyntaxColoring() {
@@ -1234,7 +1239,7 @@ class NotebookCellView: NSView {
         storage.beginEditing()
         storage.setAttributes([
             .font: codeFont,
-            .foregroundColor: Colors.textPrimary,
+            .foregroundColor: NotebookColors.textPrimary,
         ], range: fullRange)
 
         applyPattern(storage: storage, pattern: "#[^\n]*", color: NSColor(white: 0.45, alpha: 1.0))
@@ -1310,6 +1315,7 @@ class NotebookCellView: NSView {
 extension NotebookCellView: NSTextViewDelegate {
     nonisolated func textDidChange(_ notification: Notification) {
         MainActor.assumeIsolated {
+            guard !isUpdatingFromModel else { return }
             let text = sourceTextView.string
             // Keep local cell copy in sync so cell.sourceText reflects edits
             cell.source = .string(text)
@@ -1362,10 +1368,10 @@ class MarkdownWebViewMessageHandler: NSObject, WKScriptMessageHandler {
 
     nonisolated func userContentController(_ userContentController: WKUserContentController,
                                            didReceive message: WKScriptMessage) {
-        guard let body = message.body as? [String: Any],
-              let type = body["type"] as? String else { return }
-
         MainActor.assumeIsolated {
+            guard let body = message.body as? [String: Any],
+                  let type = body["type"] as? String else { return }
+
             guard let cellView = cellView else { return }
             switch type {
             case "height":

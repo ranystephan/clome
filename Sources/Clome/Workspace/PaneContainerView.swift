@@ -128,6 +128,48 @@ class PaneContainerView: NSView {
         return nil
     }
 
+    // MARK: - Split Layout Serialization
+
+    /// Serializes the current split layout to a JSON string.
+    /// Returns nil if there's only one pane (no splits).
+    func serializeSplitLayout() -> String? {
+        guard let tree = splitTree else { return nil }
+        // Only serialize if there are actual splits
+        if tree.leafCount <= 1 { return nil }
+
+        var leafIndex = 0
+        let rootNode = tree.toLayoutNode(leafIndex: &leafIndex)
+        let layout = SplitLayout(root: rootNode)
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(layout),
+              let json = String(data: data, encoding: .utf8) else { return nil }
+        return json
+    }
+
+    /// Reconstructs a split layout from a JSON string.
+    /// Takes an array of views (in DFS leaf order) and splits them according to the layout.
+    /// If the JSON is invalid or view count doesn't match, falls back to setting the first view as root.
+    func restoreSplitLayout(from json: String, views: [NSView]) {
+        guard !views.isEmpty else { return }
+
+        guard let data = json.data(using: .utf8),
+              let layout = try? JSONDecoder().decode(SplitLayout.self, from: data),
+              layout.leafCount == views.count,
+              let restoredTree = SplitNode.fromLayoutNode(layout.root, views: views) else {
+            // Fallback: just set the first view as root
+            setRoot(views[0])
+            return
+        }
+
+        subviews.forEach { $0.removeFromSuperview() }
+        paneHeaders.removeAll()
+        splitTree = restoredTree
+        _focusedPane = views.first
+        rebuildLayout()
+    }
+
     // MARK: - Pane Headers
 
     private func updateHeaderStates() {
@@ -341,6 +383,72 @@ class PaneHeaderBar: NSView {
     }
 }
 
+// MARK: - Split Layout Serialization
+
+/// Represents the structure of a split tree for persistence.
+/// Each leaf has an index (0-based, left-to-right DFS order) matching the pane order.
+/// Internal nodes have a direction and two children.
+struct SplitLayout: Codable {
+    indirect enum Node: Codable {
+        case leaf(index: Int)
+        case split(direction: String, ratio: CGFloat, first: Node, second: Node)
+
+        // Custom Codable implementation for the recursive enum
+        private enum CodingKeys: String, CodingKey {
+            case type, index, direction, ratio, first, second
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case .leaf(let index):
+                try container.encode("leaf", forKey: .type)
+                try container.encode(index, forKey: .index)
+            case .split(let direction, let ratio, let first, let second):
+                try container.encode("split", forKey: .type)
+                try container.encode(direction, forKey: .direction)
+                try container.encode(ratio, forKey: .ratio)
+                try container.encode(first, forKey: .first)
+                try container.encode(second, forKey: .second)
+            }
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let type = try container.decode(String.self, forKey: .type)
+            switch type {
+            case "leaf":
+                let index = try container.decode(Int.self, forKey: .index)
+                self = .leaf(index: index)
+            case "split":
+                let direction = try container.decode(String.self, forKey: .direction)
+                let ratio = try container.decode(CGFloat.self, forKey: .ratio)
+                let first = try container.decode(Node.self, forKey: .first)
+                let second = try container.decode(Node.self, forKey: .second)
+                self = .split(direction: direction, ratio: ratio, first: first, second: second)
+            default:
+                throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: "Unknown node type: \(type)")
+            }
+        }
+    }
+
+    let root: Node
+
+    /// Total number of leaf panes in the layout.
+    var leafCount: Int {
+        return Self.countLeaves(root)
+    }
+
+    private static func countLeaves(_ node: Node) -> Int {
+        switch node {
+        case .leaf:
+            return 1
+        case .split(_, _, let first, let second):
+            return countLeaves(first) + countLeaves(second)
+        }
+    }
+}
+
 // MARK: - Split Tree
 
 /// A binary tree representing the split layout.
@@ -450,6 +558,50 @@ indirect enum SplitNode {
         switch self {
         case .leaf: return 1
         case .split(let first, let second, _, _): return first.leafCount + second.leafCount
+        }
+    }
+
+    /// Convert the split tree structure into a serializable `SplitLayout.Node`.
+    /// Leaf indices are assigned in left-to-right DFS order (matching `allViews` order).
+    func toLayoutNode(leafIndex: inout Int) -> SplitLayout.Node {
+        switch self {
+        case .leaf:
+            let index = leafIndex
+            leafIndex += 1
+            return .leaf(index: index)
+        case .split(let first, let second, let direction, let ratio):
+            let directionString: String
+            switch direction {
+            case .right: directionString = "right"
+            case .down:  directionString = "down"
+            case .left:  directionString = "left"
+            case .up:    directionString = "up"
+            }
+            let firstNode = first.toLayoutNode(leafIndex: &leafIndex)
+            let secondNode = second.toLayoutNode(leafIndex: &leafIndex)
+            return .split(direction: directionString, ratio: ratio, first: firstNode, second: secondNode)
+        }
+    }
+
+    /// Reconstruct a `SplitNode` tree from a `SplitLayout.Node` and an array of views.
+    /// Views are indexed by the leaf indices stored in the layout.
+    static func fromLayoutNode(_ node: SplitLayout.Node, views: [NSView]) -> SplitNode? {
+        switch node {
+        case .leaf(let index):
+            guard index >= 0, index < views.count else { return nil }
+            return .leaf(views[index])
+        case .split(let directionStr, let ratio, let first, let second):
+            let direction: SplitDirection
+            switch directionStr {
+            case "right": direction = .right
+            case "down":  direction = .down
+            case "left":  direction = .left
+            case "up":    direction = .up
+            default:      direction = .right
+            }
+            guard let firstNode = fromLayoutNode(first, views: views),
+                  let secondNode = fromLayoutNode(second, views: views) else { return nil }
+            return .split(first: firstNode, second: secondNode, direction: direction, ratio: ratio)
         }
     }
 }

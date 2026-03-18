@@ -6,6 +6,10 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate {
     private(set) var ghosttyApp: GhosttyAppManager?
     private var socketServer: SocketServer?
     private var keyboardHandler: KeyboardNavigationHandler?
+    private var statusBarController: StatusBarController?
+    private var autoSaveTimer: Timer?
+    private var isSaving = false
+    private var debouncedSaveWork: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMenuBar()
@@ -22,12 +26,22 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate {
         // Restore or create window
         let window = ClomeWindow()
         window.ghosttyApp = ghosttyApp
+
+        // Restore session state (workspaces + tabs), or create a default workspace
+        if !window.workspaceManager.restoreFromSession() {
+            window.workspaceManager.addWorkspace()
+        }
+
         window.makeKeyAndOrderFront(nil)
         mainWindow = window
 
-        // Restore saved window frame
+        // Restore saved window frame (validate it's visible on a connected screen)
         if let frame = SessionState.shared.restoreWindowFrame() {
-            window.setFrame(frame, display: true)
+            if NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) {
+                window.setFrame(frame, display: true)
+            } else {
+                window.center()
+            }
         }
 
         // Start socket server for external automation
@@ -39,9 +53,14 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate {
         keyboardHandler = KeyboardNavigationHandler(window: window)
 
         // Auto-save session state periodically
-        Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
-            self?.saveSession()
+        autoSaveTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.saveSession()
+            }
         }
+
+        // Status bar item
+        statusBarController = StatusBarController(window: window)
 
         NSApp.activate(ignoringOtherApps: true)
 
@@ -50,6 +69,8 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        autoSaveTimer?.invalidate()
+        autoSaveTimer = nil
         saveSession()
         socketServer?.stop()
 
@@ -71,6 +92,11 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate {
         ghosttyApp?.shutdown()
     }
 
+    func applicationDidResignActive(_ notification: Notification) {
+        // Save immediately when losing focus — critical for Xcode re-run (SIGKILL)
+        saveSession()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return true
     }
@@ -79,7 +105,23 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// Schedule a save 2 seconds from now. Resets on each call so rapid changes batch into one save.
+    func scheduleSave() {
+        debouncedSaveWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.saveSession()
+            }
+        }
+        debouncedSaveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
+    }
+
     private func saveSession() {
+        guard !isSaving else { return }
+        isSaving = true
+        defer { isSaving = false }
+
         guard let window = mainWindow else { return }
         SessionState.shared.saveWindowFrame(window.frame)
         SessionState.shared.saveWorkspaces(
@@ -177,7 +219,7 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func newWorkspace(_ sender: Any?) {
         mainWindow?.workspaceManager.addWorkspace()
-        mainWindow?.sidebarView?.reloadWorkspaces()
+        mainWindow?.sidebarView?.setNeedsReload()
     }
 
     @objc private func newTab(_ sender: Any?) {
@@ -235,7 +277,7 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate {
         let next = mgr.activeWorkspaceIndex + 1
         if next < mgr.workspaces.count {
             mgr.switchTo(index: next)
-            mainWindow?.sidebarView?.reloadWorkspaces()
+            mainWindow?.sidebarView?.setNeedsReload()
         }
     }
 
@@ -244,7 +286,7 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate {
         let prev = mgr.activeWorkspaceIndex - 1
         if prev >= 0 {
             mgr.switchTo(index: prev)
-            mainWindow?.sidebarView?.reloadWorkspaces()
+            mainWindow?.sidebarView?.setNeedsReload()
         }
     }
 }

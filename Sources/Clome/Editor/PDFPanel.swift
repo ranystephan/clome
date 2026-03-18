@@ -49,7 +49,7 @@ class PDFPanel: NSView {
     private var pdfTopToFindBar: NSLayoutConstraint?
 
     // State
-    private var filePath: String?
+    private(set) var filePath: String?
     private var isOutlineVisible = false
 
     var title: String = "PDF" {

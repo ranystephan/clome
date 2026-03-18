@@ -42,6 +42,9 @@ class NotebookPanel: NSView {
         }
     }
 
+    /// The file path of the loaded notebook (nil if none loaded).
+    var filePath: String? { store.filePath }
+
     // MARK: - Design System Colors (derived from AppearanceSettings)
 
     private var baseBg: NSColor { AppearanceSettings.shared.mainPanelBgColor }
@@ -52,13 +55,6 @@ class NotebookPanel: NSView {
         )
     }
     private let borderSubtle = NSColor(white: 1.0, alpha: 0.08)
-    private let textPrimary = NSColor(white: 1.0, alpha: 0.88)
-    private let textSecondary = NSColor(white: 1.0, alpha: 0.55)
-    private let textMuted   = NSColor(white: 1.0, alpha: 0.35)
-    private let accentBlue  = NSColor(red: 0.40, green: 0.55, blue: 1.0, alpha: 1.0)
-    private let accentGreen = NSColor(red: 0.35, green: 0.75, blue: 0.45, alpha: 1.0)
-    private let accentAmber = NSColor(red: 0.85, green: 0.70, blue: 0.30, alpha: 1.0)
-    private let accentRed   = NSColor(red: 0.85, green: 0.30, blue: 0.30, alpha: 1.0)
 
     init(store: NotebookStore? = nil) {
         let resolvedStore = store ?? NotebookStore()
@@ -141,7 +137,7 @@ class NotebookPanel: NSView {
         let borderLine = NSView()
         borderLine.translatesAutoresizingMaskIntoConstraints = false
         borderLine.wantsLayer = true
-        borderLine.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.06).cgColor
+        borderLine.layer?.backgroundColor = NotebookColors.borderSubtle.cgColor
         toolbarView.addSubview(borderLine)
         NSLayoutConstraint.activate([
             borderLine.leadingAnchor.constraint(equalTo: toolbarView.leadingAnchor),
@@ -154,39 +150,39 @@ class NotebookPanel: NSView {
         titleLabel = NSTextField(labelWithString: "Notebook")
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        titleLabel.textColor = textPrimary
+        titleLabel.textColor = NotebookColors.textPrimary
         toolbarView.addSubview(titleLabel)
 
         // Kernel name (Text Muted, 11pt)
         kernelLabel = NSTextField(labelWithString: "")
         kernelLabel.translatesAutoresizingMaskIntoConstraints = false
         kernelLabel.font = .systemFont(ofSize: 11, weight: .regular)
-        kernelLabel.textColor = textMuted
+        kernelLabel.textColor = NotebookColors.textMuted
         toolbarView.addSubview(kernelLabel)
 
         // Execution buttons: Run, Run All, Stop, Restart
         let runCellBtn = makeToolbarIconButton(
             systemImage: "play.fill",
             action: #selector(runFocusedCell),
-            tint: accentGreen,
+            tint: NotebookColors.accentGreen,
             tooltip: "Run focused cell (Cmd+Enter)"
         )
         let runAllBtn = makeToolbarIconButton(
             systemImage: "forward.fill",
             action: #selector(runAllCells),
-            tint: accentGreen,
+            tint: NotebookColors.accentGreen,
             tooltip: "Run all cells (Cmd+Shift+Enter)"
         )
         let interruptBtn = makeToolbarIconButton(
             systemImage: "stop.fill",
             action: #selector(interruptKernel),
-            tint: accentRed,
+            tint: NotebookColors.accentRed,
             tooltip: "Interrupt kernel"
         )
         let restartBtn = makeToolbarIconButton(
             systemImage: "arrow.counterclockwise",
             action: #selector(restartKernel),
-            tint: accentAmber,
+            tint: NotebookColors.accentAmber,
             tooltip: "Restart kernel"
         )
 
@@ -197,13 +193,13 @@ class NotebookPanel: NSView {
         let addCodeBtn = makeToolbarIconButton(
             systemImage: "plus.rectangle",
             action: #selector(addCodeCell),
-            tint: textSecondary,
+            tint: NotebookColors.textSecondary,
             tooltip: "Add code cell (B)"
         )
         let addMdBtn = makeToolbarIconButton(
             systemImage: "text.badge.plus",
             action: #selector(addMarkdownCell),
-            tint: textSecondary,
+            tint: NotebookColors.textSecondary,
             tooltip: "Add markdown cell"
         )
 
@@ -214,13 +210,13 @@ class NotebookPanel: NSView {
         let clearOutputsBtn = makeToolbarIconButton(
             systemImage: "xmark.circle",
             action: #selector(clearAllOutputs),
-            tint: textSecondary,
+            tint: NotebookColors.textSecondary,
             tooltip: "Clear all outputs"
         )
         let packageBtn = makeToolbarIconButton(
             systemImage: "shippingbox",
             action: #selector(showPackageInstall),
-            tint: textSecondary,
+            tint: NotebookColors.textSecondary,
             tooltip: "Install Python package"
         )
 
@@ -239,7 +235,7 @@ class NotebookPanel: NSView {
         cellCountLabel = NSTextField(labelWithString: "")
         cellCountLabel.translatesAutoresizingMaskIntoConstraints = false
         cellCountLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-        cellCountLabel.textColor = textMuted
+        cellCountLabel.textColor = NotebookColors.textMuted
         toolbarView.addSubview(cellCountLabel)
 
         // Layout: Left side
@@ -395,7 +391,7 @@ class NotebookPanel: NSView {
         let statusTopBorder = NSView()
         statusTopBorder.translatesAutoresizingMaskIntoConstraints = false
         statusTopBorder.wantsLayer = true
-        statusTopBorder.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.06).cgColor
+        statusTopBorder.layer?.backgroundColor = NotebookColors.borderSubtle.cgColor
         statusBarView.addSubview(statusTopBorder)
         NSLayoutConstraint.activate([
             statusTopBorder.leadingAnchor.constraint(equalTo: statusBarView.leadingAnchor),
@@ -417,7 +413,7 @@ class NotebookPanel: NSView {
         envButton.bezelStyle = .accessoryBarAction
         envButton.isBordered = false
         envButton.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        envButton.contentTintColor = accentBlue
+        envButton.contentTintColor = NotebookColors.accentBlue
         statusBarView.addSubview(envButton)
 
         // Right: kernel state with colored dot
@@ -442,8 +438,9 @@ class NotebookPanel: NSView {
     // MARK: - Cell Management
 
     private func rebuildCells() {
-        // Remove all existing views from stack
+        // Clean up and remove all existing views from stack
         for view in cellViews {
+            view.prepareForRemoval()
             stackView.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
@@ -480,6 +477,65 @@ class NotebookPanel: NSView {
         let cell = store.document.cells[index]
         let execState = store.cellExecutionStates[cell.id] ?? .idle
         cellViews[index].update(cell: cell, index: index, executionState: execState)
+    }
+
+    /// Insert a new cell view at the given index without rebuilding all cells.
+    private func insertCellView(at index: Int) {
+        let cell = store.document.cells[index]
+        let execState = store.cellExecutionStates[cell.id] ?? .idle
+        let cellView = NotebookCellView(cell: cell, index: index, language: store.language)
+        cellView.update(cell: cell, index: index, executionState: execState)
+        cellView.delegate = self
+
+        if cell.cell_type == .markdown,
+           !cell.sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            cellView.enterMarkdownRendered()
+        }
+
+        stackView.insertArrangedSubview(cellView, at: index)
+        cellView.widthAnchor.constraint(equalTo: stackView.widthAnchor).isActive = true
+        cellViews.insert(cellView, at: index)
+
+        // Update indices for cells after the insertion point
+        for i in (index + 1)..<cellViews.count {
+            cellViews[i].update(cell: store.document.cells[i], index: i,
+                               executionState: store.cellExecutionStates[store.document.cells[i].id] ?? .idle)
+        }
+        updateToolbarInfo()
+    }
+
+    /// Remove the cell view at the given index without rebuilding all cells.
+    private func removeCellView(at index: Int) {
+        let view = cellViews[index]
+        view.prepareForRemoval()
+        stackView.removeArrangedSubview(view)
+        view.removeFromSuperview()
+        cellViews.remove(at: index)
+
+        // Update indices for remaining cells
+        for i in index..<cellViews.count {
+            cellViews[i].update(cell: store.document.cells[i], index: i,
+                               executionState: store.cellExecutionStates[store.document.cells[i].id] ?? .idle)
+        }
+        updateToolbarInfo()
+    }
+
+    /// Move a cell view from one index to another without rebuilding all cells.
+    private func moveCellView(from sourceIndex: Int, to destIndex: Int) {
+        let view = cellViews.remove(at: sourceIndex)
+        stackView.removeArrangedSubview(view)
+
+        cellViews.insert(view, at: destIndex)
+        stackView.insertArrangedSubview(view, at: destIndex)
+
+        // Update indices for all affected cells
+        let minIdx = min(sourceIndex, destIndex)
+        let maxIdx = max(sourceIndex, destIndex)
+        for i in minIdx...maxIdx {
+            cellViews[i].update(cell: store.document.cells[i], index: i,
+                               executionState: store.cellExecutionStates[store.document.cells[i].id] ?? .idle)
+        }
+        updateToolbarInfo()
     }
 
     /// Schedule a debounced refresh for a cell (used during streaming output).
@@ -520,22 +576,22 @@ class NotebookPanel: NSView {
         switch kernelManager.state {
         case .idle:
             stateStr = "\u{25CF} Idle"
-            stateColor = accentGreen
+            stateColor = NotebookColors.accentGreen
         case .busy:
             stateStr = "\u{25CF} Busy"
-            stateColor = accentAmber
+            stateColor = NotebookColors.accentAmber
         case .error(let msg):
             stateStr = "\u{25CF} \(msg)"
-            stateColor = accentRed
+            stateColor = NotebookColors.accentRed
         case .starting:
             stateStr = "Starting..."
-            stateColor = textMuted
+            stateColor = NotebookColors.textMuted
         case .settingUp(let msg):
             stateStr = msg
-            stateColor = textMuted
+            stateColor = NotebookColors.textMuted
         case .disconnected:
             stateStr = "No Kernel"
-            stateColor = textMuted
+            stateColor = NotebookColors.textMuted
         }
         kernelStatusLabel.stringValue = stateStr
         kernelStatusLabel.textColor = stateColor
@@ -646,7 +702,8 @@ class NotebookPanel: NSView {
         let clampedIndex = min(max(index, 0), store.document.cells.count)
         store.insertCell(at: clampedIndex, type: type)
         focusedCellIndex = clampedIndex
-        rebuildCells()
+        insertCellView(at: clampedIndex)
+        cellViews[clampedIndex].setFocused(true)
         updateStatusBar()
         scrollCellIntoView(at: clampedIndex)
     }
@@ -669,7 +726,7 @@ class NotebookPanel: NSView {
 
         // Section: Available kernels (already registered)
         if !kernelManager.availableKernels.isEmpty {
-            menu.addItem(NSMenuItem.sectionHeader(withTitle: "Kernels"))
+            menu.addItem(NSMenuItem.sectionHeader(title: "Kernels"))
             for (i, spec) in kernelManager.availableKernels.enumerated() {
                 let item = NSMenuItem(title: spec.displayName, action: #selector(envMenuKernelSelected(_:)), keyEquivalent: "")
                 item.target = self
@@ -685,7 +742,7 @@ class NotebookPanel: NSView {
         let unregistered = discoveredEnvironments.filter { !$0.isKernelRegistered }
         if !unregistered.isEmpty {
             menu.addItem(NSMenuItem.separator())
-            menu.addItem(NSMenuItem.sectionHeader(withTitle: "Register Environment as Kernel"))
+            menu.addItem(NSMenuItem.sectionHeader(title: "Register Environment as Kernel"))
             for env in unregistered {
                 let item = NSMenuItem(title: env.name, action: #selector(envMenuRegisterSelected(_:)), keyEquivalent: "")
                 item.target = self
@@ -821,7 +878,7 @@ class NotebookPanel: NSView {
         store.insertCell(at: insertAt, type: .code)
         store.updateCellSource(at: insertAt, text: code)
         focusedCellIndex = insertAt
-        rebuildCells()
+        insertCellView(at: insertAt)
         executeCell(at: insertAt)
         scrollCellIntoView(at: insertAt)
     }
@@ -922,7 +979,10 @@ class NotebookPanel: NSView {
         for cellId in runAllQueue {
             store.setCellExecutionState(cellId, state: .queued)
         }
-        rebuildCells()
+        // Refresh all queued cells to show queued state
+        for i in 0..<cellViews.count {
+            refreshCell(at: i)
+        }
 
         continueRunAll()
     }
@@ -956,7 +1016,7 @@ class NotebookPanel: NSView {
 
     @objc private func clearAllOutputs() {
         store.clearAllOutputs()
-        rebuildCells()
+        for i in 0..<cellViews.count { refreshCell(at: i) }
         updateStatusBar()
     }
 
@@ -974,24 +1034,24 @@ class NotebookPanel: NSView {
         kernelManager.interrupt()
         isRunningAll = false
         runAllQueue.removeAll()
-        // Clear queued states
-        for cell in store.document.cells {
+        // Clear queued states and refresh affected cells
+        for (i, cell) in store.document.cells.enumerated() {
             if store.cellExecutionStates[cell.id] == .queued {
                 store.setCellExecutionState(cell.id, state: .idle)
+                refreshCell(at: i)
             }
         }
-        rebuildCells()
     }
 
     @objc private func restartKernel() {
         isRunningAll = false
         runAllQueue.removeAll()
-        // Clear all execution states
+        // Clear all execution states and refresh
         for cell in store.document.cells {
             store.setCellExecutionState(cell.id, state: .idle)
         }
         kernelManager.restart()
-        rebuildCells()
+        for i in 0..<cellViews.count { refreshCell(at: i) }
         updateStatusBar()
     }
 
@@ -1121,7 +1181,8 @@ class NotebookPanel: NSView {
     /// Check if the current first-responder text view's cursor is on the first line.
     private func isCursorAtFirstLine() -> Bool {
         guard let textView = window?.firstResponder as? NSTextView,
-              let layoutManager = textView.layoutManager else { return false }
+              let layoutManager = textView.layoutManager,
+              layoutManager.numberOfGlyphs > 0 else { return true }
         let selectedRange = textView.selectedRange()
         if selectedRange.length > 0 { return false }
         let glyphIndex = layoutManager.glyphIndexForCharacter(at: selectedRange.location)
@@ -1133,7 +1194,8 @@ class NotebookPanel: NSView {
     /// Check if the current first-responder text view's cursor is on the last line.
     private func isCursorAtLastLine() -> Bool {
         guard let textView = window?.firstResponder as? NSTextView,
-              let layoutManager = textView.layoutManager else { return false }
+              let layoutManager = textView.layoutManager,
+              layoutManager.numberOfGlyphs > 0 else { return true }
         let selectedRange = textView.selectedRange()
         if selectedRange.length > 0 { return false }
         let glyphIndex = layoutManager.glyphIndexForCharacter(at: selectedRange.location)
@@ -1147,16 +1209,16 @@ class NotebookPanel: NSView {
 
     private func deleteFocusedCell() {
         guard store.document.cells.count > 1 else {
-            // Only one cell: show feedback instead of deleting
             NSSound.beep()
             return
         }
         let idx = focusedCellIndex
         store.deleteCell(at: idx)
+        removeCellView(at: idx)
         if focusedCellIndex >= store.document.cells.count {
             focusedCellIndex = max(0, store.document.cells.count - 1)
         }
-        rebuildCells()
+        if !cellViews.isEmpty { cellViews[focusedCellIndex].setFocused(true) }
         updateStatusBar()
         scrollCellIntoView(at: focusedCellIndex)
     }
@@ -1165,8 +1227,9 @@ class NotebookPanel: NSView {
         let idx = focusedCellIndex
         guard idx > 0 else { return }
         store.moveCell(from: idx, to: idx - 1)
+        moveCellView(from: idx, to: idx - 1)
         focusedCellIndex = idx - 1
-        rebuildCells()
+        cellViews[focusedCellIndex].setFocused(true)
         updateStatusBar()
         scrollCellIntoView(at: focusedCellIndex)
     }
@@ -1175,8 +1238,9 @@ class NotebookPanel: NSView {
         let idx = focusedCellIndex
         guard idx < store.document.cells.count - 1 else { return }
         store.moveCell(from: idx, to: idx + 1)
+        moveCellView(from: idx, to: idx + 1)
         focusedCellIndex = idx + 1
-        rebuildCells()
+        cellViews[focusedCellIndex].setFocused(true)
         updateStatusBar()
         scrollCellIntoView(at: focusedCellIndex)
     }
@@ -1239,10 +1303,11 @@ extension NotebookPanel: NotebookCellViewDelegate {
         }
         let idx = cellView.cellIndex
         store.deleteCell(at: idx)
+        removeCellView(at: idx)
         if focusedCellIndex >= store.document.cells.count {
             focusedCellIndex = max(0, store.document.cells.count - 1)
         }
-        rebuildCells()
+        if !cellViews.isEmpty { cellViews[focusedCellIndex].setFocused(true) }
         updateStatusBar()
         scrollCellIntoView(at: focusedCellIndex)
     }
@@ -1256,8 +1321,9 @@ extension NotebookPanel: NotebookCellViewDelegate {
         let idx = cellView.cellIndex
         guard idx > 0 else { return }
         store.moveCell(from: idx, to: idx - 1)
+        moveCellView(from: idx, to: idx - 1)
         focusedCellIndex = idx - 1
-        rebuildCells()
+        cellViews[focusedCellIndex].setFocused(true)
         updateStatusBar()
         scrollCellIntoView(at: focusedCellIndex)
     }
@@ -1266,15 +1332,16 @@ extension NotebookPanel: NotebookCellViewDelegate {
         let idx = cellView.cellIndex
         guard idx < store.document.cells.count - 1 else { return }
         store.moveCell(from: idx, to: idx + 1)
+        moveCellView(from: idx, to: idx + 1)
         focusedCellIndex = idx + 1
-        rebuildCells()
+        cellViews[focusedCellIndex].setFocused(true)
         updateStatusBar()
         scrollCellIntoView(at: focusedCellIndex)
     }
 
     func cellDidRequestChangeType(_ cellView: NotebookCellView, to type: NotebookCell.CellType) {
         store.changeCellType(at: cellView.cellIndex, to: type)
-        rebuildCells()
+        refreshCell(at: cellView.cellIndex)
         updateStatusBar()
     }
 
@@ -1300,13 +1367,6 @@ extension NotebookPanel: NotebookCellViewDelegate {
         updateStatusBar()
     }
 
-    func cellDidRequestToggleSource(_ cellView: NotebookCellView) {
-        // No-op: collapse functionality removed from panel
-    }
-
-    func cellDidRequestToggleOutput(_ cellView: NotebookCellView) {
-        // No-op: collapse functionality removed from panel
-    }
 }
 
 // MARK: - HoverButton (toolbar button with hover background)
