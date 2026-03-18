@@ -8,6 +8,7 @@ class SurfacePane: NSView, @preconcurrency TabBarDelegate, BrowserPanelDelegate 
     private let contentView = NSView()
     private var surfaces: [NSView] = []
     private(set) var selectedIndex: Int = 0
+    private var pendingFocusWork: DispatchWorkItem?
     weak var ghosttyApp: GhosttyAppManager?
 
     var activeSurface: NSView? {
@@ -43,8 +44,11 @@ class SurfacePane: NSView, @preconcurrency TabBarDelegate, BrowserPanelDelegate 
     }
 
     @objc private func surfaceTitleChanged(_ note: Notification) {
-        guard let view = note.object as? NSView, surfaces.contains(where: { $0 === view }) else { return }
-        updateTabBar()
+        guard let view = note.object as? NSView,
+              let index = surfaces.firstIndex(where: { $0 === view }) else { return }
+        let title = titleForSurface(view)
+        let icon = (view as? BrowserPanel)?.favicon
+        tabBar.updateTabTitle(at: index, title: title, icon: icon)
     }
 
     private func setupLayout() {
@@ -95,10 +99,23 @@ class SurfacePane: NSView, @preconcurrency TabBarDelegate, BrowserPanelDelegate 
     }
 
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     func addSurface(_ view: NSView) {
         surfaces.append(view)
-        selectTab(surfaces.count - 1)
+        // Add to content view immediately with constraints, but hidden
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.isHidden = true
+        contentView.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            view.topAnchor.constraint(equalTo: contentView.topAnchor),
+            view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
+        // Rebuild tabs first so updateSelection operates on current tab views
         updateTabBar()
+        selectTab(surfaces.count - 1)
     }
 
     func removeSurface(at index: Int) {
@@ -109,6 +126,8 @@ class SurfacePane: NSView, @preconcurrency TabBarDelegate, BrowserPanelDelegate 
         }
         surface.removeFromSuperview()
 
+        // Rebuild tabs first so selectTab's updateSelection operates on current tab views
+        updateTabBar()
         if surfaces.isEmpty {
             selectedIndex = -1
         } else if selectedIndex >= surfaces.count {
@@ -116,30 +135,39 @@ class SurfacePane: NSView, @preconcurrency TabBarDelegate, BrowserPanelDelegate 
         } else {
             selectTab(selectedIndex)
         }
-        updateTabBar()
     }
 
     func selectTab(_ index: Int) {
         guard index >= 0, index < surfaces.count else { return }
-        selectedIndex = index
-
-        contentView.subviews.forEach { $0.removeFromSuperview() }
-        let view = surfaces[index]
-        view.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(view)
-        NSLayoutConstraint.activate([
-            view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            view.topAnchor.constraint(equalTo: contentView.topAnchor),
-            view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-        ])
-
-        // Focus terminal
-        if let terminal = view as? TerminalSurface {
-            window?.makeFirstResponder(terminal)
+        guard index != selectedIndex || surfaces[index].isHidden else {
+            tabBar.updateSelection(index: index)
+            return
         }
 
-        updateTabBar()
+        // Hide the previously selected surface
+        if selectedIndex >= 0, selectedIndex < surfaces.count {
+            surfaces[selectedIndex].isHidden = true
+        }
+
+        selectedIndex = index
+        let view = surfaces[index]
+        view.isHidden = false
+
+        // Focus terminal on next runloop tick so it doesn't block click processing.
+        // Cancel any pending focus from a previous rapid tab switch.
+        pendingFocusWork?.cancel()
+        if let terminal = view as? TerminalSurface {
+            let work = DispatchWorkItem { [weak self, weak terminal] in
+                guard let terminal else { return }
+                self?.window?.makeFirstResponder(terminal)
+            }
+            pendingFocusWork = work
+            DispatchQueue.main.async(execute: work)
+        } else {
+            pendingFocusWork = nil
+        }
+
+        tabBar.updateSelection(index: index)
     }
 
     private func updateTabBar() {

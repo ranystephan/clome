@@ -8,6 +8,13 @@ class SidebarView: NSView {
 
     private let bgColor = NSColor.clear
 
+    /// File shelf
+    private var bottomBar: NSView!
+    private var scrollViewBottomConstraint: NSLayoutConstraint!
+    private var fileShelfView: FileShelfView?
+    private var isShelfVisible = false
+    private var shelfBtn: NSButton!
+
     /// Which workspaces are expanded
     private var expandedWorkspaces: Set<UUID> = []
 
@@ -87,14 +94,20 @@ class SidebarView: NSView {
         clipView.documentView = stackView
         scrollView.contentView = clipView
 
-        // ──── Bottom toolbar (empty footer for future settings/profile icons) ────
-        let bottomBar = NSView()
+        // ──── Bottom toolbar ────
+        bottomBar = NSView()
         bottomBar.translatesAutoresizingMaskIntoConstraints = false
         bottomBar.wantsLayer = true
         bottomBar.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.03).cgColor
         addSubview(bottomBar)
 
+        // Shelf toggle button
+        shelfBtn = makeNavButton(symbol: "tray.and.arrow.down.fill", action: #selector(shelfToggleTapped))
+        bottomBar.addSubview(shelfBtn)
+
         // ──── Layout ────
+        scrollViewBottomConstraint = scrollView.bottomAnchor.constraint(equalTo: bottomBar.topAnchor)
+
         NSLayoutConstraint.activate([
             // Nav bar
             navBar.topAnchor.constraint(equalTo: topAnchor),
@@ -124,7 +137,7 @@ class SidebarView: NSView {
             scrollView.topAnchor.constraint(equalTo: navBar.bottomAnchor, constant: 2),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomBar.topAnchor),
+            scrollViewBottomConstraint,
 
             stackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
             stackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
@@ -135,6 +148,12 @@ class SidebarView: NSView {
             bottomBar.trailingAnchor.constraint(equalTo: trailingAnchor),
             bottomBar.bottomAnchor.constraint(equalTo: bottomAnchor),
             bottomBar.heightAnchor.constraint(equalToConstant: 36),
+
+            // Shelf button centered in bottom bar
+            shelfBtn.centerXAnchor.constraint(equalTo: bottomBar.centerXAnchor),
+            shelfBtn.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
+            shelfBtn.widthAnchor.constraint(equalToConstant: 28),
+            shelfBtn.heightAnchor.constraint(equalToConstant: 28),
         ])
     }
 
@@ -175,6 +194,62 @@ class SidebarView: NSView {
     @objc private func bellTapped() {
         // Future: show notifications panel
     }
+    @objc private func shelfToggleTapped() {
+        if isShelfVisible {
+            hideFileShelf()
+        } else {
+            showFileShelf()
+        }
+    }
+
+    private func showFileShelf() {
+        guard fileShelfView == nil else { return }
+        isShelfVisible = true
+        shelfBtn.contentTintColor = NSColor.controlAccentColor
+
+        let shelf = FileShelfView()
+        shelf.translatesAutoresizingMaskIntoConstraints = false
+        shelf.alphaValue = 0
+        addSubview(shelf)
+        fileShelfView = shelf
+
+        // Swap scroll view bottom constraint
+        scrollViewBottomConstraint.isActive = false
+        scrollViewBottomConstraint = scrollView.bottomAnchor.constraint(equalTo: shelf.topAnchor)
+        scrollViewBottomConstraint.isActive = true
+
+        NSLayoutConstraint.activate([
+            shelf.leadingAnchor.constraint(equalTo: leadingAnchor),
+            shelf.trailingAnchor.constraint(equalTo: trailingAnchor),
+            shelf.bottomAnchor.constraint(equalTo: bottomBar.topAnchor),
+            shelf.heightAnchor.constraint(equalToConstant: 280),
+        ])
+
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.15
+            shelf.animator().alphaValue = 1
+        }
+    }
+
+    private func hideFileShelf() {
+        guard let shelf = fileShelfView else { return }
+        isShelfVisible = false
+        shelfBtn.contentTintColor = NSColor(white: 1.0, alpha: 0.9)
+
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.15
+            shelf.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            guard let self else { return }
+            shelf.cleanup()
+            shelf.removeFromSuperview()
+            self.fileShelfView = nil
+            self.scrollViewBottomConstraint.isActive = false
+            self.scrollViewBottomConstraint = self.scrollView.bottomAnchor.constraint(equalTo: self.bottomBar.topAnchor)
+            self.scrollViewBottomConstraint.isActive = true
+        })
+    }
+
     @objc private func plusTapped() {
         let ws = workspaceManager.addWorkspace()
         expandedWorkspaces.insert(ws.id)

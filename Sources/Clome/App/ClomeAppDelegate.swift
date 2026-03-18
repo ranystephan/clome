@@ -98,6 +98,14 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return false
+    }
+
+    /// Re-show the main window when the user clicks the dock icon while the app is running.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag, let window = mainWindow {
+            window.makeKeyAndOrderFront(nil)
+        }
         return true
     }
 

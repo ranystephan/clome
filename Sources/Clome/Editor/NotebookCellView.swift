@@ -399,7 +399,18 @@ class NotebookCellView: NSView {
         sourceScrollView.borderType = .noBorder
         cellBody.addSubview(sourceScrollView)
 
-        sourceTextView = NotebookTextView()
+        // Explicitly build the text system so it's guaranteed to exist in
+        // both debug (Xcode) and release (DMG) builds.  Using the bare
+        // NSTextView() initializer can skip text-system setup, leaving
+        // layoutManager / textContainer nil and producing empty cells.
+        let textStorage = NSTextStorage()
+        let layoutManager = NSLayoutManager()
+        textStorage.addLayoutManager(layoutManager)
+        let textContainer = NSTextContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
+        textContainer.widthTracksTextView = true
+        layoutManager.addTextContainer(textContainer)
+
+        sourceTextView = NotebookTextView(frame: .zero, textContainer: textContainer)
         sourceTextView.shortcutDelegate = self
         sourceTextView.isEditable = true
         sourceTextView.isSelectable = true
@@ -420,7 +431,6 @@ class NotebookCellView: NSView {
         sourceTextView.textContainerInset = NSSize(width: Metrics.cellPaddingH, height: Metrics.cellPaddingV)
         sourceTextView.isVerticallyResizable = true
         sourceTextView.isHorizontallyResizable = false
-        sourceTextView.textContainer?.widthTracksTextView = true
         sourceTextView.delegate = self
         sourceScrollView.documentView = sourceTextView
 
@@ -512,6 +522,7 @@ class NotebookCellView: NSView {
         renderedToBottomConstraint?.isActive = false
 
         sourceScrollView.isHidden = false
+        sourceHeightConstraint?.isActive = true
         updateSourceHeight()
 
         // Restore bottom constraint chain
@@ -1019,6 +1030,7 @@ class NotebookCellView: NSView {
             }
             if cell.cell_type == .code { applySyntaxColoring() }
             else if cell.cell_type == .markdown { applyMarkdownColoring() }
+            sourceHeightConstraint?.isActive = true
             updateSourceHeight()
             renderedWebView?.isHidden = true
             renderedToBottomConstraint?.isActive = false
@@ -1036,10 +1048,14 @@ class NotebookCellView: NSView {
             return
         }
         // Ensure the text container has a real width before computing layout.
-        let scrollWidth = sourceScrollView.bounds.width
-        if scrollWidth > 0 {
+        // When the scroll view was just unhidden its bounds may still be zero,
+        // so fall back to the cell body width (which is constrained by Auto Layout).
+        var availableWidth = sourceScrollView.bounds.width
+        if availableWidth <= 0 { availableWidth = cellBody.bounds.width }
+        if availableWidth <= 0 { availableWidth = bounds.width - Metrics.cellMarginH * 2 }
+        if availableWidth > 0 {
             let inset = sourceTextView.textContainerInset.width
-            tc.size = NSSize(width: scrollWidth - inset * 2, height: CGFloat.greatestFiniteMagnitude)
+            tc.size = NSSize(width: availableWidth - inset * 2, height: CGFloat.greatestFiniteMagnitude)
         }
         lm.ensureLayout(for: tc)
         let h = lm.usedRect(for: tc).height + (Metrics.cellPaddingV * 2)

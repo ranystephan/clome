@@ -142,7 +142,30 @@ class WorkspaceManager {
 
         switch tabType {
         case .terminal:
-            workspace.addTerminalTab()
+            let workingDir = savedTab.resourcePath.isEmpty ? nil : savedTab.resourcePath
+            var restoreCmd: String? = nil
+
+            if let scrollbackPath = SessionState.shared.scrollbackPath(forSurfaceId: savedTab.id) {
+                let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+                // Write a temporary restore script that displays saved scrollback,
+                // cleans up both files, then execs the user's login shell
+                let scriptPath = NSTemporaryDirectory() + "clome-restore-\(savedTab.id).sh"
+                let script = """
+                #!/bin/sh
+                cat "\(scrollbackPath)" 2>/dev/null
+                rm -f "\(scrollbackPath)" 2>/dev/null
+                rm -f "\(scriptPath)" 2>/dev/null
+                exec \(shell) -l
+                """
+                try? script.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+                try? FileManager.default.setAttributes(
+                    [.posixPermissions: 0o755],
+                    ofItemAtPath: scriptPath
+                )
+                restoreCmd = scriptPath
+            }
+
+            workspace.addTerminalTab(workingDirectory: workingDir, restoreCommand: restoreCmd)
 
         case .browser:
             let urlStr = savedTab.resourcePath.isEmpty ? nil : savedTab.resourcePath
