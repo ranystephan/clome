@@ -29,6 +29,9 @@ class SidebarView: NSView {
     /// Whether auto-expand has run on first load
     private var hasAutoExpanded = false
 
+    /// Coalescing flag for setNeedsReload()
+    private var reloadScheduled = false
+
     /// Callbacks
     var onToggleSidebar: (() -> Void)?
     var onDragTabBegan: ((Int, Int) -> Void)?                // (wsIndex, tabIndex)
@@ -178,11 +181,27 @@ class SidebarView: NSView {
         reloadWorkspaces()
     }
 
+    // MARK: - Coalesced Reload
+
+    /// Schedule a reload on the next run loop iteration, deduplicating multiple calls within the same event.
+    func setNeedsReload() {
+        guard !reloadScheduled else { return }
+        reloadScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.reloadScheduled = false
+            self.reloadWorkspaces()
+        }
+    }
+
     // MARK: - Reload
 
     private var needsReloadAfterResize = false
 
     func reloadWorkspaces() {
+        // Cancel any pending coalesced reload to avoid double-reload
+        reloadScheduled = false
+
         // Don't rebuild views while user is dragging the explorer resize handle
         if isExplorerResizing {
             needsReloadAfterResize = true
@@ -320,23 +339,25 @@ class SidebarView: NSView {
                         let tabRow = SidebarRow(height: 32)
                         let tabCloseBtn = NSButton()
                         tabRow.configure { view in
-                            let tc = isTabActive ? NSColor(white: 0.88, alpha: 1.0) : NSColor(white: 0.50, alpha: 1.0)
+                            let tc = isTabActive ? NSColor(white: 0.95, alpha: 1.0) : NSColor(white: 0.50, alpha: 1.0)
 
                             let icon = NSImageView()
                             if let favicon = tab.favicon {
                                 icon.image = favicon
                                 icon.imageScaling = .scaleProportionallyDown
                             } else {
-                                let iconCfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
-                                icon.image = NSImage(systemSymbolName: tab.type.icon, accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
-                                icon.contentTintColor = tc; icon.imageScaling = .scaleProportionallyDown
+                                let iconCfg = NSImage.SymbolConfiguration(pointSize: 13, weight: isTabActive ? .semibold : .regular)
+                                let iconName = (tab.view as? TerminalSurface)?.programIcon ?? tab.type.icon
+                                icon.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
+                                icon.contentTintColor = isTabActive ? NSColor.controlAccentColor : tc
+                                icon.imageScaling = .scaleProportionallyDown
                             }
                             view.addSub(icon, leading: 14, centerY: true, width: 16, height: 16)
 
                             // Show split description or plain title
                             let titleText = tab.isSplit ? tab.splitDescription : tab.title
                             let title = NSTextField(labelWithString: titleText)
-                            title.font = .systemFont(ofSize: 11)
+                            title.font = .systemFont(ofSize: 11, weight: isTabActive ? .medium : .regular)
                             title.textColor = tc
                             title.lineBreakMode = .byTruncatingTail
                             view.addSub(title, leading: 36, centerY: true, trailingOffset: 26)
@@ -381,8 +402,9 @@ class SidebarView: NSView {
                             }
                         }
 
-                        tabRow.bgActive = isTabActive ? NSColor(white: 1.0, alpha: 0.10) : nil
-                        tabRow.bgHover = NSColor(white: 1.0, alpha: 0.04)
+                        tabRow.bgActive = isTabActive ? NSColor.controlAccentColor.withAlphaComponent(0.12) : nil
+                        tabRow.borderColor = isTabActive ? NSColor.controlAccentColor.withAlphaComponent(0.35) : nil
+                        tabRow.bgHover = NSColor(white: 1.0, alpha: 0.06)
                         tabRow.cornerRadius = 6
                         tabRow.showAccentBar = isTabActive
                         tabRow.onHoverChange = { hovering in
@@ -636,10 +658,14 @@ class SidebarView: NSView {
         card.translatesAutoresizingMaskIntoConstraints = false
         card.wantsLayer = true
         card.layer?.backgroundColor = isActive
-            ? NSColor(white: 1.0, alpha: 0.12).cgColor
+            ? NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor
             : NSColor(white: 1.0, alpha: 0.08).cgColor
         card.layer?.cornerRadius = 8
         card.layer?.cornerCurve = .continuous
+        if isActive {
+            card.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.35).cgColor
+            card.layer?.borderWidth = 1.0
+        }
 
         let programName = terminal.detectedProgram ?? "Terminal"
         // Only show preview when active, has content, and program is doing something
@@ -1150,6 +1176,12 @@ class SidebarRow: NSView {
     var bgActive: NSColor? { didSet { layer?.backgroundColor = (bgActive ?? NSColor.clear).cgColor } }
     var bgHover: NSColor?
     var cornerRadius: CGFloat = 6 { didSet { layer?.cornerRadius = cornerRadius } }
+    var borderColor: NSColor? {
+        didSet {
+            layer?.borderColor = borderColor?.cgColor ?? NSColor.clear.cgColor
+            layer?.borderWidth = borderColor != nil ? 1.0 : 0.0
+        }
+    }
     var showAccentBar: Bool = false {
         didSet {
             if showAccentBar {

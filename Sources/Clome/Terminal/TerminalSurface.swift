@@ -415,14 +415,16 @@ class TerminalSurface: NSView {
 
         // Extract context percentage if this is a Claude Code session
         if detectedProgram == "Claude Code" {
-            // Primary: read from Clome bridge file (written by status line script)
-            if let bridgePct = ClaudeContextBridge.shared.contextPercentage(forDirectory: workingDirectory) {
+            // Primary: read from Clome bridge file (per-terminal session claiming)
+            if let bridgePct = ClaudeContextBridge.shared.contextPercentage(forTerminal: self, directory: workingDirectory) {
                 contextPercentage = bridgePct
             } else {
                 // Fallback: try to parse from visible terminal text
                 contextPercentage = Self.extractContextPercentage(from: allLines)
             }
         } else {
+            // Release any claimed session when no longer running Claude Code
+            ClaudeContextBridge.shared.releaseClaim(forTerminal: self)
             contextPercentage = nil
         }
 
@@ -455,6 +457,9 @@ class TerminalSurface: NSView {
     /// Tracks whether output has changed between polls (= actively producing output).
     var outputIsChanging: Bool = false
 
+    /// Timestamp of last detected running state (for grace period).
+    private var lastRunningTimestamp: Date?
+
     private func detectStateFromContent(lastLine: String, lines: [String]) {
         let lower = lastLine.lowercased()
 
@@ -467,13 +472,17 @@ class TerminalSurface: NSView {
             if Self.isClaudeCodeWaitingForInput(lastLine: lastLine, lines: lines) {
                 activityState = .waitingInput
                 needsAttention = true
+                lastRunningTimestamp = nil
             } else if outputIsChanging {
-                // Output is actively changing → Claude is working
+                activityState = .running
+                needsAttention = false
+                lastRunningTimestamp = Date()
+            } else if let lastRunning = lastRunningTimestamp,
+                      Date().timeIntervalSince(lastRunning) < 4.0 {
+                // Brief pause between tool calls — keep showing Running
                 activityState = .running
                 needsAttention = false
             } else {
-                // Output stable, not at a prompt → could be thinking or just idle
-                // Don't show "Running" unless we see output changing
                 activityState = .idle
                 needsAttention = false
             }
@@ -498,23 +507,23 @@ class TerminalSurface: NSView {
         }
     }
 
-    /// Detect if Claude Code is waiting for user input by checking output patterns.
     private static func isClaudeCodeWaitingForInput(lastLine: String, lines: [String]) -> Bool {
-        let lower = lastLine.lowercased()
         let trimmed = lastLine.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Claude Code shows ">" prompt when waiting for user input
-        if trimmed == ">" || trimmed == "❯" || trimmed.hasSuffix("> ") {
+        // Claude Code shows ">" or "❯" prompt when waiting for user input
+        // Only match solitary prompt characters, not content ending with >
+        if trimmed == ">" || trimmed == "❯" || trimmed == "> " {
             return true
         }
 
-        // Check for common Claude Code waiting patterns in recent lines
-        let recentContent = lines.suffix(4).joined(separator: " ").lowercased()
+        // Check recent lines for prompt patterns
+        let recentContent = lines.suffix(5).joined(separator: " ").lowercased()
 
-        // "Do you want to proceed?" / approval prompts
+        // Tool approval / permission prompts
         if recentContent.contains("do you want") || recentContent.contains("approve")
             || recentContent.contains("accept") || recentContent.contains("deny")
-            || recentContent.contains("(y)es") || recentContent.contains("reject") {
+            || recentContent.contains("(y)es") || recentContent.contains("reject")
+            || recentContent.contains("allow once") || recentContent.contains("allow always") {
             return true
         }
 
@@ -523,16 +532,28 @@ class TerminalSurface: NSView {
             return true
         }
 
-        // "waiting for" patterns
+        // "waiting for" / "press enter" patterns
         if recentContent.contains("waiting for") || recentContent.contains("press enter") {
             return true
         }
 
-        // Empty prompt line after output (Claude finished and showing prompt)
+        // Short question prompts (e.g. "y/n?", "ok?")
+        if trimmed == "?" || (trimmed.hasSuffix("?") && trimmed.count < 6) {
+            return true
+        }
+
+        // Check last few lines for solitary prompt indicators
+        for line in lines.suffix(3) {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t == ">" || t == "❯" { return true }
+        }
+
+        // Empty prompt line after completion output
         if trimmed.isEmpty && lines.count > 1 {
             let prevLine = lines[lines.count - 2].lowercased()
             if prevLine.contains("completed") || prevLine.contains("done") || prevLine.contains("finished")
-                || prevLine.contains("created") || prevLine.contains("updated") {
+                || prevLine.contains("created") || prevLine.contains("updated")
+                || prevLine.contains("saved") || prevLine.contains("wrote") {
                 return true
             }
         }
@@ -576,8 +597,8 @@ class TerminalSurface: NSView {
             "╭", "╮", "╯", "╰", "╱", "╲",
             "▔", "▁", "▏", "▕", "▐", "▌",
             "█", "▓", "▒", "░",
-            "●", "○", "◆", "◇", "◉", "◎",
-            "…", "·", "•",
+            "○", "◆", "◇", "◉", "◎",
+            "…",
             "⎯", "⎸", "⎹",
         ]
         let letterCount = trimmed.filter { $0.isLetter || $0.isNumber }.count

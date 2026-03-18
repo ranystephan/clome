@@ -60,7 +60,6 @@ class ClomeWindow: NSWindow {
         setupLayout()
         setupHoverTracking()
         workspaceManager.delegate = self
-        workspaceManager.addWorkspace()
 
         NotificationCenter.default.addObserver(self, selector: #selector(appearanceDidChange), name: .appearanceSettingsChanged, object: nil)
     }
@@ -338,10 +337,23 @@ class ClomeWindow: NSWindow {
             container.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
         ])
 
+        // Heavy callback — tabs added/removed/reordered
         workspace.onTabsChanged = { [weak self] in
+            guard self?.workspaceManager.activeWorkspace === workspace else { return }
             self?.updateTabBar()
-            self?.sidebarView?.reloadWorkspaces()
+            self?.sidebarView?.setNeedsReload()
             self?.wirePaneDragCallbacks()
+            // Debounced session save so state survives Xcode re-run (SIGKILL)
+            (NSApp.delegate as? ClomeAppDelegate)?.scheduleSave()
+        }
+
+        // Lightweight callback — only active tab selection changed
+        workspace.onActiveTabChanged = { [weak self] in
+            guard self?.workspaceManager.activeWorkspace === workspace else { return }
+            self?.tabBarView.updateSelection(activeIndex: workspace.activeTabIndex)
+            self?.sidebarView?.setNeedsReload()
+            self?.wirePaneDragCallbacks()
+            (NSApp.delegate as? ClomeAppDelegate)?.scheduleSave()
         }
 
         wirePaneDragCallbacks()
@@ -388,7 +400,7 @@ class ClomeWindow: NSWindow {
 
             self.splitDropZone.hide()
             self.updateTabBar()
-            self.sidebarView?.reloadWorkspaces()
+            self.sidebarView?.setNeedsReload()
             self.paneDragView = nil
         }
 
@@ -443,7 +455,8 @@ class SidebarDivider: NSView {
 extension ClomeWindow: @preconcurrency WorkspaceManagerDelegate {
     func workspaceManager(_ manager: WorkspaceManager, didSwitchTo workspace: Workspace) {
         showWorkspaceContent(workspace)
-        sidebarView?.reloadWorkspaces()
+        sidebarView?.setNeedsReload()
+        (NSApp.delegate as? ClomeAppDelegate)?.scheduleSave()
     }
 }
 
@@ -451,45 +464,36 @@ extension ClomeWindow: @preconcurrency WorkspaceManagerDelegate {
 
 extension ClomeWindow: @preconcurrency WorkspaceTabBarDelegate {
     func tabBar(_ tabBar: WorkspaceTabBar, didSelectTabAt index: Int) {
+        // selectTab fires onActiveTabChanged → lightweight UI updates via callbacks
         workspaceManager.activeWorkspace?.selectTab(index)
-        updateTabBar()
-        sidebarView?.reloadWorkspaces()
     }
 
     func tabBar(_ tabBar: WorkspaceTabBar, didCloseTabAt index: Int) {
+        // closeTab fires onTabsChanged → full UI updates via callbacks
         workspaceManager.activeWorkspace?.closeTab(index)
-        updateTabBar()
-        sidebarView?.reloadWorkspaces()
     }
 
     func tabBar(_ tabBar: WorkspaceTabBar, didMoveTabFrom from: Int, to: Int) {
+        // moveTab fires onTabsChanged
         workspaceManager.activeWorkspace?.moveTab(from: from, to: to)
-        updateTabBar()
-        sidebarView?.reloadWorkspaces()
     }
 
     func tabBar(_ tabBar: WorkspaceTabBar, didRenameTabAt index: Int, to name: String) {
+        // renameTab fires onTabsChanged
         workspaceManager.activeWorkspace?.renameTab(index, to: name)
-        updateTabBar()
-        sidebarView?.reloadWorkspaces()
     }
 
     func tabBarDidRequestNewTab(_ tabBar: WorkspaceTabBar) {
+        // addTerminalTab fires onTabsChanged via addTab
         workspaceManager.activeWorkspace?.addTerminalTab()
-        updateTabBar()
-        sidebarView?.reloadWorkspaces()
     }
 
     func tabBarDidRequestNewTerminal(_ tabBar: WorkspaceTabBar) {
         workspaceManager.activeWorkspace?.addTerminalTab()
-        updateTabBar()
-        sidebarView?.reloadWorkspaces()
     }
 
     func tabBarDidRequestNewBrowser(_ tabBar: WorkspaceTabBar) {
         workspaceManager.activeWorkspace?.addBrowserTab()
-        updateTabBar()
-        sidebarView?.reloadWorkspaces()
     }
 
     func tabBarDidRequestNewProject(_ tabBar: WorkspaceTabBar) {
@@ -500,9 +504,8 @@ extension ClomeWindow: @preconcurrency WorkspaceTabBarDelegate {
         panel.prompt = "Open Project"
         panel.beginSheetModal(for: self) { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
+            // addProjectTab fires onTabsChanged
             self?.workspaceManager.activeWorkspace?.addProjectTab(directory: url.path)
-            self?.updateTabBar()
-            self?.sidebarView?.reloadWorkspaces()
         }
     }
 
@@ -514,20 +517,19 @@ extension ClomeWindow: @preconcurrency WorkspaceTabBarDelegate {
         panel.prompt = "Open File"
         panel.beginSheetModal(for: self) { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
+            // addEditorTab fires onTabsChanged
             try? self?.workspaceManager.activeWorkspace?.addEditorTab(path: url.path)
-            self?.updateTabBar()
-            self?.sidebarView?.reloadWorkspaces()
         }
     }
 
     func tabBarDidRequestSplit(_ tabBar: WorkspaceTabBar, direction: SplitDirection) {
+        // splitActivePane fires onTabsChanged
         workspaceManager.activeWorkspace?.splitActivePane(direction: direction)
-        updateTabBar()
     }
 
     func tabBarDidRequestQuadSplit(_ tabBar: WorkspaceTabBar) {
+        // splitActivePaneQuad fires onTabsChanged
         workspaceManager.activeWorkspace?.splitActivePaneQuad()
-        updateTabBar()
     }
 
     // MARK: - Drag-to-Split
@@ -556,7 +558,7 @@ extension ClomeWindow: @preconcurrency WorkspaceTabBarDelegate {
         if let direction = result.zone.splitDirection, let workspace = workspaceManager.activeWorkspace {
             workspace.splitWithTab(index, direction: direction, targetPane: result.targetPane)
             updateTabBar()
-            sidebarView?.reloadWorkspaces()
+            sidebarView?.setNeedsReload()
         } else if result.zone == .center {
             workspaceManager.activeWorkspace?.selectTab(index)
             updateTabBar()
@@ -591,7 +593,7 @@ extension ClomeWindow: @preconcurrency WorkspaceTabBarDelegate {
         if let direction = result.zone.splitDirection, let workspace = workspaceManager.activeWorkspace {
             workspace.splitWithTab(tabIndex, direction: direction, targetPane: result.targetPane)
             updateTabBar()
-            sidebarView?.reloadWorkspaces()
+            sidebarView?.setNeedsReload()
         } else if result.zone == .center {
             workspaceManager.activeWorkspace?.selectTab(tabIndex)
             updateTabBar()

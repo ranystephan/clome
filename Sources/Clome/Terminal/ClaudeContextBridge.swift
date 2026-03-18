@@ -9,11 +9,17 @@ class ClaudeContextBridge {
     private let contextDir = "/tmp/clome-claude-context"
     private let bridgeScriptName = "clome-claude-bridge.sh"
 
-    /// Cached session data keyed by working directory.
-    private var sessionsByDir: [String: ClaudeSessionContext] = [:]
+    /// All sessions keyed by session ID.
+    private var sessions: [String: ClaudeSessionContext] = [:]
+
+    /// Tracks which terminal (by ObjectIdentifier) has claimed which session ID.
+    private var claimedSessions: [ObjectIdentifier: String] = [:]
+
+    /// Throttle disk reads to avoid hitting the filesystem on every 2-second poll.
+    private var lastLoadTime: Date?
+    private let loadCacheInterval: TimeInterval = 1.0
 
     private init() {
-        // Ensure the context directory exists
         try? FileManager.default.createDirectory(
             atPath: contextDir,
             withIntermediateDirectories: true
@@ -23,49 +29,99 @@ class ClaudeContextBridge {
 
     // MARK: - Public API
 
-    /// Get context percentage for a Claude Code session running in the given directory.
-    func contextPercentage(forDirectory dir: String?) -> Int? {
+    /// Get context percentage for a specific terminal's Claude Code session.
+    /// Each terminal claims its own session to avoid showing duplicate percentages.
+    func contextPercentage(forTerminal terminal: AnyObject, directory dir: String?) -> Int? {
         guard let dir else { return nil }
-        // Reload from disk
-        loadSessionFiles()
+        reloadIfNeeded()
 
-        // Match by directory
-        if let session = sessionsByDir[dir] {
-            // Only return if data is recent (within 30 seconds)
-            if Date().timeIntervalSince1970 - session.timestamp < 30 {
-                return session.usedPercentage
-            }
+        let terminalId = ObjectIdentifier(terminal)
+        let now = Date().timeIntervalSince1970
+
+        // If this terminal already claimed a session, use it
+        if let sessionId = claimedSessions[terminalId],
+           let session = sessions[sessionId],
+           now - session.timestamp < 30 {
+            return session.usedPercentage
         }
 
-        // Try matching with resolved/canonical paths
+        // Find an unclaimed session matching this directory
+        let alreadyClaimed = Set(claimedSessions.values)
         let resolvedDir = (dir as NSString).resolvingSymlinksInPath
-        for (path, session) in sessionsByDir {
-            let resolvedPath = (path as NSString).resolvingSymlinksInPath
-            if resolvedPath == resolvedDir {
-                if Date().timeIntervalSince1970 - session.timestamp < 30 {
-                    return session.usedPercentage
+
+        let best = sessions.values
+            .filter { s in
+                guard !s.sessionId.isEmpty, !alreadyClaimed.contains(s.sessionId) else { return false }
+                guard now - s.timestamp < 30 else { return false }
+                return s.cwd == dir || (s.cwd as NSString).resolvingSymlinksInPath == resolvedDir
+            }
+            .max(by: { $0.timestamp < $1.timestamp })
+
+        if let best {
+            claimedSessions[terminalId] = best.sessionId
+            return best.usedPercentage
+        }
+
+        // Stale claim — clear and retry
+        if claimedSessions.removeValue(forKey: terminalId) != nil {
+            let stillClaimed = Set(claimedSessions.values)
+            let retry = sessions.values
+                .filter { s in
+                    guard !s.sessionId.isEmpty, !stillClaimed.contains(s.sessionId) else { return false }
+                    guard now - s.timestamp < 30 else { return false }
+                    return s.cwd == dir || (s.cwd as NSString).resolvingSymlinksInPath == resolvedDir
                 }
+                .max(by: { $0.timestamp < $1.timestamp })
+            if let retry {
+                claimedSessions[terminalId] = retry.sessionId
+                return retry.usedPercentage
             }
         }
 
         return nil
     }
 
+    /// Release a terminal's claimed session (call when terminal stops running Claude Code).
+    func releaseClaim(forTerminal terminal: AnyObject) {
+        claimedSessions.removeValue(forKey: ObjectIdentifier(terminal))
+    }
+
+    /// Legacy directory-only lookup (backward compatibility).
+    func contextPercentage(forDirectory dir: String?) -> Int? {
+        guard let dir else { return nil }
+        reloadIfNeeded()
+        let resolvedDir = (dir as NSString).resolvingSymlinksInPath
+        let now = Date().timeIntervalSince1970
+        return sessions.values
+            .filter { now - $0.timestamp < 30 && ($0.cwd == dir || ($0.cwd as NSString).resolvingSymlinksInPath == resolvedDir) }
+            .max(by: { $0.timestamp < $1.timestamp })?
+            .usedPercentage
+    }
+
     /// Get full session context for a directory.
     func sessionContext(forDirectory dir: String?) -> ClaudeSessionContext? {
         guard let dir else { return nil }
-        loadSessionFiles()
-        return sessionsByDir[dir] ?? {
-            let resolved = (dir as NSString).resolvingSymlinksInPath
-            return sessionsByDir.first { ($0.key as NSString).resolvingSymlinksInPath == resolved }?.value
-        }()
+        reloadIfNeeded()
+        let resolved = (dir as NSString).resolvingSymlinksInPath
+        return sessions.values.first {
+            $0.cwd == dir || ($0.cwd as NSString).resolvingSymlinksInPath == resolved
+        }
     }
 
     // MARK: - File Reading
 
+    private func reloadIfNeeded() {
+        let now = Date()
+        if let last = lastLoadTime, now.timeIntervalSince(last) < loadCacheInterval { return }
+        lastLoadTime = now
+        loadSessionFiles()
+    }
+
     private func loadSessionFiles() {
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(atPath: contextDir) else { return }
+        let now = Date().timeIntervalSince1970
+        var foundIds = Set<String>()
 
         for file in files where file.hasSuffix(".json") {
             let path = "\(contextDir)/\(file)"
@@ -87,32 +143,32 @@ class ClaudeContextBridge {
                 timestamp: json["timestamp"] as? Double ?? 0
             )
 
-            if !session.cwd.isEmpty {
-                sessionsByDir[session.cwd] = session
+            if !session.sessionId.isEmpty {
+                sessions[session.sessionId] = session
+                foundIds.insert(session.sessionId)
             }
 
             // Clean up stale files (older than 2 minutes)
-            if Date().timeIntervalSince1970 - session.timestamp > 120 {
+            if now - session.timestamp > 120 {
                 try? fm.removeItem(atPath: path)
             }
         }
+
+        // Remove sessions whose files no longer exist
+        sessions = sessions.filter { foundIds.contains($0.key) }
+        // Remove claims for gone sessions
+        claimedSessions = claimedSessions.filter { sessions[$0.value] != nil }
     }
 
     // MARK: - Bridge Installation
 
-    /// Ensure the bridge script is installed and Claude Code is configured to use it.
     private func ensureBridgeInstalled() {
         let bridgePath = NSHomeDirectory() + "/.config/clome/\(bridgeScriptName)"
         let bridgeDir = (bridgePath as NSString).deletingLastPathComponent
         let fm = FileManager.default
 
-        // Create directory
         try? fm.createDirectory(atPath: bridgeDir, withIntermediateDirectories: true)
-
-        // Install/update the bridge script
         installBridgeScript(to: bridgePath)
-
-        // Configure Claude Code's settings to use our bridge
         configureClaude(bridgePath: bridgePath)
     }
 
@@ -125,7 +181,6 @@ class ClaudeContextBridge {
             passthrough = "echo \"$INPUT\" | \(originalCommand)"
         }
 
-        // Write script with no leading indentation (heredoc-sensitive)
         let script = [
             "#!/bin/bash",
             "# Clome <-> Claude Code context bridge",
@@ -157,7 +212,6 @@ class ClaudeContextBridge {
         )
     }
 
-    /// Read the current Claude Code status line command from settings.
     private func readOriginalStatusLine() -> String? {
         let settingsPath = NSHomeDirectory() + "/.claude/settings.json"
         guard let data = FileManager.default.contents(atPath: settingsPath),
@@ -166,41 +220,31 @@ class ClaudeContextBridge {
               let command = statusLine["command"] as? String else {
             return nil
         }
-
-        // Don't return our own bridge as the "original"
         if command.contains("clome-claude-bridge") { return nil }
-
         return command
     }
 
-    /// Configure Claude Code's settings.json to use our bridge script.
     private func configureClaude(bridgePath: String) {
         let settingsPath = NSHomeDirectory() + "/.claude/settings.json"
         let fm = FileManager.default
 
-        // Read existing settings
         var settings: [String: Any] = [:]
         if let data = fm.contents(atPath: settingsPath),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             settings = json
-
-            // Check if already configured
             if let statusLine = json["statusLine"] as? [String: Any],
                let command = statusLine["command"] as? String,
                command.contains("clome-claude-bridge") {
-                return // Already configured
+                return
             }
         }
 
-        // Set the status line to our bridge
         settings["statusLine"] = [
             "type": "command",
             "command": bridgePath
         ]
 
-        // Write back
         if let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) {
-            // Ensure directory exists
             let dir = (settingsPath as NSString).deletingLastPathComponent
             try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
             try? data.write(to: URL(fileURLWithPath: settingsPath))

@@ -62,6 +62,9 @@ class EditorPanel: NSView {
         }
     }
 
+    /// The file path of the currently open file (nil if untitled).
+    var filePath: String? { editorView.buffer.filePath }
+
     init(buffer: TextBuffer = TextBuffer()) {
         self.editorView = EditorView(buffer: buffer)
         super.init(frame: .zero)

@@ -902,7 +902,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
 
     // MARK: - WKNavigationDelegate — Navigation Policy
 
-    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, preferences: WKWebpagePreferences, decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, preferences: WKWebpagePreferences, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
         guard let url = navigationAction.request.url else {
             decisionHandler(.allow, preferences)
             return
@@ -937,7 +937,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         decisionHandler(.allow, preferences)
     }
 
-    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void) {
         // Always allow responses -- never block auth redirects or passkey ceremony responses
         decisionHandler(.allow)
     }
@@ -952,7 +952,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
 
     // MARK: - WKUIDelegate — JavaScript Dialogs
 
-    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor @Sendable () -> Void) {
         let alert = NSAlert()
         alert.messageText = frame.request.url?.host ?? "Alert"
         alert.informativeText = message
@@ -968,7 +968,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         }
     }
 
-    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor @Sendable (Bool) -> Void) {
         let alert = NSAlert()
         alert.messageText = frame.request.url?.host ?? "Confirm"
         alert.informativeText = message
@@ -985,7 +985,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         }
     }
 
-    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor @Sendable (String?) -> Void) {
         let alert = NSAlert()
         alert.messageText = frame.request.url?.host ?? "Prompt"
         alert.informativeText = prompt
@@ -1188,7 +1188,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
 
     // MARK: - WKNavigationDelegate — Authentication Challenges
 
-    func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping @MainActor @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         let protectionSpace = challenge.protectionSpace
         let authMethod = protectionSpace.authenticationMethod
 

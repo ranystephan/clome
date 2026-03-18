@@ -131,6 +131,14 @@ enum CellSource: Codable {
     case string(String)
     case array([String])
 
+    /// The resolved text content, joining array elements if needed.
+    var text: String {
+        switch self {
+        case .string(let s): return s
+        case .array(let a): return a.joined()
+        }
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         if let arr = try? container.decode([String].self) {
@@ -234,8 +242,6 @@ struct OutputData: Codable {
 
 enum NotebookError: Error {
     case invalidFormat
-    case readFailed(String)
-    case writeFailed(String)
 }
 
 @MainActor

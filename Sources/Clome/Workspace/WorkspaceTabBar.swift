@@ -180,6 +180,18 @@ class WorkspaceTabBar: NSView {
         }
     }
 
+    /// Lightweight update — only changes which tab appears selected, no view hierarchy changes
+    func updateSelection(activeIndex: Int) {
+        for (i, view) in stackView.arrangedSubviews.enumerated() {
+            guard let item = view as? WorkspaceTabItem else { continue }
+            item.index = i
+            let isSelected = i == activeIndex
+            item.layer?.backgroundColor = isSelected
+                ? NSColor(red: 0.16, green: 0.16, blue: 0.175, alpha: 1.0).cgColor
+                : NSColor.clear.cgColor
+        }
+    }
+
     func updateTabs(workspace: Workspace) {
         stackView.arrangedSubviews.forEach { stackView.removeArrangedSubview($0); $0.removeFromSuperview() }
 
@@ -553,6 +565,7 @@ class WorkspaceTabItem: NSView {
     private let activeColor = NSColor(red: 0.16, green: 0.16, blue: 0.175, alpha: 1.0)
     private let hoverColor = NSColor(red: 0.14, green: 0.14, blue: 0.155, alpha: 1.0)
     private var closeButton: NSButton!
+    private var iconView: NSImageView!
     private var isDragging = false
     private var didSelect = false
     private var dragStartLocation: NSPoint = .zero
@@ -573,14 +586,15 @@ class WorkspaceTabItem: NSView {
         let textColor = isSelected ? NSColor(white: 0.92, alpha: 1.0) : NSColor(white: 0.5, alpha: 1.0)
 
         // Type icon — use favicon for browser tabs when available
-        let iconView = NSImageView()
+        iconView = NSImageView()
         iconView.translatesAutoresizingMaskIntoConstraints = false
         if let favicon = tab.favicon {
             iconView.image = favicon
             iconView.imageScaling = .scaleProportionallyDown
         } else {
             let iconCfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
-            iconView.image = NSImage(systemSymbolName: tab.type.icon, accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
+            let iconName = (tab.view as? TerminalSurface)?.programIcon ?? tab.type.icon
+            iconView.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
             iconView.contentTintColor = textColor
         }
         addSubview(iconView)
@@ -673,6 +687,14 @@ class WorkspaceTabItem: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     @objc private func closeTapped() { onClose?(index) }
+
+    /// Update icon when terminal program changes (e.g. Claude Code detected)
+    func updateIcon(for tab: WorkspaceTab) {
+        let iconName = (tab.view as? TerminalSurface)?.programIcon ?? tab.type.icon
+        let cfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
+        iconView.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
+    }
+
     override var acceptsFirstResponder: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
