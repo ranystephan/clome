@@ -159,6 +159,13 @@ class GhosttyAppManager {
             )
             return true
 
+        case GHOSTTY_ACTION_OPEN_URL:
+            if let urlPtr = action.action.open_url.url {
+                let urlString = String(cString: urlPtr)
+                openURLFromTerminal(urlString, target: target)
+            }
+            return true
+
         case GHOSTTY_ACTION_RING_BELL:
             NSSound.beep()
             return true
@@ -179,6 +186,57 @@ class GhosttyAppManager {
 
         default:
             return false
+        }
+    }
+
+    private func openURLFromTerminal(_ urlString: String, target: ghostty_target_s) {
+        guard let url = URL(string: urlString) else { return }
+        let scheme = url.scheme?.lowercased() ?? ""
+
+        // Only intercept http/https URLs
+        guard scheme == "http" || scheme == "https" else {
+            NSWorkspace.shared.open(url)
+            return
+        }
+
+        // Check user preference
+        guard AppearanceSettings.shared.openLinksInClomeBrowser else {
+            NSWorkspace.shared.open(url)
+            return
+        }
+
+        // Find the source terminal surface and split a browser next to it
+        guard let appDelegate = NSApp.delegate as? ClomeAppDelegate,
+              let workspace = appDelegate.mainWindow?.workspaceManager.activeWorkspace else {
+            NSWorkspace.shared.open(url)
+            return
+        }
+
+        // Find the TerminalSurface that triggered this action
+        let sourceSurface: TerminalSurface? = {
+            guard target.tag == GHOSTTY_TARGET_SURFACE else { return nil }
+            let targetSurface = target.target.surface
+            for tab in workspace.tabs {
+                for view in tab.splitContainer.allLeafViews {
+                    if let terminal = view as? TerminalSurface, terminal.surface == targetSurface {
+                        return terminal
+                    }
+                }
+            }
+            return nil
+        }()
+
+        // Create a browser and split it next to the source terminal
+        let browser = BrowserPanel()
+        browser.loadURL(urlString)
+
+        if let terminal = sourceSurface, let tab = workspace.activeTab {
+            tab.splitContainer.split(view: terminal, with: browser, direction: .right)
+            tab.splitContainer.focusedPane = browser
+            workspace.onTabsChanged?()
+        } else {
+            // Fallback: open as a new tab
+            workspace.addBrowserTab(url: urlString)
         }
     }
 

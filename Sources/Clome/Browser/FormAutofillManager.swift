@@ -174,6 +174,8 @@ class FormAutofillManager: NSObject, WKScriptMessageHandler {
     weak var navBar: NSView?
 
     private var currentBanner: CredentialSaveBanner?
+    private weak var registeredController: WKUserContentController?
+    private(set) var isRegistered = false
 
     // MARK: - Registration
 
@@ -181,7 +183,17 @@ class FormAutofillManager: NSObject, WKScriptMessageHandler {
     func register(on config: WKWebViewConfiguration) {
         let controller = config.userContentController
 
+        if isRegistered {
+            if registeredController === controller {
+                NSLog("[FormAutofill] register skipped: already registered on this controller")
+                return
+            }
+            unregisterCurrentController()
+        }
+
         // Register message handlers
+        controller.removeScriptMessageHandler(forName: "clomeFormDetected")
+        controller.removeScriptMessageHandler(forName: "clomeCredentialCaptured")
         controller.add(self, name: "clomeFormDetected")
         controller.add(self, name: "clomeCredentialCaptured")
         NSLog("[FormAutofill] Registered message handlers: clomeFormDetected, clomeCredentialCaptured")
@@ -194,35 +206,85 @@ class FormAutofillManager: NSObject, WKScriptMessageHandler {
         )
         controller.addUserScript(script)
         NSLog("[FormAutofill] Injected form detection JS script")
+
+        registeredController = controller
+        isRegistered = true
+    }
+
+    /// Unregister message handlers from a web view configuration.
+    func unregister(from config: WKWebViewConfiguration) {
+        unregister(controller: config.userContentController)
+    }
+
+    private func unregisterCurrentController() {
+        unregister(controller: registeredController)
+    }
+
+    private func unregister(controller: WKUserContentController?) {
+        guard let controller else { return }
+        controller.removeScriptMessageHandler(forName: "clomeFormDetected")
+        controller.removeScriptMessageHandler(forName: "clomeCredentialCaptured")
+        if registeredController === controller {
+            registeredController = nil
+            isRegistered = false
+        }
+        NSLog("[FormAutofill] Unregistered message handlers")
     }
 
     // MARK: - Page lifecycle
 
     /// Called by BrowserPanel when a page finishes loading. Triggers autofill check.
-    func pageDidFinish(url: URL?) {
-        NSLog("[FormAutofill] pageDidFinish: \(url?.absoluteString ?? "nil"), webView=\(webView != nil)")
+    nonisolated func pageDidFinish(url: URL?) {
+        Task { @MainActor [weak self] in
+            self?.handlePageDidFinish(url: url)
+        }
+    }
+
+    private func handlePageDidFinish(url: URL?) {
+        let urlString = url?.absoluteString ?? "nil"
+        guard isRegistered else {
+            NSLog("[FormAutofill] pageDidFinish ignored (manager not registered)")
+            return
+        }
+        guard let webView else {
+            NSLog("[FormAutofill] pageDidFinish ignored (webView unavailable)")
+            return
+        }
+
+        // Keep log payload simple and avoid optional/bridging churn during teardown races.
+        NSLog("[FormAutofill] pageDidFinish, webView=true, url=%@", urlString)
         // The injected JS will post clomeFormDetected automatically on load.
         // We can also re-trigger a scan for SPAs that may have changed content.
-        webView?.evaluateJavaScript("if (window.__clomeScanForms) window.__clomeScanForms(); else console.log('[Clome] __clomeScanForms not found');", completionHandler: { result, error in
-            if let error = error {
-                NSLog("[FormAutofill] JS scan error: \(error.localizedDescription)")
-            } else {
-                NSLog("[FormAutofill] JS scan triggered OK")
+        webView.evaluateJavaScript("if (window.__clomeScanForms) window.__clomeScanForms(); else console.log('[Clome] __clomeScanForms not found');") { [weak self] _, error in
+            Task { @MainActor in
+                guard self != nil else { return }
+                if let error {
+                    NSLog("[FormAutofill] JS scan error on %@: %@", urlString, error.localizedDescription)
+                } else {
+                    NSLog("[FormAutofill] JS scan triggered OK for %@", urlString)
+                }
             }
-        })
+        }
     }
 
     // MARK: - WKScriptMessageHandler
 
-    func userContentController(
+    nonisolated func userContentController(
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {
-        NSLog("[FormAutofill] Received message: name=\(message.name), body=\(message.body)")
-        handleMessage(name: message.name, body: message.body)
+        Task { @MainActor in
+            NSLog("[FormAutofill] Received message: name=\(message.name), body=\(message.body)")
+            self.handleMessage(name: message.name, body: message.body)
+        }
     }
 
     private func handleMessage(name: String, body: Any) {
+        guard isRegistered else {
+            NSLog("[FormAutofill] Ignoring message while unregistered: \(name)")
+            return
+        }
+
         guard let dict = body as? [String: Any] else {
             NSLog("[FormAutofill] Message body is not a dictionary: \(type(of: body))")
             return

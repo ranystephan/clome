@@ -6,7 +6,7 @@ import AppKit
 /// Two tabs: Pinned (user-curated) and Downloads (auto-populated from ~/Downloads).
 /// Supports multi-selection via ⌘-click (toggle) and ⇧-click (range).
 @MainActor
-class FileShelfView: NSView {
+class FileShelfView: NSView, NSTextFieldDelegate {
 
     enum ShelfTab { case pinned, downloads }
 
@@ -30,9 +30,14 @@ class FileShelfView: NSView {
     private let listStack = NSStackView()
 
     private let addButton = NSButton()
+    private let searchButton = NSButton()
+    private let searchField = NSTextField()
     private let emptyLabel = NSTextField(labelWithString: "Drop files here or click +")
 
     private var downloadsWatcher: DispatchSourceFileSystemObject?
+    private var isSearchVisible = false
+    private var searchText = ""
+    private var listScrollViewBottomConstraint: NSLayoutConstraint?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -53,7 +58,18 @@ class FileShelfView: NSView {
 
     /// The files in the active tab
     private var currentFiles: [URL] {
-        activeTab == .pinned ? pinnedFiles : downloadsFiles
+        if activeTab == .pinned {
+            return pinnedFiles
+        } else {
+            // Filter downloads based on search text
+            if searchText.isEmpty {
+                return downloadsFiles
+            } else {
+                return downloadsFiles.filter { url in
+                    url.lastPathComponent.localizedCaseInsensitiveContains(searchText)
+                }
+            }
+        }
     }
 
     /// URLs for all selected rows
@@ -122,6 +138,34 @@ class FileShelfView: NSView {
         addButton.action = #selector(addPinnedFilesTapped)
         addSubview(addButton)
 
+        // Search button (downloads tab only)
+        searchButton.translatesAutoresizingMaskIntoConstraints = false
+        searchButton.bezelStyle = .texturedRounded
+        searchButton.isBordered = false
+        searchButton.title = ""
+        let searchCfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+        searchButton.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search files")?.withSymbolConfiguration(searchCfg)
+        searchButton.contentTintColor = NSColor(white: 1.0, alpha: 0.6)
+        searchButton.target = self
+        searchButton.action = #selector(searchButtonTapped)
+        searchButton.isHidden = true
+        addSubview(searchButton)
+
+        // Search field
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        searchField.placeholderString = "Search downloads..."
+        searchField.font = .systemFont(ofSize: 11)
+        searchField.textColor = NSColor(white: 1.0, alpha: 0.85)
+        searchField.backgroundColor = NSColor(white: 0.12, alpha: 0.8)
+        searchField.drawsBackground = true
+        searchField.isBezeled = true
+        searchField.bezelStyle = .roundedBezel
+        searchField.target = self
+        searchField.action = #selector(searchFieldChanged)
+        searchField.delegate = self
+        searchField.isHidden = true
+        addSubview(searchField)
+
         // Empty label
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         emptyLabel.font = .systemFont(ofSize: 11)
@@ -130,7 +174,9 @@ class FileShelfView: NSView {
         emptyLabel.isHidden = true
         addSubview(emptyLabel)
 
-        // Layout
+        // Layout - initially set for pinned tab (showing add button)
+        listScrollViewBottomConstraint = listScrollView.bottomAnchor.constraint(equalTo: addButton.topAnchor, constant: -2)
+        
         NSLayoutConstraint.activate([
             sep.topAnchor.constraint(equalTo: topAnchor),
             sep.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -154,7 +200,7 @@ class FileShelfView: NSView {
             listScrollView.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
             listScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             listScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            listScrollView.bottomAnchor.constraint(equalTo: addButton.topAnchor, constant: -2),
+            listScrollViewBottomConstraint!,
 
             listStack.leadingAnchor.constraint(equalTo: listScrollView.leadingAnchor),
             listStack.trailingAnchor.constraint(equalTo: listScrollView.trailingAnchor),
@@ -164,6 +210,16 @@ class FileShelfView: NSView {
             addButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
             addButton.widthAnchor.constraint(equalToConstant: 24),
             addButton.heightAnchor.constraint(equalToConstant: 24),
+
+            searchButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            searchButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            searchButton.widthAnchor.constraint(equalToConstant: 24),
+            searchButton.heightAnchor.constraint(equalToConstant: 24),
+
+            searchField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            searchField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            searchField.bottomAnchor.constraint(equalTo: searchButton.topAnchor, constant: -4),
+            searchField.heightAnchor.constraint(equalToConstant: 22),
 
             emptyLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: listScrollView.centerYAnchor),
@@ -194,6 +250,12 @@ class FileShelfView: NSView {
         activeTab = tab
         selectedIndices.removeAll()
         lastClickedIndex = nil
+        
+        // Hide search when switching away from downloads
+        if tab != .downloads && isSearchVisible {
+            hideSearchField()
+        }
+        
         updateTabAppearance()
         reloadList()
     }
@@ -206,6 +268,18 @@ class FileShelfView: NSView {
         downloadsTabBtn.contentTintColor = activeTab == .downloads ? activeColor : inactiveColor
 
         addButton.isHidden = activeTab != .pinned
+        searchButton.isHidden = activeTab != .downloads
+        
+        // Update scroll view bottom constraint based on active tab (if search is not visible)
+        if !isSearchVisible {
+            listScrollViewBottomConstraint?.isActive = false
+            if activeTab == .pinned {
+                listScrollViewBottomConstraint = listScrollView.bottomAnchor.constraint(equalTo: addButton.topAnchor, constant: -2)
+            } else {
+                listScrollViewBottomConstraint = listScrollView.bottomAnchor.constraint(equalTo: searchButton.topAnchor, constant: -2)
+            }
+            listScrollViewBottomConstraint?.isActive = true
+        }
 
         // Move indicator line under active tab
         let targetBtn = activeTab == .pinned ? pinnedTabBtn : downloadsTabBtn
@@ -319,6 +393,15 @@ class FileShelfView: NSView {
         let files = currentFiles
         let showRemove = activeTab == .pinned
 
+        // Update empty label based on context
+        if activeTab == .downloads && !searchText.isEmpty && files.isEmpty {
+            emptyLabel.stringValue = "No files match your search"
+        } else if activeTab == .downloads && files.isEmpty {
+            emptyLabel.stringValue = "No files in Downloads folder"
+        } else {
+            emptyLabel.stringValue = "Drop files here or click +"
+        }
+        
         emptyLabel.isHidden = !files.isEmpty
 
         // Prune stale selection indices
@@ -364,6 +447,69 @@ class FileShelfView: NSView {
         reloadList()
     }
 
+    @objc private func searchButtonTapped() {
+        if isSearchVisible {
+            hideSearchField()
+        } else {
+            showSearchField()
+        }
+    }
+
+    @objc private func searchFieldChanged() {
+        searchText = searchField.stringValue
+        selectedIndices.removeAll()
+        lastClickedIndex = nil
+        reloadList()
+    }
+
+    private func showSearchField() {
+        guard !isSearchVisible else { return }
+        isSearchVisible = true
+        searchField.isHidden = false
+        searchField.alphaValue = 0.0
+        searchButton.contentTintColor = NSColor.controlAccentColor
+        
+        // Update scroll view constraint to make room for search field
+        listScrollViewBottomConstraint?.isActive = false
+        listScrollViewBottomConstraint = listScrollView.bottomAnchor.constraint(equalTo: searchField.topAnchor, constant: -2)
+        listScrollViewBottomConstraint?.isActive = true
+        
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.2
+            searchField.animator().alphaValue = 1.0
+            self.layoutSubtreeIfNeeded()
+        }
+        
+        // Focus the search field
+        DispatchQueue.main.async { [weak self] in
+            self?.window?.makeFirstResponder(self?.searchField)
+        }
+    }
+
+    private func hideSearchField() {
+        guard isSearchVisible else { return }
+        isSearchVisible = false
+        searchButton.contentTintColor = NSColor(white: 1.0, alpha: 0.6)
+        
+        // Restore scroll view constraint
+        listScrollViewBottomConstraint?.isActive = false
+        listScrollViewBottomConstraint = listScrollView.bottomAnchor.constraint(equalTo: searchButton.topAnchor, constant: -2)
+        listScrollViewBottomConstraint?.isActive = true
+        
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.2
+            searchField.animator().alphaValue = 0.0
+            self.layoutSubtreeIfNeeded()
+        }, completionHandler: { [weak self] in
+            self?.searchField.isHidden = true
+            self?.searchField.stringValue = ""
+            self?.searchText = ""
+            self?.selectedIndices.removeAll()
+            self?.lastClickedIndex = nil
+            self?.reloadList()
+        })
+    }
+
     // MARK: - Drag Destination (pinned tab accepts file drops)
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
@@ -385,6 +531,24 @@ class FileShelfView: NSView {
             reloadList()
         }
         return changed
+    }
+
+    // MARK: - NSTextFieldDelegate
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard obj.object as? NSTextField === searchField else { return }
+        searchText = searchField.stringValue
+        selectedIndices.removeAll()
+        lastClickedIndex = nil
+        reloadList()
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) { // Escape key
+            hideSearchField()
+            return true
+        }
+        return false
     }
 }
 

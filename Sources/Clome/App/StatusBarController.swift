@@ -310,7 +310,12 @@ class StatusBarPopoverViewController: NSViewController {
             for tab in workspace.tabs {
                 for leaf in tab.splitContainer.allLeafViews {
                     guard let terminal = leaf as? TerminalSurface else { continue }
-                    guard terminal.activityState == .running || terminal.activityState == .waitingInput else { continue }
+                    
+                    // Include Claude Code terminals with specific states, or other terminals with activity
+                    let isClaudeActive = terminal.detectedProgram == "Claude Code" && terminal.claudeCodeState != nil
+                    let hasGeneralActivity = terminal.activityState == .running || terminal.activityState == .waitingInput
+                    
+                    guard isClaudeActive || hasGeneralActivity else { continue }
                     hasActive = true
                     addTerminalRow(terminal: terminal, wsIndex: wsIndex)
                 }
@@ -350,10 +355,26 @@ class StatusBarPopoverViewController: NSViewController {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         row.addSubview(iconView)
 
-        // Activity dot
+        // Activity dot with Claude Code specific colors
         let dot = NSView()
         dot.wantsLayer = true
-        let dotColor = terminal.activityState == .running ? SB.green : SB.amber
+        
+        let dotColor: NSColor
+        if terminal.detectedProgram == "Claude Code", let claudeState = terminal.claudeCodeState {
+            switch claudeState {
+            case .thinking:
+                dotColor = NSColor(red: 1.0, green: 0.8, blue: 0.4, alpha: 1.0) // Warm yellow
+            case .doneWithTask:
+                dotColor = SB.green
+            case .awaitingSelection:
+                dotColor = NSColor(red: 0.4, green: 0.7, blue: 1.0, alpha: 1.0) // Blue
+            case .awaitingPermission:
+                dotColor = NSColor(red: 1.0, green: 0.6, blue: 0.4, alpha: 1.0) // Orange
+            }
+        } else {
+            dotColor = terminal.activityState == .running ? SB.green : SB.amber
+        }
+        
         dot.layer?.backgroundColor = dotColor.cgColor
         dot.layer?.cornerRadius = 3
         // Glow
@@ -364,9 +385,24 @@ class StatusBarPopoverViewController: NSViewController {
         dot.translatesAutoresizingMaskIntoConstraints = false
         row.addSubview(dot)
 
-        // Text column
+        // Text column - show Claude Code status if available
         let program = terminal.detectedProgram ?? terminal.title
-        let nameLabel = NSTextField(labelWithString: program)
+        var displayName = program
+        
+        if terminal.detectedProgram == "Claude Code", let claudeState = terminal.claudeCodeState {
+            switch claudeState {
+            case .thinking:
+                displayName = "Claude Code • Thinking..."
+            case .doneWithTask:
+                displayName = "Claude Code • Done with task."
+            case .awaitingSelection:
+                displayName = "Claude Code • Awaiting selection..."
+            case .awaitingPermission:
+                displayName = "Claude Code • Awaiting permission..."
+            }
+        }
+        
+        let nameLabel = NSTextField(labelWithString: displayName)
         nameLabel.font = .systemFont(ofSize: 12, weight: .medium)
         nameLabel.textColor = SB.text
         nameLabel.lineBreakMode = .byTruncatingTail
@@ -390,37 +426,6 @@ class StatusBarPopoverViewController: NSViewController {
             ])
             bottomAnchorView = pathLabel
             bottomConstant = -8
-        }
-
-        // Claude Code context bar
-        if let pct = terminal.contextPercentage, pct > 0 {
-            let barTrack = NSView()
-            barTrack.wantsLayer = true
-            barTrack.layer?.backgroundColor = SB.border.cgColor
-            barTrack.layer?.cornerRadius = 1.5
-            barTrack.translatesAutoresizingMaskIntoConstraints = false
-            row.addSubview(barTrack)
-
-            let barFill = NSView()
-            barFill.wantsLayer = true
-            barFill.layer?.backgroundColor = SB.copper.cgColor
-            barFill.layer?.cornerRadius = 1.5
-            barFill.translatesAutoresizingMaskIntoConstraints = false
-            barTrack.addSubview(barFill)
-
-            NSLayoutConstraint.activate([
-                barTrack.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-                barTrack.widthAnchor.constraint(equalToConstant: 120),
-                barTrack.heightAnchor.constraint(equalToConstant: 3),
-                barTrack.topAnchor.constraint(equalTo: bottomAnchorView.bottomAnchor, constant: 4),
-                barFill.leadingAnchor.constraint(equalTo: barTrack.leadingAnchor),
-                barFill.topAnchor.constraint(equalTo: barTrack.topAnchor),
-                barFill.bottomAnchor.constraint(equalTo: barTrack.bottomAnchor),
-                barFill.widthAnchor.constraint(equalTo: barTrack.widthAnchor, multiplier: CGFloat(min(pct, 100)) / 100.0),
-            ])
-
-            bottomAnchorView = barTrack
-            bottomConstant = -6
         }
 
         NSLayoutConstraint.activate([

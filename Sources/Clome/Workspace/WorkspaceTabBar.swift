@@ -420,6 +420,7 @@ class AddTabMenuView: NSView {
         wantsLayer = true
         layer?.cornerRadius = 6
         layer?.cornerCurve = .continuous
+        layer?.masksToBounds = true
         setupUI()
     }
 
@@ -459,8 +460,10 @@ class AddTabMenuView: NSView {
             btn.target = self
             btn.action = item.action
             btn.toolTip = item.tooltip
+            let btnWidth = btn.widthAnchor.constraint(equalToConstant: 22)
+            btnWidth.priority = .defaultHigh
             NSLayoutConstraint.activate([
-                btn.widthAnchor.constraint(equalToConstant: 22),
+                btnWidth,
                 btn.heightAnchor.constraint(equalToConstant: 22),
             ])
             // Hover highlight per button
@@ -473,6 +476,15 @@ class AddTabMenuView: NSView {
 
         widthConstraint = widthAnchor.constraint(equalToConstant: collapsedWidth)
 
+        let stackCenterX = expandedStack.centerXAnchor.constraint(equalTo: centerXAnchor)
+        stackCenterX.priority = .defaultHigh
+
+        let stackLeading = expandedStack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 2)
+        stackLeading.priority = .defaultHigh
+
+        let stackTrailing = expandedStack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -2)
+        stackTrailing.priority = .defaultHigh
+
         NSLayoutConstraint.activate([
             widthConstraint,
 
@@ -481,8 +493,9 @@ class AddTabMenuView: NSView {
             plusIcon.widthAnchor.constraint(equalToConstant: 14),
             plusIcon.heightAnchor.constraint(equalToConstant: 14),
 
-            expandedStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
-            expandedStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
+            stackLeading,
+            stackTrailing,
+            stackCenterX,
             expandedStack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }

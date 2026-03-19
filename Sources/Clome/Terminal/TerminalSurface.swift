@@ -49,9 +49,6 @@ class TerminalSurface: NSView {
     /// Whether this terminal needs user attention (e.g. Claude Code waiting for input).
     var needsAttention: Bool = false
 
-    /// Context window usage percentage for Claude Code sessions (0-100), nil if not detected.
-    var contextPercentage: Int?
-
     /// Per-surface command override (e.g. a restore wrapper script). Set before the surface is added to a window.
     var restoreCommand: String?
 
@@ -354,15 +351,27 @@ class TerminalSurface: NSView {
         case completed      // Command just finished, showing result
     }
 
+    /// Claude Code specific state detected from terminal output patterns.
+    enum ClaudeCodeState {
+        case thinking           // Claude is thinking (spinners, "(thinking)" text)
+        case doneWithTask      // Claude completed a task (⏺ response marker)
+        case awaitingSelection // Claude showing selection menu (Enter to select)
+        case awaitingPermission // Claude asking for permission (Do you want to allow...)
+    }
+
     /// Current detected activity state.
     var activityState: ActivityState = .idle
+    
+    /// Current Claude Code specific state (only set when detectedProgram == "Claude Code").
+    var claudeCodeState: ClaudeCodeState?
 
     private func detectProgram() {
         let lower = title.lowercased()
 
         if lower.contains("claude") {
             detectedProgram = "Claude Code"
-            programIcon = "sparkle"
+            // Keep a neutral icon; Claude renders its own brand glyph in the title text.
+            programIcon = "terminal"
         } else if lower.contains("vim") || lower.contains("nvim") || lower.contains("neovim") {
             detectedProgram = "Vim"
             programIcon = "doc.text.fill"
@@ -474,21 +483,6 @@ class TerminalSurface: NSView {
         let allLines = stripped.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
 
-        // Extract context percentage if this is a Claude Code session
-        if detectedProgram == "Claude Code" {
-            // Primary: read from Clome bridge file (per-terminal session claiming)
-            if let bridgePct = ClaudeContextBridge.shared.contextPercentage(forTerminal: self, directory: workingDirectory) {
-                contextPercentage = bridgePct
-            } else {
-                // Fallback: try to parse from visible terminal text
-                contextPercentage = Self.extractContextPercentage(from: allLines)
-            }
-        } else {
-            // Release any claimed session when no longer running Claude Code
-            ClaudeContextBridge.shared.releaseClaim(forTerminal: self)
-            contextPercentage = nil
-        }
-
         // Find the last non-empty lines (skip trailing blanks)
         let meaningfulLines = allLines.reversed()
             .drop(while: { $0.isEmpty })
@@ -525,32 +519,21 @@ class TerminalSurface: NSView {
         let lower = lastLine.lowercased()
 
         // Detect if output is actively changing (something is producing text)
-        let currentSnapshot = lines.suffix(4).joined(separator: "\n")
+        // while ignoring cursor blink artifacts.
+        let currentSnapshot = lines
+            .suffix(4)
+            .map { Self.normalizeLineForActivityComparison($0) }
+            .joined(separator: "\n")
         outputIsChanging = (previousOutputSnapshot != nil && previousOutputSnapshot != currentSnapshot)
         previousOutputSnapshot = currentSnapshot
 
+        // Detect Claude Code specific states when Claude Code is running
         if detectedProgram == "Claude Code" {
-            if Self.isClaudeCodeWaitingForInput(lastLine: lastLine, lines: lines) {
-                activityState = .waitingInput
-                needsAttention = true
-                lastRunningTimestamp = nil
-            } else if outputIsChanging {
-                activityState = .running
-                needsAttention = false
-                lastRunningTimestamp = Date()
-            } else if let lastRunning = lastRunningTimestamp,
-                      Date().timeIntervalSince(lastRunning) < 4.0 {
-                // Brief pause between tool calls — keep showing Running
-                activityState = .running
-                needsAttention = false
-            } else {
-                activityState = .idle
-                needsAttention = false
-            }
-            return
+            claudeCodeState = detectClaudeCodeState(lastLine: lastLine, lines: lines)
+        } else {
+            claudeCodeState = nil
         }
 
-        // Generic shell/program detection
         if Self.isShellPrompt(lastLine) {
             activityState = .idle
             needsAttention = false
@@ -559,7 +542,6 @@ class TerminalSurface: NSView {
             activityState = .waitingInput
             needsAttention = true
         } else if outputIsChanging {
-            // Only show running when output is actively changing
             activityState = .running
             needsAttention = false
         } else {
@@ -568,58 +550,12 @@ class TerminalSurface: NSView {
         }
     }
 
-    private static func isClaudeCodeWaitingForInput(lastLine: String, lines: [String]) -> Bool {
-        let trimmed = lastLine.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Claude Code shows ">" or "❯" prompt when waiting for user input
-        // Only match solitary prompt characters, not content ending with >
-        if trimmed == ">" || trimmed == "❯" || trimmed == "> " {
-            return true
-        }
-
-        // Check recent lines for prompt patterns
-        let recentContent = lines.suffix(5).joined(separator: " ").lowercased()
-
-        // Tool approval / permission prompts
-        if recentContent.contains("do you want") || recentContent.contains("approve")
-            || recentContent.contains("accept") || recentContent.contains("deny")
-            || recentContent.contains("(y)es") || recentContent.contains("reject")
-            || recentContent.contains("allow once") || recentContent.contains("allow always") {
-            return true
-        }
-
-        // Tool use permission prompts
-        if recentContent.contains("allow") && (recentContent.contains("tool") || recentContent.contains("permission")) {
-            return true
-        }
-
-        // "waiting for" / "press enter" patterns
-        if recentContent.contains("waiting for") || recentContent.contains("press enter") {
-            return true
-        }
-
-        // Short question prompts (e.g. "y/n?", "ok?")
-        if trimmed == "?" || (trimmed.hasSuffix("?") && trimmed.count < 6) {
-            return true
-        }
-
-        // Check last few lines for solitary prompt indicators
-        for line in lines.suffix(3) {
-            let t = line.trimmingCharacters(in: .whitespaces)
-            if t == ">" || t == "❯" { return true }
-        }
-
-        // Empty prompt line after completion output
-        if trimmed.isEmpty && lines.count > 1 {
-            let prevLine = lines[lines.count - 2].lowercased()
-            if prevLine.contains("completed") || prevLine.contains("done") || prevLine.contains("finished")
-                || prevLine.contains("created") || prevLine.contains("updated")
-                || prevLine.contains("saved") || prevLine.contains("wrote") {
-                return true
-            }
-        }
-
-        return false
+    /// Remove cursor glyph artifacts from a line so blinking cursors do not
+    /// look like meaningful output changes.
+    private static func normalizeLineForActivityComparison(_ line: String) -> String {
+        line
+            .replacingOccurrences(of: "[▌▋▊▉█▐▍▎▏_]+", with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Check if a line looks like a shell prompt (zsh, bash, fish, etc.).
@@ -712,46 +648,6 @@ class TerminalSurface: NSView {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return str }
         let range = NSRange(str.startIndex..., in: str)
         return regex.stringByReplacingMatches(in: str, options: [], range: range, withTemplate: "")
-    }
-
-    /// Extract Claude Code context percentage from terminal lines.
-    /// Scans for patterns from Claude Code status line output.
-    private static func extractContextPercentage(from lines: [String]) -> Int? {
-        for line in lines {
-            let lower = line.lowercased()
-
-            // Pattern: "XX% context" or "context XX%" or "context: XX%"
-            if lower.contains("context") {
-                if let match = line.range(of: #"(\d{1,3})%"#, options: .regularExpression) {
-                    let numStr = line[match].dropLast()
-                    if let pct = Int(numStr), pct >= 0, pct <= 100 {
-                        return pct
-                    }
-                }
-            }
-
-            // Pattern: token counts like "12.3k / 200k tokens" → compute percentage
-            if lower.contains("token") {
-                if let match = line.range(of: #"([\d.]+)k?\s*/\s*([\d.]+)k?\s*token"#, options: .regularExpression) {
-                    let parts = String(line[match]).components(separatedBy: "/")
-                    if parts.count == 2 {
-                        let usedStr = parts[0].trimmingCharacters(in: .whitespaces)
-                            .replacingOccurrences(of: "k", with: "")
-                        let totalStr = parts[1].trimmingCharacters(in: .whitespaces)
-                            .replacingOccurrences(of: "k", with: "")
-                            .replacingOccurrences(of: " token", with: "")
-                            .replacingOccurrences(of: " tokens", with: "")
-                        if let used = Double(usedStr), let total = Double(totalStr), total > 0 {
-                            let pct = Int((used / total) * 100)
-                            if pct >= 0, pct <= 100 { return pct }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Fallback: read from Clome context bridge file
-        return nil
     }
 
     /// Status text for sidebar display.
@@ -869,6 +765,61 @@ class TerminalSurface: NSView {
         let escaped = path.replacingOccurrences(of: "'", with: "'\\''")
         return "'\(escaped)'"
     }
+
+    /// Detect Claude Code specific state from terminal output patterns.
+    private func detectClaudeCodeState(lastLine: String, lines: [String]) -> ClaudeCodeState? {
+        let lastFewLines = Array(lines.suffix(10)).joined(separator: " ").lowercased()
+        let recentLines = Array(lines.suffix(5)).joined(separator: " ").lowercased()
+        
+        // Priority 1: Permission requests (highest priority)
+        if lastFewLines.contains("do you want to allow claude to") ||
+           lastFewLines.contains("claude wants to") ||
+           (lastFewLines.contains("❯") && lastFewLines.contains("1.") && lastFewLines.contains("2.")) {
+            return .awaitingPermission
+        }
+        
+        // Priority 2: Selection prompts
+        if (lastFewLines.contains("enter to select") && lastFewLines.contains("↑/↓ to navigate")) ||
+           (lastFewLines.contains("❯") && lastFewLines.contains("1.") && !lastFewLines.contains("allow")) {
+            return .awaitingSelection
+        }
+        
+        // Priority 3: Active thinking - ONLY based on action words with ellipsis (most reliable)
+        if hasThinkingActionWords(lines) {
+            return .thinking
+        }
+        
+        // Priority 4: Done with task - if we see ⏺ recently and no active thinking
+        let largerWindow = Array(lines.suffix(20)).joined(separator: " ")
+        if largerWindow.contains("⏺") && !hasThinkingActionWords(lines) {
+            return .doneWithTask
+        }
+        
+        return nil
+    }
+    
+    /// Check for actual thinking action words (most reliable indicator)
+    private func hasThinkingActionWords(_ lines: [String]) -> Bool {
+        // ULTRA SIMPLE: just detect any ellipsis anywhere (what was working)
+        for line in lines.suffix(8) {
+            if line.contains("…") {
+                return true
+            }
+            
+            let stripped = Self.stripAnsiCodes(line)
+            if stripped.contains("…") {
+                return true
+            }
+            
+            if stripped.lowercased().contains("(thinking)") {
+                return true
+            }
+        }
+        
+        return false
+    }
+    
+    
 
     deinit {
         destroySurface()

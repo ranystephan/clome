@@ -30,6 +30,11 @@ class AppearanceSettings {
         didSet { UserDefaults.standard.set(colorfulFileIcons, forKey: "clome.colorfulFileIcons"); notify() }
     }
 
+    // Browser
+    var openLinksInClomeBrowser: Bool {
+        didSet { UserDefaults.standard.set(openLinksInClomeBrowser, forKey: "clome.openLinksInClomeBrowser"); notify() }
+    }
+
     // Defaults
     static let defaultSidebarColor = NSColor(red: 0.145, green: 0.588, blue: 0.745, alpha: 1.0) // #2596be
     static let defaultSidebarOpacity: CGFloat = 0.15
@@ -42,6 +47,7 @@ class AppearanceSettings {
         mainPanelColor = Self.defaultMainPanelColor
         mainPanelOpacity = Self.defaultMainPanelOpacity
         colorfulFileIcons = UserDefaults.standard.object(forKey: "clome.colorfulFileIcons") as? Bool ?? true
+        openLinksInClomeBrowser = UserDefaults.standard.object(forKey: "clome.openLinksInClomeBrowser") as? Bool ?? true
         load()
     }
 

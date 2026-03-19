@@ -35,6 +35,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     private var backButton: NSButton!
     private var forwardButton: NSButton!
     private var reloadButton: NSButton!
+    private var loadingBar: NSProgressIndicator!
     private var bookmarkButton: NSButton!
     private var menuButton: NSButton!
     private var cookieButton: NSButton!
@@ -61,6 +62,8 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     private let idleBg = NSColor(white: 1.0, alpha: 0.06)
     private let hoverBg = NSColor(white: 1.0, alpha: 0.09)
     private let editBg = NSColor(white: 1.0, alpha: 0.12)
+    private let activeAccent = NSColor(red: 0.38, green: 0.56, blue: 1.0, alpha: 1.0)
+    private var isPageLoading = false
 
     private(set) var favicon: NSImage?
 
@@ -94,6 +97,11 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         // The webView was already created in setupUI with default config.
         // Replace it with one using the provided configuration to share session.
         let oldWebView = webView!
+        oldWebView.navigationDelegate = nil
+        oldWebView.uiDelegate = nil
+        oldWebView.stopLoading()
+        formAutofillManager?.unregister(from: oldWebView.configuration)
+        formAutofillManager?.webView = nil
         oldWebView.removeObserver(self, forKeyPath: "title")
         oldWebView.removeFromSuperview()
 
@@ -108,6 +116,9 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         newWebView.allowsBackForwardNavigationGestures = true
         newWebView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15"
         newWebView.setValue(false, forKey: "drawsBackground")
+        if #available(macOS 13.3, *) {
+            newWebView.isInspectable = true
+        }
         newWebView.addObserver(self, forKeyPath: "title", options: .new, context: nil)
         webView = newWebView
         webAuthnHandler?.webView = newWebView
@@ -145,6 +156,17 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         // Reload button
         reloadButton = makeNavButton(symbol: "arrow.clockwise", action: #selector(reload))
         navBar.addSubview(reloadButton)
+
+        // Loading bar (modern slim progress animation below nav bar)
+        loadingBar = NSProgressIndicator()
+        loadingBar.style = .bar
+        loadingBar.isIndeterminate = true
+        loadingBar.usesThreadedAnimation = true
+        loadingBar.isDisplayedWhenStopped = false
+        loadingBar.translatesAutoresizingMaskIntoConstraints = false
+        loadingBar.alphaValue = 0
+        loadingBar.isHidden = true
+        navBar.addSubview(loadingBar)
 
         // URL pill background
         urlPill = NSView()
@@ -244,24 +266,34 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         // WebView — with persistent data store and shared process pool for cookies
         let config = WKWebViewConfiguration()
         config.preferences.isElementFullscreenEnabled = true
+
         config.websiteDataStore = persistentDataStore
         let pagePrefs = WKWebpagePreferences()
         pagePrefs.allowsContentJavaScript = true
         pagePrefs.preferredContentMode = .desktop
         config.defaultWebpagePreferences = pagePrefs
 
-        // Inject script to mask WKWebView-specific fingerprints that Google/OAuth providers detect.
-        // This runs before any page JS, making the environment look like a standalone Safari browser.
+        // Apply anti-fingerprint patch only for known OAuth providers.
+        // Running this globally can interfere with SPA boot/runtime checks on normal sites.
+        let oauthHostsJS = oauthProviderHosts.sorted().map { "\"\($0)\"" }.joined(separator: ", ")
         let antiFingerprint = WKUserScript(source: """
-            // Remove WKWebView-specific properties that Google checks
-            Object.defineProperty(navigator, 'standalone', { get: () => undefined });
-            // Ensure window.safari exists (real Safari has this)
-            if (!window.safari) { window.safari = { pushNotification: { permission: () => 'denied', requestPermission: () => {} } }; }
-            // Remove __gCrWeb (iOS WKWebView marker that some checks look for)
-            delete window.__gCrWeb;
-            delete window.__crWeb;
-            // Ensure standard browser APIs are present
-            if (!window.MediaSource) { window.MediaSource = class MediaSource {}; }
+            (function() {
+                var host = (window.location && window.location.hostname || '').toLowerCase();
+                var allowlist = [\(oauthHostsJS)];
+                var shouldPatch = allowlist.some(function(allowed) {
+                    return host === allowed || host.endsWith('.' + allowed);
+                });
+                if (!shouldPatch) return;
+
+                // Remove WKWebView-specific properties that OAuth providers check.
+                Object.defineProperty(navigator, 'standalone', { get: function() { return undefined; } });
+                if (!window.safari) {
+                    window.safari = { pushNotification: { permission: function() { return 'denied'; }, requestPermission: function() {} } };
+                }
+                delete window.__gCrWeb;
+                delete window.__crWeb;
+                if (!window.MediaSource) { window.MediaSource = class MediaSource {}; }
+            })();
             """, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         config.userContentController.addUserScript(antiFingerprint)
 
@@ -273,6 +305,38 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         formAutofillManager = FormAutofillManager()
         formAutofillManager?.parentView = self
         formAutofillManager?.register(on: config)
+
+        // Eruda dev tools — injected as user script to bypass CSP
+        if let erudaURL = Bundle.main.url(forResource: "eruda.min", withExtension: "js"),
+           let erudaSource = try? String(contentsOf: erudaURL, encoding: .utf8) {
+            print("[DevTools] Loaded eruda.min.js from bundle (\(erudaSource.count) chars)")
+            // Create a permissive Trusted Types policy so eruda can use innerHTML on sites like YouTube
+            let trustedTypesPolyfill = WKUserScript(source: """
+                if (window.trustedTypes && window.trustedTypes.createPolicy) {
+                    try {
+                        window.trustedTypes.createPolicy('default', {
+                            createHTML: function(s) { return s; },
+                            createScript: function(s) { return s; },
+                            createScriptURL: function(s) { return s; }
+                        });
+                    } catch(e) {}
+                }
+                """, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+            config.userContentController.addUserScript(trustedTypesPolyfill)
+            let erudaScript = WKUserScript(source: erudaSource, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+            config.userContentController.addUserScript(erudaScript)
+            let erudaBootstrap = WKUserScript(source: """
+                window.__clomeDevToolsReady = true;
+                window.__clomeToggleDevTools = function() {
+                    if (typeof eruda !== 'undefined') {
+                        if (eruda._isInit) { eruda.show(); } else { eruda.init(); eruda.show(); }
+                    }
+                };
+                """, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+            config.userContentController.addUserScript(erudaBootstrap)
+        } else {
+            print("[DevTools] ERROR: Could not load eruda.min.js from bundle")
+        }
 
         // JS to capture right-click link URL before the menu opens
         let contextMenuJS = WKUserScript(source: """
@@ -298,10 +362,14 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         webView.allowsBackForwardNavigationGestures = true
         webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15"
         webView.setValue(false, forKey: "drawsBackground")
+        if #available(macOS 13.3, *) {
+            webView.isInspectable = true
+        }
         webView.addObserver(self, forKeyPath: "title", options: .new, context: nil)
         webAuthnHandler?.webView = webView
         formAutofillManager?.webView = webView
         formAutofillManager?.navBar = navBar
+
         addSubview(webView)
 
         // Observe cookie changes for persistence tracking
@@ -375,6 +443,11 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
             menuButton.widthAnchor.constraint(equalToConstant: 28),
             menuButton.heightAnchor.constraint(equalToConstant: 28),
 
+            loadingBar.leadingAnchor.constraint(equalTo: navBar.leadingAnchor, constant: 8),
+            loadingBar.trailingAnchor.constraint(equalTo: navBar.trailingAnchor, constant: -8),
+            loadingBar.bottomAnchor.constraint(equalTo: navBar.bottomAnchor, constant: -2),
+            loadingBar.heightAnchor.constraint(equalToConstant: 2),
+
             webView.topAnchor.constraint(equalTo: navBar.bottomAnchor),
             webView.leadingAnchor.constraint(equalTo: leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -409,7 +482,14 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     }
 
     deinit {
-        webView?.removeObserver(self, forKeyPath: "title")
+        MainActor.assumeIsolated {
+            webView?.navigationDelegate = nil
+            webView?.uiDelegate = nil
+            loadingBar?.stopAnimation(nil)
+            formAutofillManager?.unregister(from: webView.configuration)
+            formAutofillManager?.webView = nil
+            webView?.removeObserver(self, forKeyPath: "title")
+        }
     }
 
     override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey: Any]?, context: UnsafeMutableRawPointer?) {
@@ -595,6 +675,14 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         clearAllItem.target = self
         menu.addItem(clearAllItem)
 
+        // View source
+        menu.addItem(NSMenuItem.separator())
+
+        let sourceMenuItem = NSMenuItem(title: "View Page Source", action: #selector(menuViewSource), keyEquivalent: "u")
+        sourceMenuItem.keyEquivalentModifierMask = [.option, .command]
+        sourceMenuItem.target = self
+        menu.addItem(sourceMenuItem)
+
         // Position below the menu button
         let point = menuButton.convert(NSPoint(x: 0, y: menuButton.bounds.height), to: nil)
         let screenPoint = window?.convertPoint(toScreen: point) ?? .zero
@@ -613,6 +701,10 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
 
     @objc private func clearHistory() {
         BookmarkManager.shared.clearHistory()
+    }
+
+    @objc private func menuViewSource() {
+        viewPageSource()
     }
 
     // MARK: - Clear Site Data
@@ -846,17 +938,22 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
 
     // MARK: - WKNavigationDelegate
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        setURL(webView.url)
-        if let pageTitle = webView.title, !pageTitle.isEmpty {
+    func webView(_ finishedWebView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard finishedWebView === webView else {
+            return
+        }
+        setLoadingState(false)
+
+        setURL(finishedWebView.url)
+        if let pageTitle = finishedWebView.title, !pageTitle.isEmpty {
             title = pageTitle
         }
-        backButton.isEnabled = webView.canGoBack
-        forwardButton.isEnabled = webView.canGoForward
+        backButton.isEnabled = finishedWebView.canGoBack
+        forwardButton.isEnabled = finishedWebView.canGoForward
         fetchFavicon()
 
         // Track in history
-        if let url = webView.url?.absoluteString {
+        if let url = finishedWebView.url?.absoluteString {
             BookmarkManager.shared.addHistory(title: title, url: url)
         }
 
@@ -865,7 +962,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         updateKeyIndicator()
 
         // Trigger autofill check for the loaded page
-        formAutofillManager?.pageDidFinish(url: webView.url)
+        formAutofillManager?.pageDidFinish(url: finishedWebView.url)
     }
 
     private func fetchFavicon() {
@@ -897,7 +994,24 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        guard webView === self.webView else { return }
+        setLoadingState(true)
         setURL(webView.url)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        guard webView === self.webView else { return }
+        setLoadingState(false)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard webView === self.webView else { return }
+        setLoadingState(false)
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard webView === self.webView else { return }
+        setLoadingState(false)
     }
 
     // MARK: - WKNavigationDelegate — Navigation Policy
@@ -940,6 +1054,30 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void) {
         // Always allow responses -- never block auth redirects or passkey ceremony responses
         decisionHandler(.allow)
+    }
+
+    private func setLoadingState(_ loading: Bool) {
+        guard isPageLoading != loading else { return }
+        isPageLoading = loading
+
+        if loading {
+            loadingBar.isHidden = false
+            loadingBar.startAnimation(nil)
+            reloadButton.contentTintColor = activeAccent
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.18
+                loadingBar.animator().alphaValue = 1
+            }
+        } else {
+            reloadButton.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.2
+                loadingBar.animator().alphaValue = 0
+            }, completionHandler: { [weak self] in
+                self?.loadingBar.stopAnimation(nil)
+                self?.loadingBar.isHidden = true
+            })
+        }
     }
 
     // MARK: - Send to Context
@@ -1109,7 +1247,34 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         copyPage.target = self
         menu.addItem(copyPage)
 
+        menu.addItem(NSMenuItem.separator())
+
+        let viewSourceItem = NSMenuItem(title: "View Page Source", action: #selector(contextMenuViewSource), keyEquivalent: "")
+        viewSourceItem.target = self
+        menu.addItem(viewSourceItem)
+
+        let inspectItem = NSMenuItem(title: "Inspect Element", action: #selector(openWebInspector), keyEquivalent: "")
+        inspectItem.target = self
+        menu.addItem(inspectItem)
+
         return menu
+    }
+
+    @objc private func contextMenuViewSource() {
+        viewPageSource()
+    }
+
+    @objc private func openWebInspector() {
+        print("[DevTools] openWebInspector called")
+        let js = "if(window.__clomeToggleDevTools){window.__clomeToggleDevTools();'ok'}else{'not_ready:'+typeof eruda}"
+        webView.evaluateJavaScript(js) { result, error in
+            if let error = error {
+                print("[DevTools] evaluateJavaScript error: \(error)")
+            }
+            if let result = result {
+                print("[DevTools] evaluateJavaScript result: \(result)")
+            }
+        }
     }
 
     @objc private func contextMenuOpenInNewTab(_ sender: NSMenuItem) {
@@ -1165,6 +1330,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
            let url = URL(string: linkStr) {
             (webView as? ClomeWebView)?.lastContextLinkURL = url
         }
+
     }
 
     // MARK: - Popup Toggle
@@ -1373,6 +1539,39 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         updateKeyIndicator()
     }
 
+    /// View page source — writes to temp file and opens in default editor
+    func viewPageSource() {
+        let js = "document.documentElement.outerHTML"
+        webView.evaluateJavaScript(js) { [weak self] result, _ in
+            guard let html = result as? String else { return }
+            let tmpDir = FileManager.default.temporaryDirectory
+            let fileName = (self?.storedURL?.host ?? "page") + "_source.html"
+            let tmpFile = tmpDir.appendingPathComponent(fileName)
+            try? html.write(to: tmpFile, atomically: true, encoding: .utf8)
+            NSWorkspace.shared.open(tmpFile)
+        }
+    }
+
+    // MARK: - Keyboard Shortcuts
+
+    override func keyDown(with event: NSEvent) {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        // ⌥⌘U — View Source
+        if flags == [.option, .command] && event.charactersIgnoringModifiers == "u" {
+            viewPageSource()
+            return
+        }
+
+        // ⌥⌘I — Inspect Element (Web Inspector)
+        if flags == [.option, .command] && event.charactersIgnoringModifiers == "i" {
+            openWebInspector()
+            return
+        }
+
+        super.keyDown(with: event)
+    }
+
     // MARK: - Cookie Indicator
 
     private func updateCookieIndicator() {
@@ -1502,12 +1701,18 @@ final class ClomeWebView: WKWebView {
         let linkURL = lastContextLinkURL
         lastContextLinkURL = nil
 
-        // Replace the default menu with our custom one
+        // Build our custom items and prepend them before WebKit's default items
         let customMenu = panel.buildContextMenu(linkURL: linkURL)
-        menu.removeAllItems()
+
+        // Insert separator before WebKit's items
+        menu.insertItem(NSMenuItem.separator(), at: 0)
+
+        // Insert our custom items at the top
+        var insertIdx = 0
         for item in customMenu.items {
             customMenu.removeItem(item)
-            menu.addItem(item)
+            menu.insertItem(item, at: insertIdx)
+            insertIdx += 1
         }
     }
 }
@@ -1531,3 +1736,4 @@ final class URLBarTextField: NSTextField {
         return result
     }
 }
+

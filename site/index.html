@@ -63,6 +63,11 @@
       display: flex; align-items: center; justify-content: space-between;
       transition: all 0.5s;
     }
+    nav > .nav-center {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+    }
     nav.scrolled {
       background: rgba(28, 27, 31, 0.85);
       backdrop-filter: blur(20px);
@@ -83,6 +88,25 @@
       border-radius: 100px; transition: all 0.25s;
     }
     .nav-center a:hover { color: var(--text); background: var(--bg-3); }
+    .nav-gh-group {
+      display: inline-flex; align-items: center;
+      border-radius: 100px;
+      overflow: hidden;
+    }
+    .nav-gh-link {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 16px 8px 20px !important;
+      border-radius: 100px 0 0 100px !important;
+    }
+    .nav-star-link {
+      display: inline-flex; align-items: center;
+      padding: 8px 16px 8px 14px !important;
+      border-radius: 0 100px 100px 0 !important;
+      border-left: 1px solid var(--border);
+      color: var(--copper-2) !important;
+      transition: all 0.25s;
+    }
+    .nav-star-link:hover { color: #fff !important; background: var(--copper); }
     .nav-right { display: flex; align-items: center; gap: 10px; }
     .nav-btn {
       padding: 9px 22px; font-size: 13px; font-weight: 500;
@@ -227,9 +251,16 @@
       display: flex;
       align-items: center;
       gap: 24px;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
       justify-content: center;
+      width: 100%;
     }
+    .dot-section h2 .dot-text {
+      flex: 1;
+      white-space: nowrap;
+    }
+    .dot-section h2 .dot-text:first-child { text-align: right; }
+    .dot-section h2 .dot-text:last-child { text-align: left; }
     .dot-section h2 .accent {
       width: 16px; height: 16px;
       border-radius: 50%;
@@ -422,6 +453,15 @@
       border-color: var(--text-3);
       background: var(--bg-3);
     }
+    .oss-btn.star-btn {
+      border-color: var(--copper);
+      color: var(--copper-2);
+    }
+    .oss-btn.star-btn:hover {
+      background: var(--copper);
+      color: #fff;
+      border-color: var(--copper);
+    }
 
     /* ═══ FINAL CTA ═══ */
     .final {
@@ -468,6 +508,9 @@
     }
     .f-links a:hover { color: var(--text-2); }
 
+    /* ═══ SPACER ═══ */
+    .spacer { height: 160px; }
+
     /* ═══ REVEAL ═══ */
     .rv {
       opacity: 0; transform: translateY(24px);
@@ -483,18 +526,72 @@
     @media (max-width: 900px) {
       .features-grid { grid-template-columns: 1fr; }
       .feat { border-left: none !important; border-right: none !important; }
-      .arch { grid-template-columns: 1fr; }
+      .arch { grid-template-columns: 1fr; min-height: auto; }
       .arch-left { border-right: none; border-bottom: 1px solid var(--border); padding: 80px 24px; }
+      .arch-left p { max-width: 100%; }
       .arch-right { padding: 60px 24px; }
       nav { padding: 16px 24px; }
+      nav.scrolled { padding: 12px 24px; }
       .nav-center { display: none; }
-      .hero, .features, .dot-section, .oss, .final { padding-left: 24px; padding-right: 24px; }
-      footer { padding: 32px 24px; flex-direction: column; gap: 16px; }
+      .hero { padding: 120px 24px 80px; }
+      .hero h1 { max-width: 100%; }
+      .hero-sub { max-width: 100%; }
+      .features { padding: 0 24px; }
+      .dot-section { padding: 120px 24px; }
+      .dot-section h2 { font-size: clamp(28px, 5vw, 60px); gap: 16px; }
+      .oss { padding: 120px 24px; }
+      .final { padding: 100px 24px 140px; }
+      footer { padding: 32px 24px; flex-direction: column; gap: 16px; text-align: center; }
+      .f-links { justify-content: center; }
+      #helix-canvas { width: 100%; max-width: 600px; }
     }
     @media (max-width: 520px) {
+      nav { padding: 14px 16px; }
+      nav.scrolled { padding: 10px 16px; }
+      .nav-left img { width: 26px; height: 26px; }
+      .nav-left span { font-size: 15px; }
       .nav-right { gap: 6px; }
-      .nav-btn { padding: 8px 16px; font-size: 12px; }
-      .oss-btns { flex-direction: column; align-items: center; }
+      .nav-btn { padding: 7px 14px; font-size: 12px; }
+      .hero { padding: 100px 20px 80px; min-height: auto; }
+      .hero-label { font-size: 13px; margin-bottom: 24px; }
+      .hero h1 { font-size: clamp(36px, 10vw, 52px); margin-bottom: 24px; }
+      .hero-sub { font-size: 15px; margin-bottom: 36px; }
+      .hero-cta { padding: 12px 28px; font-size: 14px; }
+      .hero-footnote { font-size: 11px; bottom: 24px; }
+      #helix-canvas { height: 280px; }
+      .features { padding: 0 20px; }
+      .features-header { margin-bottom: 48px; }
+      .features-header h2 { font-size: clamp(28px, 7vw, 40px); }
+      .feat { padding: 32px 24px; }
+      .feat h3 { font-size: 20px; }
+      .feat p { font-size: 13px; }
+      .dot-section { padding: 80px 20px; }
+      .dot-section h2 { font-size: clamp(24px, 7vw, 36px); gap: 12px; }
+      .dot-section h2 .accent { width: 10px; height: 10px; }
+      .arch-left { padding: 60px 20px; }
+      .arch-left h2 { font-size: clamp(28px, 7vw, 40px); }
+      .arch-left p { font-size: 14px; }
+      .arch-right { padding: 40px 20px; }
+      .ar-name { font-size: 14px; }
+      .ar-tech { font-size: 11px; }
+      .oss { padding: 80px 20px; }
+      .oss h2 { font-size: clamp(28px, 7vw, 40px); }
+      .oss > p { font-size: 15px; margin-bottom: 32px; }
+      .oss-card { padding: 20px; }
+      .oss-cmd { font-size: 11px; padding: 12px 16px; overflow-x: auto; white-space: nowrap; }
+      .oss-btns { flex-direction: column; align-items: stretch; }
+      .oss-btn { justify-content: center; }
+      .final { padding: 80px 20px 120px; }
+      .final h2 { font-size: clamp(36px, 10vw, 56px); }
+      .final p { font-size: 15px; }
+      footer { padding: 28px 20px; }
+      .f-links { gap: 20px; flex-wrap: wrap; justify-content: center; }
+      .spacer { height: 80px; }
+    }
+    @media (max-width: 380px) {
+      .nav-btn.primary { display: none; }
+      .hero h1 { font-size: 32px; }
+      .oss-cmd { font-size: 10px; padding: 10px 12px; }
     }
   </style>
 </head>
@@ -510,7 +607,16 @@
   <div class="nav-center">
     <a href="#features">Features</a>
     <a href="#architecture">Architecture</a>
-    <a href="https://github.com/ranystephan/clome" target="_blank">GitHub</a>
+    <a href="#source">Get Started</a>
+    <span class="nav-gh-group">
+      <a href="https://github.com/ranystephan/clome" target="_blank" class="nav-gh-link">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+      <a href="https://github.com/ranystephan/clome" target="_blank" class="nav-star-link">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
+      </a>
+    </span>
   </div>
   <div class="nav-right">
     <a href="https://github.com/ranystephan/clome" target="_blank" class="nav-btn">Source</a>
@@ -558,7 +664,7 @@
 <!-- DOT GRID DIVIDER -->
 <section class="dot-section">
   <canvas class="dot-grid" id="dots1"></canvas>
-  <h2 class="rv">Beyond an editor.<span class="accent"></span>Into the future.</h2>
+  <h2 class="rv"><span class="dot-text">Beyond an editor.</span><span class="accent"></span><span class="dot-text">Into the future.</span></h2>
 </section>
 
 <!-- FEATURES -->
@@ -602,7 +708,7 @@
 </section>
 
 <!-- SPACER -->
-<div style="height: 160px;"></div>
+<div class="spacer"></div>
 
 <!-- ARCHITECTURE -->
 <section class="arch rv" id="architecture">
@@ -630,6 +736,10 @@
   <div class="oss-card">
     <div class="oss-cmd"><span class="pr">$</span> git clone --recursive https://github.com/ranystephan/clome.git</div>
     <div class="oss-btns">
+      <a href="https://github.com/ranystephan/clome" target="_blank" class="oss-btn star-btn">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
+        Star on GitHub
+      </a>
       <a href="https://github.com/ranystephan/clome" target="_blank" class="oss-btn">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         GitHub
@@ -643,7 +753,7 @@
 <!-- DOT GRID DIVIDER 2 -->
 <section class="dot-section" style="padding: 120px 48px;">
   <canvas class="dot-grid" id="dots2"></canvas>
-  <h2 class="rv">Code native.<span class="accent"></span>Think different.</h2>
+  <h2 class="rv"><span class="dot-text">Code native.</span><span class="accent"></span><span class="dot-text">Think different.</span></h2>
 </section>
 
 <!-- FINAL CTA -->
@@ -795,8 +905,10 @@ function drawDots(canvasId) {
     const cy = rect.height / 2;
     const maxDist = Math.max(rect.width, rect.height) * 0.5;
 
-    for (let x = spacing; x < rect.width; x += spacing) {
-      for (let y = spacing; y < rect.height; y += spacing) {
+    const startX = cx % spacing;
+    const startY = cy % spacing;
+    for (let x = startX; x < rect.width; x += spacing) {
+      for (let y = startY; y < rect.height; y += spacing) {
         const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
         const fade = Math.max(0, 1 - dist / maxDist);
         const alpha = 0.08 + fade * 0.18;

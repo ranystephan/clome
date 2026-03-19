@@ -101,8 +101,10 @@ class SidebarView: NSView {
         bottomBar.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.03).cgColor
         addSubview(bottomBar)
 
-        // Shelf toggle button
+        // Shelf toggle button (smaller icon)
         shelfBtn = makeNavButton(symbol: "tray.and.arrow.down.fill", action: #selector(shelfToggleTapped))
+        let smallCfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+        shelfBtn.image = NSImage(systemSymbolName: "tray.and.arrow.down.fill", accessibilityDescription: nil)?.withSymbolConfiguration(smallCfg)
         bottomBar.addSubview(shelfBtn)
 
         // ──── Layout ────
@@ -149,8 +151,8 @@ class SidebarView: NSView {
             bottomBar.bottomAnchor.constraint(equalTo: bottomAnchor),
             bottomBar.heightAnchor.constraint(equalToConstant: 36),
 
-            // Shelf button centered in bottom bar
-            shelfBtn.centerXAnchor.constraint(equalTo: bottomBar.centerXAnchor),
+            // Shelf button on the left of bottom bar
+            shelfBtn.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 8),
             shelfBtn.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
             shelfBtn.widthAnchor.constraint(equalToConstant: 28),
             shelfBtn.heightAnchor.constraint(equalToConstant: 28),
@@ -743,6 +745,7 @@ class SidebarView: NSView {
         }
 
         let programName = terminal.detectedProgram ?? "Terminal"
+        
         // Only show preview when active, has content, and program is doing something
         let rawPreview = isActive ? (terminal.lastNotification ?? terminal.outputPreview) : nil
         // Hide preview when idle (nothing interesting to show)
@@ -800,6 +803,41 @@ class SidebarView: NSView {
 
         var lastBottom = iconView.bottomAnchor
 
+        // ── Claude Code status section ──
+        if terminal.detectedProgram == "Claude Code", let claudeState = terminal.claudeCodeState {
+            let statusText: String
+            let statusColor: NSColor
+            
+            switch claudeState {
+            case .thinking:
+                statusText = "Thinking..."
+                statusColor = NSColor(red: 1.0, green: 0.8, blue: 0.4, alpha: 1.0) // Warm yellow
+            case .doneWithTask:
+                statusText = "Done with task."
+                statusColor = NSColor(red: 0.4, green: 0.8, blue: 0.4, alpha: 1.0) // Green
+            case .awaitingSelection:
+                statusText = "Awaiting selection..."
+                statusColor = NSColor(red: 0.4, green: 0.7, blue: 1.0, alpha: 1.0) // Blue
+            case .awaitingPermission:
+                statusText = "Awaiting permission..."
+                statusColor = NSColor(red: 1.0, green: 0.6, blue: 0.4, alpha: 1.0) // Orange
+            }
+            
+            let statusLabel = NSTextField(labelWithString: statusText)
+            statusLabel.translatesAutoresizingMaskIntoConstraints = false
+            statusLabel.font = .systemFont(ofSize: 10, weight: .medium)
+            statusLabel.textColor = statusColor
+            statusLabel.lineBreakMode = .byTruncatingTail
+            card.addSubview(statusLabel)
+            
+            NSLayoutConstraint.activate([
+                statusLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
+                statusLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
+                statusLabel.topAnchor.constraint(equalTo: lastBottom, constant: 4),
+            ])
+            lastBottom = statusLabel.bottomAnchor
+        }
+
         // ── Output preview ──
         if let preview, !preview.isEmpty {
             let previewLabel = NSTextField(labelWithString: preview)
@@ -819,49 +857,6 @@ class SidebarView: NSView {
             ])
             lastBottom = previewLabel.bottomAnchor
         }
-
-        // ── Status row (with context % right-aligned) ──
-        let statusIcon = NSImageView()
-        statusIcon.translatesAutoresizingMaskIntoConstraints = false
-        let statusCfg = NSImage.SymbolConfiguration(pointSize: 9, weight: .bold)
-        statusIcon.image = NSImage(systemSymbolName: terminal.statusIcon, accessibilityDescription: nil)?.withSymbolConfiguration(statusCfg)
-        statusIcon.contentTintColor = terminal.statusColor
-        card.addSubview(statusIcon)
-
-        let statusLabel = NSTextField(labelWithString: terminal.statusText)
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.font = .systemFont(ofSize: 10, weight: .medium)
-        statusLabel.textColor = terminal.statusColor
-        card.addSubview(statusLabel)
-
-        if let pct = terminal.contextPercentage {
-            let pctColor: NSColor
-            if pct >= 85 { pctColor = NSColor.systemRed.withAlphaComponent(0.8) }
-            else if pct >= 60 { pctColor = NSColor.systemOrange.withAlphaComponent(0.8) }
-            else { pctColor = NSColor(white: 0.5, alpha: 1.0) }
-
-            let pctLabel = NSTextField(labelWithString: "\(pct)%")
-            pctLabel.translatesAutoresizingMaskIntoConstraints = false
-            pctLabel.font = .systemFont(ofSize: 10, weight: .medium)
-            pctLabel.textColor = pctColor
-            card.addSubview(pctLabel)
-
-            NSLayoutConstraint.activate([
-                pctLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
-                pctLabel.centerYAnchor.constraint(equalTo: statusIcon.centerYAnchor),
-            ])
-        }
-
-        NSLayoutConstraint.activate([
-            statusIcon.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
-            statusIcon.topAnchor.constraint(equalTo: lastBottom, constant: 8),
-            statusIcon.widthAnchor.constraint(equalToConstant: 12),
-            statusIcon.heightAnchor.constraint(equalToConstant: 12),
-
-            statusLabel.leadingAnchor.constraint(equalTo: statusIcon.trailingAnchor, constant: 4),
-            statusLabel.centerYAnchor.constraint(equalTo: statusIcon.centerYAnchor),
-        ])
-        lastBottom = statusIcon.bottomAnchor
 
         // ── Git branch + path row ──
         if hasGitInfo {
