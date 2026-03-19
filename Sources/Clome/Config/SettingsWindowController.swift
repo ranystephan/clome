@@ -31,13 +31,14 @@ class SettingsWindowController: NSWindowController {
     private var mainOpacitySlider: NSSlider!
     private var mainOpacityLabel: NSTextField!
     private var colorfulIconsToggle: NSButton!
+    private var openLinksInBrowserToggle: NSButton!
 
     // Language view
     private var languageView: LanguageSupportView?
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 580, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 600),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -232,6 +233,20 @@ class SettingsWindowController: NSWindowController {
         contentArea.addSubview(colorfulIconsToggle)
         y -= 44
 
+        // Browser section
+        let browserHeader = makeHeader("Browser")
+        browserHeader.frame.origin = NSPoint(x: padding, y: y)
+        contentArea.addSubview(browserHeader)
+        y -= 36
+
+        openLinksInBrowserToggle = NSButton(checkboxWithTitle: "Open terminal links in Clome browser", target: self, action: #selector(openLinksInBrowserChanged(_:)))
+        openLinksInBrowserToggle.state = settings.openLinksInClomeBrowser ? .on : .off
+        openLinksInBrowserToggle.font = .systemFont(ofSize: 13)
+        openLinksInBrowserToggle.sizeToFit()
+        openLinksInBrowserToggle.frame.origin = NSPoint(x: padding + 12, y: y)
+        contentArea.addSubview(openLinksInBrowserToggle)
+        y -= 44
+
         // Reset button
         let resetBtn = NSButton(title: "Reset to Defaults", target: self, action: #selector(resetDefaults(_:)))
         resetBtn.bezelStyle = .rounded
@@ -276,12 +291,17 @@ class SettingsWindowController: NSWindowController {
         settings.colorfulFileIcons = sender.state == .on
     }
 
+    @objc private func openLinksInBrowserChanged(_ sender: NSButton) {
+        settings.openLinksInClomeBrowser = sender.state == .on
+    }
+
     @objc private func resetDefaults(_ sender: Any?) {
         settings.sidebarColor = AppearanceSettings.defaultSidebarColor
         settings.sidebarOpacity = AppearanceSettings.defaultSidebarOpacity
         settings.mainPanelColor = AppearanceSettings.defaultMainPanelColor
         settings.mainPanelOpacity = AppearanceSettings.defaultMainPanelOpacity
         settings.colorfulFileIcons = true
+        settings.openLinksInClomeBrowser = true
 
         sidebarColorWell.color = settings.sidebarColor
         sidebarOpacitySlider.doubleValue = Double(settings.sidebarOpacity)
@@ -290,6 +310,7 @@ class SettingsWindowController: NSWindowController {
         mainOpacitySlider.doubleValue = Double(settings.mainPanelOpacity)
         mainOpacityLabel.stringValue = String(format: "%.0f%%", settings.mainPanelOpacity * 100)
         colorfulIconsToggle.state = .on
+        openLinksInBrowserToggle.state = .on
     }
 
     // MARK: - Helpers

@@ -154,7 +154,7 @@ class ProjectPanel: NSView {
             pdfPanel.loadPDF(at: path)
             panel = pdfPanel
         } else if lowerPath.hasSuffix(".ipynb") {
-            let notebookPanel = NotebookPanel()
+            let notebookPanel = NotebookPanel(projectDirectory: rootDirectory)
             do {
                 try notebookPanel.loadNotebook(at: path)
             } catch {

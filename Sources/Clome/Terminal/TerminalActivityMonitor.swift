@@ -112,7 +112,7 @@ class TerminalActivityMonitor {
     // MARK: - Preview Timer
 
     private func startPreviewTimer() {
-        previewTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        previewTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.updatePreviews()
             }

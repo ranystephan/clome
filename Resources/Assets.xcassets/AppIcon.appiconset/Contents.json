@@ -1,10 +1,64 @@
 {
   "images" : [
     {
-      "filename" : "icon_16.png",
+      "filename" : "clome-iOS-Dark-16x16@1x.png",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "16x16"
+    },
+    {
+      "filename" : "clome-iOS-Dark-16x16@2x.png",
+      "idiom" : "mac",
+      "scale" : "2x",
+      "size" : "16x16"
+    },
+    {
+      "filename" : "clome-iOS-Dark-32x32@1x.png",
+      "idiom" : "mac",
+      "scale" : "1x",
+      "size" : "32x32"
+    },
+    {
+      "filename" : "clome-iOS-Dark-32x32@2x.png",
+      "idiom" : "mac",
+      "scale" : "2x",
+      "size" : "32x32"
+    },
+    {
+      "filename" : "clome-iOS-Dark-128x128@1x.png",
+      "idiom" : "mac",
+      "scale" : "1x",
+      "size" : "128x128"
+    },
+    {
+      "filename" : "clome-iOS-Dark-128x128@2x.png",
+      "idiom" : "mac",
+      "scale" : "2x",
+      "size" : "128x128"
+    },
+    {
+      "filename" : "clome-iOS-Dark-256x256@1x.png",
+      "idiom" : "mac",
+      "scale" : "1x",
+      "size" : "256x256"
+    },
+    {
+      "filename" : "clome-iOS-Dark-256x256@2x.png",
+      "idiom" : "mac",
+      "scale" : "2x",
+      "size" : "256x256"
+    },
+    {
+      "filename" : "clome-iOS-Dark-512x512@1x.png",
+      "idiom" : "mac",
+      "scale" : "1x",
+      "size" : "512x512"
+    },
+    {
+      "filename" : "clome-iOS-Dark-1024x1024@1x.png",
+      "idiom" : "mac",
+      "scale" : "2x",
+      "size" : "512x512"
     },
     {
       "appearances" : [
@@ -19,7 +73,13 @@
       "size" : "16x16"
     },
     {
-      "filename" : "icon_32.png",
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "light"
+        }
+      ],
+      "filename" : "icon_32_light.png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "16x16"
@@ -33,31 +93,7 @@
       ],
       "filename" : "icon_32_light.png",
       "idiom" : "mac",
-      "scale" : "2x",
-      "size" : "16x16"
-    },
-    {
-      "filename" : "icon_32.png",
-      "idiom" : "mac",
       "scale" : "1x",
-      "size" : "32x32"
-    },
-    {
-      "appearances" : [
-        {
-          "appearance" : "luminosity",
-          "value" : "light"
-        }
-      ],
-      "filename" : "icon_32_light.png",
-      "idiom" : "mac",
-      "scale" : "1x",
-      "size" : "32x32"
-    },
-    {
-      "filename" : "icon_64.png",
-      "idiom" : "mac",
-      "scale" : "2x",
       "size" : "32x32"
     },
     {
@@ -73,12 +109,6 @@
       "size" : "32x32"
     },
     {
-      "filename" : "icon_128.png",
-      "idiom" : "mac",
-      "scale" : "1x",
-      "size" : "128x128"
-    },
-    {
       "appearances" : [
         {
           "appearance" : "luminosity",
@@ -91,7 +121,13 @@
       "size" : "128x128"
     },
     {
-      "filename" : "icon_256.png",
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "light"
+        }
+      ],
+      "filename" : "icon_256_light.png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "128x128"
@@ -105,31 +141,7 @@
       ],
       "filename" : "icon_256_light.png",
       "idiom" : "mac",
-      "scale" : "2x",
-      "size" : "128x128"
-    },
-    {
-      "filename" : "icon_256.png",
-      "idiom" : "mac",
       "scale" : "1x",
-      "size" : "256x256"
-    },
-    {
-      "appearances" : [
-        {
-          "appearance" : "luminosity",
-          "value" : "light"
-        }
-      ],
-      "filename" : "icon_256_light.png",
-      "idiom" : "mac",
-      "scale" : "1x",
-      "size" : "256x256"
-    },
-    {
-      "filename" : "icon_512.png",
-      "idiom" : "mac",
-      "scale" : "2x",
       "size" : "256x256"
     },
     {
@@ -145,7 +157,13 @@
       "size" : "256x256"
     },
     {
-      "filename" : "icon_512.png",
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "light"
+        }
+      ],
+      "filename" : "clome-iOS-Default-512x512@1x.png",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "512x512"
@@ -157,25 +175,7 @@
           "value" : "light"
         }
       ],
-      "filename" : "icon_512_light.png",
-      "idiom" : "mac",
-      "scale" : "1x",
-      "size" : "512x512"
-    },
-    {
-      "filename" : "icon_1024.png",
-      "idiom" : "mac",
-      "scale" : "2x",
-      "size" : "512x512"
-    },
-    {
-      "appearances" : [
-        {
-          "appearance" : "luminosity",
-          "value" : "light"
-        }
-      ],
-      "filename" : "icon_1024_light.png",
+      "filename" : "clome-iOS-Default-1024x1024@1x.png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "512x512"

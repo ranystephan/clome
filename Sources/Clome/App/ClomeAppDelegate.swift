@@ -2,7 +2,7 @@ import AppKit
 
 @MainActor
 class ClomeAppDelegate: NSObject, NSApplicationDelegate {
-    private var mainWindow: ClomeWindow?
+    private(set) var mainWindow: ClomeWindow?
     private(set) var ghosttyApp: GhosttyAppManager?
     private var socketServer: SocketServer?
     private var keyboardHandler: KeyboardNavigationHandler?
@@ -19,9 +19,6 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate {
 
         // Start terminal activity monitoring
         _ = TerminalActivityMonitor.shared
-
-        // Set up Claude Code context bridge
-        _ = ClaudeContextBridge.shared
 
         // Restore or create window
         let window = ClomeWindow()

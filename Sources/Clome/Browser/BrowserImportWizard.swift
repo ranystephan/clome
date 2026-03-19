@@ -718,8 +718,13 @@ private final class ProgressStepView: NSView {
     private let options: ImportOptions
     private let onDone: () -> Void
 
+    private var progressCard: NSView!
+    private var badgeView: NSView!
     private var spinner: NSProgressIndicator!
+    private var progressBar: NSProgressIndicator!
     private var statusLabel: NSTextField!
+    private var detailLabel: NSTextField!
+    private var selectedDataLabel: NSTextField!
     private var resultsStack: NSStackView!
     private var doneButton: NSButton!
 
@@ -739,7 +744,15 @@ private final class ProgressStepView: NSView {
     }
 
     private func setupUI() {
-        // Header
+        let accent = NSColor(red: 0.38, green: 0.56, blue: 1.0, alpha: 1.0)
+
+        let sectionLabel = NSTextField(labelWithString: "IMPORT")
+        sectionLabel.font = .monospacedSystemFont(ofSize: 11, weight: .semibold)
+        sectionLabel.textColor = accent.withAlphaComponent(0.9)
+        sectionLabel.alignment = .center
+        sectionLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(sectionLabel)
+
         let header = NSTextField(labelWithString: "Importing from \(browser.name)")
         header.font = .systemFont(ofSize: 18, weight: .semibold)
         header.textColor = .white
@@ -747,33 +760,89 @@ private final class ProgressStepView: NSView {
         header.translatesAutoresizingMaskIntoConstraints = false
         addSubview(header)
 
-        // Spinner
+        let subtitle = NSTextField(labelWithString: "Transferring selected data into Clome's secure store")
+        subtitle.font = .systemFont(ofSize: 12, weight: .regular)
+        subtitle.textColor = NSColor(white: 0.62, alpha: 1.0)
+        subtitle.alignment = .center
+        subtitle.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(subtitle)
+
+        progressCard = NSView()
+        progressCard.wantsLayer = true
+        progressCard.translatesAutoresizingMaskIntoConstraints = false
+        progressCard.layer?.cornerRadius = 14
+        progressCard.layer?.cornerCurve = .continuous
+        progressCard.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.045).cgColor
+        progressCard.layer?.borderWidth = 1
+        progressCard.layer?.borderColor = NSColor(white: 1.0, alpha: 0.09).cgColor
+        progressCard.layer?.shadowColor = NSColor.black.cgColor
+        progressCard.layer?.shadowOpacity = 0.24
+        progressCard.layer?.shadowRadius = 14
+        progressCard.layer?.shadowOffset = NSSize(width: 0, height: -2)
+        addSubview(progressCard)
+
+        badgeView = NSView()
+        badgeView.wantsLayer = true
+        badgeView.translatesAutoresizingMaskIntoConstraints = false
+        badgeView.layer?.cornerRadius = 16
+        badgeView.layer?.cornerCurve = .continuous
+        badgeView.layer?.backgroundColor = accent.withAlphaComponent(0.16).cgColor
+        badgeView.layer?.borderWidth = 1
+        badgeView.layer?.borderColor = accent.withAlphaComponent(0.45).cgColor
+        progressCard.addSubview(badgeView)
+
+        let browserIcon = NSImageView()
+        browserIcon.translatesAutoresizingMaskIntoConstraints = false
+        let iconCfg = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+        browserIcon.image = NSImage(systemSymbolName: browser.icon, accessibilityDescription: browser.name)?.withSymbolConfiguration(iconCfg)
+        browserIcon.contentTintColor = brandColor(for: browser)
+        badgeView.addSubview(browserIcon)
+
         spinner = NSProgressIndicator()
         spinner.style = .spinning
-        spinner.controlSize = .regular
+        spinner.controlSize = .small
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.appearance = NSAppearance(named: .darkAqua)
-        addSubview(spinner)
+        progressCard.addSubview(spinner)
         spinner.startAnimation(nil)
 
-        // Status label
         statusLabel = NSTextField(labelWithString: "Preparing import...")
-        statusLabel.font = .systemFont(ofSize: 13, weight: .regular)
-        statusLabel.textColor = NSColor(white: 0.6, alpha: 1.0)
-        statusLabel.alignment = .center
+        statusLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        statusLabel.textColor = NSColor(white: 0.92, alpha: 1.0)
+        statusLabel.alignment = .left
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(statusLabel)
+        progressCard.addSubview(statusLabel)
 
-        // Results stack (hidden initially)
+        detailLabel = NSTextField(labelWithString: "Validating browser profile and preparing destination")
+        detailLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        detailLabel.textColor = NSColor(white: 0.62, alpha: 1.0)
+        detailLabel.alignment = .left
+        detailLabel.translatesAutoresizingMaskIntoConstraints = false
+        progressCard.addSubview(detailLabel)
+
+        progressBar = NSProgressIndicator()
+        progressBar.style = .bar
+        progressBar.isIndeterminate = true
+        progressBar.usesThreadedAnimation = true
+        progressBar.translatesAutoresizingMaskIntoConstraints = false
+        progressCard.addSubview(progressBar)
+        progressBar.startAnimation(nil)
+
+        selectedDataLabel = NSTextField(labelWithString: selectedDataSummary())
+        selectedDataLabel.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+        selectedDataLabel.textColor = NSColor(white: 0.55, alpha: 1.0)
+        selectedDataLabel.alignment = .left
+        selectedDataLabel.translatesAutoresizingMaskIntoConstraints = false
+        progressCard.addSubview(selectedDataLabel)
+
         resultsStack = NSStackView()
         resultsStack.orientation = .vertical
-        resultsStack.spacing = 8
+        resultsStack.spacing = 10
         resultsStack.alignment = .leading
         resultsStack.translatesAutoresizingMaskIntoConstraints = false
         resultsStack.isHidden = true
-        addSubview(resultsStack)
+        progressCard.addSubview(resultsStack)
 
-        // Done button (hidden initially)
         doneButton = makePrimaryButton(title: "Done")
         doneButton.target = self
         doneButton.action = #selector(doneTapped)
@@ -781,23 +850,60 @@ private final class ProgressStepView: NSView {
         addSubview(doneButton)
 
         NSLayoutConstraint.activate([
-            header.topAnchor.constraint(equalTo: topAnchor, constant: 48),
+            sectionLabel.topAnchor.constraint(equalTo: topAnchor, constant: 34),
+            sectionLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+
+            header.topAnchor.constraint(equalTo: sectionLabel.bottomAnchor, constant: 10),
             header.centerXAnchor.constraint(equalTo: centerXAnchor),
             header.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 32),
             header.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -32),
 
-            spinner.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 40),
-            spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
-            spinner.widthAnchor.constraint(equalToConstant: 32),
-            spinner.heightAnchor.constraint(equalToConstant: 32),
+            subtitle.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
+            subtitle.centerXAnchor.constraint(equalTo: centerXAnchor),
+            subtitle.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 32),
+            subtitle.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -32),
 
-            statusLabel.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 16),
-            statusLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-            statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 32),
-            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -32),
+            progressCard.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 24),
+            progressCard.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 32),
+            progressCard.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -32),
+            progressCard.bottomAnchor.constraint(lessThanOrEqualTo: doneButton.topAnchor, constant: -20),
 
-            resultsStack.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 28),
-            resultsStack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            badgeView.topAnchor.constraint(equalTo: progressCard.topAnchor, constant: 18),
+            badgeView.leadingAnchor.constraint(equalTo: progressCard.leadingAnchor, constant: 18),
+            badgeView.widthAnchor.constraint(equalToConstant: 32),
+            badgeView.heightAnchor.constraint(equalToConstant: 32),
+
+            browserIcon.centerXAnchor.constraint(equalTo: badgeView.centerXAnchor),
+            browserIcon.centerYAnchor.constraint(equalTo: badgeView.centerYAnchor),
+            browserIcon.widthAnchor.constraint(equalToConstant: 16),
+            browserIcon.heightAnchor.constraint(equalToConstant: 16),
+
+            statusLabel.topAnchor.constraint(equalTo: progressCard.topAnchor, constant: 18),
+            statusLabel.leadingAnchor.constraint(equalTo: badgeView.trailingAnchor, constant: 12),
+            statusLabel.trailingAnchor.constraint(equalTo: progressCard.trailingAnchor, constant: -18),
+
+            detailLabel.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 4),
+            detailLabel.leadingAnchor.constraint(equalTo: statusLabel.leadingAnchor),
+            detailLabel.trailingAnchor.constraint(equalTo: progressCard.trailingAnchor, constant: -18),
+
+            spinner.topAnchor.constraint(equalTo: detailLabel.bottomAnchor, constant: 14),
+            spinner.leadingAnchor.constraint(equalTo: statusLabel.leadingAnchor),
+            spinner.widthAnchor.constraint(equalToConstant: 16),
+            spinner.heightAnchor.constraint(equalToConstant: 16),
+
+            progressBar.centerYAnchor.constraint(equalTo: spinner.centerYAnchor),
+            progressBar.leadingAnchor.constraint(equalTo: spinner.trailingAnchor, constant: 8),
+            progressBar.trailingAnchor.constraint(equalTo: progressCard.trailingAnchor, constant: -18),
+            progressBar.heightAnchor.constraint(equalToConstant: 8),
+
+            selectedDataLabel.topAnchor.constraint(equalTo: progressBar.bottomAnchor, constant: 12),
+            selectedDataLabel.leadingAnchor.constraint(equalTo: statusLabel.leadingAnchor),
+            selectedDataLabel.trailingAnchor.constraint(equalTo: progressCard.trailingAnchor, constant: -18),
+
+            resultsStack.topAnchor.constraint(equalTo: selectedDataLabel.bottomAnchor, constant: 16),
+            resultsStack.leadingAnchor.constraint(equalTo: statusLabel.leadingAnchor),
+            resultsStack.trailingAnchor.constraint(lessThanOrEqualTo: progressCard.trailingAnchor, constant: -18),
+            resultsStack.bottomAnchor.constraint(equalTo: progressCard.bottomAnchor, constant: -18),
 
             doneButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -24),
             doneButton.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -807,7 +913,9 @@ private final class ProgressStepView: NSView {
     }
 
     private func startImport() {
-        statusLabel.stringValue = "Importing data..."
+        statusLabel.stringValue = "Importing selected data"
+        detailLabel.stringValue = "Syncing into Clome's shared data store"
+        selectedDataLabel.stringValue = selectedDataSummary()
 
         let cookieStore = WKWebsiteDataStore(forIdentifier: UUID(uuidString: "4E5F6A7B-8C9D-0E1F-2A3B-4C5D6E7F8A9B")!).httpCookieStore
 
@@ -821,8 +929,17 @@ private final class ProgressStepView: NSView {
     private func showResults(_ result: ImportResult) {
         spinner.stopAnimation(nil)
         spinner.isHidden = true
-        statusLabel.stringValue = "Done!"
-        statusLabel.textColor = NSColor.systemGreen
+        progressBar.stopAnimation(nil)
+        progressBar.isHidden = true
+        statusLabel.stringValue = "Import complete"
+        statusLabel.textColor = NSColor(white: 0.96, alpha: 1.0)
+        detailLabel.stringValue = result.errors.isEmpty
+            ? "Everything selected was imported successfully."
+            : "Import completed with some recoverable issues."
+        detailLabel.textColor = result.errors.isEmpty
+            ? NSColor.systemGreen.withAlphaComponent(0.9)
+            : NSColor.systemYellow.withAlphaComponent(0.9)
+        selectedDataLabel.isHidden = true
 
         resultsStack.isHidden = false
 
@@ -875,11 +992,20 @@ private final class ProgressStepView: NSView {
         row.addArrangedSubview(iconView)
 
         let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 13, weight: .regular)
+        label.font = .systemFont(ofSize: 13, weight: .medium)
         label.textColor = NSColor(white: 0.85, alpha: 1.0)
         row.addArrangedSubview(label)
 
         resultsStack.addArrangedSubview(row)
+    }
+
+    private func selectedDataSummary() -> String {
+        var parts: [String] = []
+        if options.cookies { parts.append("cookies") }
+        if options.bookmarks { parts.append("bookmarks") }
+        if options.history { parts.append("history") }
+        if parts.isEmpty { return "Selected: nothing" }
+        return "Selected: " + parts.joined(separator: " • ")
     }
 
     @objc private func doneTapped() {

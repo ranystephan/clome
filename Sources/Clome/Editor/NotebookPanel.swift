@@ -18,6 +18,7 @@ class NotebookPanel: NSView {
 
     // Environment
     private var discoveredEnvironments: [PythonEnvironment] = []
+    private let projectDirectory: String?
 
     // Output refresh debouncing
     private var pendingRefreshCells: Set<Int> = []
@@ -56,9 +57,10 @@ class NotebookPanel: NSView {
     }
     private let borderSubtle = NSColor(white: 1.0, alpha: 0.08)
 
-    init(store: NotebookStore? = nil) {
+    init(store: NotebookStore? = nil, projectDirectory: String? = nil) {
         let resolvedStore = store ?? NotebookStore()
         self.store = resolvedStore
+        self.projectDirectory = projectDirectory
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = baseBg.cgColor
@@ -712,7 +714,8 @@ class NotebookPanel: NSView {
 
     private func discoverEnvironmentsAsync() {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let envs = PythonEnvironmentManager.discoverEnvironments()
+            let projectDir = self?.projectDirectory
+            let envs = PythonEnvironmentManager.discoverEnvironments(projectDirectory: projectDir)
             DispatchQueue.main.async {
                 self?.discoveredEnvironments = envs
             }
