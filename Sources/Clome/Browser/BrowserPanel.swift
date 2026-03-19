@@ -110,7 +110,6 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         formAutofillManager?.register(on: configuration)
 
         let newWebView = WKWebView(frame: .zero, configuration: configuration)
-        newWebView.translatesAutoresizingMaskIntoConstraints = false
         newWebView.navigationDelegate = self
         newWebView.uiDelegate = self
         newWebView.allowsBackForwardNavigationGestures = true
@@ -123,14 +122,9 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         webView = newWebView
         webAuthnHandler?.webView = newWebView
         formAutofillManager?.webView = newWebView
+        newWebView.translatesAutoresizingMaskIntoConstraints = true
+        newWebView.autoresizingMask = [.width, .height]
         addSubview(newWebView)
-
-        NSLayoutConstraint.activate([
-            newWebView.topAnchor.constraint(equalTo: topAnchor, constant: 40),
-            newWebView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            newWebView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            newWebView.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
     }
 
     required init?(coder: NSCoder) {
@@ -266,6 +260,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         // WebView — with persistent data store and shared process pool for cookies
         let config = WKWebViewConfiguration()
         config.preferences.isElementFullscreenEnabled = true
+        config.preferences.setValue(true, forKey: "developerExtrasEnabled")
 
         config.websiteDataStore = persistentDataStore
         let pagePrefs = WKWebpagePreferences()
@@ -356,7 +351,6 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         let nWebView = ClomeWebView(frame: .zero, configuration: config)
         nWebView.browserPanel = self
         webView = nWebView
-        webView.translatesAutoresizingMaskIntoConstraints = false
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
@@ -370,6 +364,11 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         formAutofillManager?.webView = webView
         formAutofillManager?.navBar = navBar
 
+        // Use autoresizing masks instead of Auto Layout for the webView.
+        // Auto Layout constraints conflict with Web Inspector's internal NSSplitView,
+        // causing recursive layout loops and flickering when the inspector is docked.
+        webView.translatesAutoresizingMaskIntoConstraints = true
+        webView.autoresizingMask = [.width, .height]
         addSubview(webView)
 
         // Observe cookie changes for persistence tracking
@@ -447,11 +446,6 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
             loadingBar.trailingAnchor.constraint(equalTo: navBar.trailingAnchor, constant: -8),
             loadingBar.bottomAnchor.constraint(equalTo: navBar.bottomAnchor, constant: -2),
             loadingBar.heightAnchor.constraint(equalToConstant: 2),
-
-            webView.topAnchor.constraint(equalTo: navBar.bottomAnchor),
-            webView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
         // Hover tracking on pill
@@ -461,6 +455,18 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
             owner: self
         ))
 
+    }
+
+    override func layout() {
+        super.layout()
+        // Manually position the webView below the 40px nav bar.
+        // Using autoresizing masks instead of Auto Layout to avoid
+        // conflicting with Web Inspector's internal NSSplitView.
+        let navHeight: CGFloat = 40
+        let webFrame = CGRect(x: 0, y: navHeight, width: bounds.width, height: bounds.height - navHeight)
+        if webView.frame != webFrame {
+            webView.frame = webFrame
+        }
     }
 
     override func viewDidMoveToWindow() {
@@ -1265,15 +1271,12 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     }
 
     @objc private func openWebInspector() {
-        print("[DevTools] openWebInspector called")
-        let js = "if(window.__clomeToggleDevTools){window.__clomeToggleDevTools();'ok'}else{'not_ready:'+typeof eruda}"
-        webView.evaluateJavaScript(js) { result, error in
-            if let error = error {
-                print("[DevTools] evaluateJavaScript error: \(error)")
-            }
-            if let result = result {
-                print("[DevTools] evaluateJavaScript result: \(result)")
-            }
+        let sel = NSSelectorFromString("_inspector")
+        guard webView.responds(to: sel),
+              let inspector = webView.perform(sel)?.takeUnretainedValue() as? NSObject else { return }
+        let showSel = NSSelectorFromString("show")
+        if inspector.responds(to: showSel) {
+            inspector.perform(showSel)
         }
     }
 
