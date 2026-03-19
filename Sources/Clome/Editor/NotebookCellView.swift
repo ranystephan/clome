@@ -279,6 +279,22 @@ class NotebookCellView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    private var lastLayoutWidth: CGFloat = 0
+
+    override func layout() {
+        super.layout()
+        // After Auto Layout resolves, recompute source height if width changed.
+        // This is essential for Release builds where the initial populateCell()
+        // runs before the view has real bounds.
+        let w = bounds.width
+        if w > 0, w != lastLayoutWidth {
+            lastLayoutWidth = w
+            if !isMarkdownRendered {
+                updateSourceHeight()
+            }
+        }
+    }
+
     func update(cell: NotebookCell, index: Int, executionState: NotebookStore.CellExecutionState = .idle) {
         self.cell = cell
         self.cellIndex = index
@@ -431,6 +447,12 @@ class NotebookCellView: NSView {
         sourceTextView.textContainerInset = NSSize(width: Metrics.cellPaddingH, height: Metrics.cellPaddingV)
         sourceTextView.isVerticallyResizable = true
         sourceTextView.isHorizontallyResizable = false
+        // Critical for Release builds: without autoresizingMask the text view
+        // stays at its initial zero width inside the scroll view, so the text
+        // container (widthTracksTextView) also stays at zero and no glyphs render.
+        sourceTextView.autoresizingMask = [.width]
+        sourceTextView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        sourceTextView.minSize = NSSize(width: 0, height: Metrics.minSourceHeight)
         sourceTextView.delegate = self
         sourceScrollView.documentView = sourceTextView
 

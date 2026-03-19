@@ -57,6 +57,8 @@ class WorkspaceTab: Identifiable {
             return ("doc.richtext", pdf.title.isEmpty ? "PDF" : pdf.title)
         } else if let notebook = view as? NotebookPanel {
             return ("book", notebook.title.isEmpty ? "Notebook" : notebook.title)
+        } else if let slot = view as? EditorSlot {
+            return slot.headerInfo
         }
         return ("square", "Pane")
     }
@@ -129,6 +131,8 @@ class Workspace: Identifiable {
     var color: WorkspaceColor
     /// When true, suppresses auto-terminal creation in ghosttyApp didSet (used during session restore)
     private var suppressAutoTerminal = false
+    /// Deferred focus work item — prevents makeFirstResponder from stealing click events
+    private var pendingFocusWork: DispatchWorkItem?
 
     weak var ghosttyApp: GhosttyAppManager? {
         didSet {
@@ -159,6 +163,9 @@ class Workspace: Identifiable {
 
     /// Lightweight callback — only the active tab selection changed (no add/remove/reorder)
     var onActiveTabChanged: (() -> Void)?
+
+    /// Lightweight callback — only a tab's title changed (no structural changes)
+    var onTabTitleChanged: ((Int, WorkspaceTab) -> Void)?
 
     var activeTab: WorkspaceTab? {
         guard activeTabIndex >= 0, activeTabIndex < tabs.count else { return nil }
@@ -290,10 +297,19 @@ class Workspace: Identifiable {
         }
         container.isHidden = false
 
-        // Focus the focused pane (or the original view)
+        // Focus terminal on next runloop tick so it doesn't block click processing.
+        // Cancel any pending focus from a previous rapid tab switch.
+        pendingFocusWork?.cancel()
         let focusTarget = tabs[index].focusedPane ?? tabs[index].view
         if let terminal = focusTarget as? TerminalSurface {
-            focusTarget.window?.makeFirstResponder(terminal)
+            let work = DispatchWorkItem { [weak terminal] in
+                guard let terminal else { return }
+                terminal.window?.makeFirstResponder(terminal)
+            }
+            pendingFocusWork = work
+            DispatchQueue.main.async(execute: work)
+        } else {
+            pendingFocusWork = nil
         }
 
         onActiveTabChanged?()
@@ -601,7 +617,8 @@ class Workspace: Identifiable {
         guard let view = notification.object as? NSView else { return }
 
         // Update the tab's title from whichever view type posted the notification
-        if let tab = tabs.first(where: { $0.view === view }) {
+        if let index = tabs.firstIndex(where: { $0.view === view }) {
+            let tab = tabs[index]
             if let terminal = view as? TerminalSurface {
                 tab.title = terminal.title
             } else if let browser = view as? BrowserPanel {
@@ -611,7 +628,8 @@ class Workspace: Identifiable {
             } else if let notebook = view as? NotebookPanel {
                 tab.title = notebook.title
             }
-            onTabsChanged?()
+            // Use lightweight title update instead of full tab bar rebuild
+            onTabTitleChanged?(index, tab)
         }
 
         // Track working directory from terminals

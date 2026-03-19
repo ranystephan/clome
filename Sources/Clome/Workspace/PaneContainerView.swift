@@ -309,7 +309,7 @@ class PaneHeaderBar: NSView {
         addSubview(closeBtn)
 
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 22),
+            heightAnchor.constraint(equalToConstant: 26),
 
             iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -378,6 +378,8 @@ class PaneHeaderBar: NSView {
             return ("doc.text", editor.title)
         } else if let pdf = view as? PDFPanel {
             return ("doc.richtext", pdf.title.isEmpty ? "PDF" : pdf.title)
+        } else if let slot = view as? EditorSlot {
+            return slot.headerInfo
         }
         return ("square", "Pane")
     }

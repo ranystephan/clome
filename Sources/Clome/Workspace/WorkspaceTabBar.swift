@@ -185,11 +185,15 @@ class WorkspaceTabBar: NSView {
         for (i, view) in stackView.arrangedSubviews.enumerated() {
             guard let item = view as? WorkspaceTabItem else { continue }
             item.index = i
-            let isSelected = i == activeIndex
-            item.layer?.backgroundColor = isSelected
-                ? NSColor(red: 0.16, green: 0.16, blue: 0.175, alpha: 1.0).cgColor
-                : NSColor.clear.cgColor
+            item.setSelected(i == activeIndex)
         }
+    }
+
+    /// Lightweight update — only changes a single tab's title and icon without rebuilding.
+    func updateTabTitle(at index: Int, title: String, icon: String?, isSplit: Bool, splitDescription: String?) {
+        guard index >= 0, index < stackView.arrangedSubviews.count,
+              let item = stackView.arrangedSubviews[index] as? WorkspaceTabItem else { return }
+        item.updateContent(title: isSplit ? (splitDescription ?? title) : title, icon: icon)
     }
 
     func updateTabs(workspace: Workspace) {
@@ -564,7 +568,7 @@ class AddTabMenuView: NSView {
 
 class WorkspaceTabItem: NSView {
     var index: Int
-    let isSelected: Bool
+    private(set) var isSelected: Bool
     let currentTitle: String
 
     var onSelect: ((Int) -> Void)?
@@ -577,8 +581,13 @@ class WorkspaceTabItem: NSView {
 
     private let activeColor = NSColor(red: 0.16, green: 0.16, blue: 0.175, alpha: 1.0)
     private let hoverColor = NSColor(red: 0.14, green: 0.14, blue: 0.155, alpha: 1.0)
+    private let selectedTextColor = NSColor(white: 0.92, alpha: 1.0)
+    private let unselectedTextColor = NSColor(white: 0.5, alpha: 1.0)
     private var closeButton: NSButton!
     private var iconView: NSImageView!
+    private var titleLabel: NSTextField!
+    private var indicatorView: NSView?
+    private var hasFavicon: Bool = false
     private var isDragging = false
     private var didSelect = false
     private var dragStartLocation: NSPoint = .zero
@@ -596,7 +605,7 @@ class WorkspaceTabItem: NSView {
         layer?.cornerCurve = .continuous
         layer?.backgroundColor = isSelected ? activeColor.cgColor : NSColor.clear.cgColor
 
-        let textColor = isSelected ? NSColor(white: 0.92, alpha: 1.0) : NSColor(white: 0.5, alpha: 1.0)
+        let textColor = isSelected ? selectedTextColor : unselectedTextColor
 
         // Type icon — use favicon for browser tabs when available
         iconView = NSImageView()
@@ -604,6 +613,7 @@ class WorkspaceTabItem: NSView {
         if let favicon = tab.favicon {
             iconView.image = favicon
             iconView.imageScaling = .scaleProportionallyDown
+            hasFavicon = true
         } else {
             let iconCfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
             let iconName = (tab.view as? TerminalSurface)?.programIcon ?? tab.type.icon
@@ -633,7 +643,7 @@ class WorkspaceTabItem: NSView {
 
         // Title — show split description when tab is split
         let displayTitle = tab.isSplit ? tab.splitDescription : tab.title
-        let titleLabel = NSTextField(labelWithString: displayTitle)
+        titleLabel = NSTextField(labelWithString: displayTitle)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = .systemFont(ofSize: 11, weight: isSelected ? .medium : .regular)
         titleLabel.textColor = textColor
@@ -654,20 +664,15 @@ class WorkspaceTabItem: NSView {
         closeButton.alphaValue = isSelected ? 0.8 : 0.0
         addSubview(closeButton)
 
-        if isSelected {
-            let indicator = NSView()
-            indicator.translatesAutoresizingMaskIntoConstraints = false
-            indicator.wantsLayer = true
-            indicator.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-            indicator.layer?.cornerRadius = 1
-            addSubview(indicator)
-            NSLayoutConstraint.activate([
-                indicator.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
-                indicator.centerXAnchor.constraint(equalTo: centerXAnchor),
-                indicator.widthAnchor.constraint(equalToConstant: 16),
-                indicator.heightAnchor.constraint(equalToConstant: 2),
-            ])
-        }
+        // Blue indicator line (always created, hidden when not selected)
+        let indicator = NSView()
+        indicator.translatesAutoresizingMaskIntoConstraints = false
+        indicator.wantsLayer = true
+        indicator.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        indicator.layer?.cornerRadius = 1
+        indicator.isHidden = !isSelected
+        addSubview(indicator)
+        indicatorView = indicator
 
         let titleLeading: NSLayoutConstraint
         if let sIcon = splitIconView {
@@ -694,6 +699,11 @@ class WorkspaceTabItem: NSView {
             closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             closeButton.widthAnchor.constraint(equalToConstant: 14),
             closeButton.heightAnchor.constraint(equalToConstant: 14),
+
+            indicator.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+            indicator.centerXAnchor.constraint(equalTo: centerXAnchor),
+            indicator.widthAnchor.constraint(equalToConstant: 16),
+            indicator.heightAnchor.constraint(equalToConstant: 2),
         ])
     }
 
@@ -701,11 +711,40 @@ class WorkspaceTabItem: NSView {
 
     @objc private func closeTapped() { onClose?(index) }
 
+    /// Update all visual state to reflect selection change.
+    func setSelected(_ selected: Bool) {
+        guard selected != isSelected else { return }
+        isSelected = selected
+        applySelectionStyle()
+    }
+
+    /// Apply all visual properties based on current isSelected state.
+    private func applySelectionStyle() {
+        let textColor = isSelected ? selectedTextColor : unselectedTextColor
+        layer?.backgroundColor = isSelected ? activeColor.cgColor : NSColor.clear.cgColor
+        titleLabel.textColor = textColor
+        titleLabel.font = .systemFont(ofSize: 11, weight: isSelected ? .medium : .regular)
+        if !hasFavicon {
+            iconView.contentTintColor = textColor
+        }
+        closeButton.alphaValue = isSelected ? 0.8 : 0.0
+        indicatorView?.isHidden = !isSelected
+    }
+
     /// Update icon when terminal program changes (e.g. Claude Code detected)
     func updateIcon(for tab: WorkspaceTab) {
         let iconName = (tab.view as? TerminalSurface)?.programIcon ?? tab.type.icon
         let cfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
         iconView.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
+    }
+
+    /// Update title and optionally icon without rebuilding the view.
+    func updateContent(title: String, icon: String?) {
+        titleLabel.stringValue = title
+        if let icon {
+            let cfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
+            iconView.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
+        }
     }
 
     override var acceptsFirstResponder: Bool { true }
@@ -737,7 +776,8 @@ class WorkspaceTabItem: NSView {
     override func mouseDragged(with event: NSEvent) {
         let dx = abs(event.locationInWindow.x - dragStartLocation.x)
         let dy = abs(event.locationInWindow.y - dragStartLocation.y)
-        if dx > 4 || dy > 4 {
+        // Lower threshold (3px) for easier drag initiation, especially vertical drags for splitting
+        if dx > 3 || dy > 3 {
             if !isDragging {
                 isDragging = true
                 onDragBegan?(originalIndex, event.locationInWindow)

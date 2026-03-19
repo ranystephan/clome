@@ -21,6 +21,9 @@ class SidebarView: NSView {
     /// Which workspaces have the new-tab cards revealed
     private var revealedNewTab: Set<UUID> = []
 
+    /// Which split tabs are collapsed in the sidebar
+    private var collapsedSplitTabs: Set<UUID> = []
+
     /// User-resizable explorer height
     private var explorerHeight: CGFloat = 220
 
@@ -29,6 +32,9 @@ class SidebarView: NSView {
 
     /// Whether the explorer resize handle is being dragged
     private var isExplorerResizing: Bool = false
+
+    /// Whether a tab drag-to-split is in progress (suppresses reloads)
+    private var isDraggingTab: Bool = false
 
     /// Debounce timer for activity updates
     private var activityDebounceTimer: Timer?
@@ -85,7 +91,7 @@ class SidebarView: NSView {
         addSubview(scrollView)
 
         stackView.orientation = .vertical
-        stackView.spacing = 4
+        stackView.spacing = 14
         stackView.alignment = .centerX
         stackView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -179,6 +185,7 @@ class SidebarView: NSView {
         NotificationCenter.default.addObserver(self, selector: #selector(onNotificationChange(_:)), name: .clomeNotificationCountChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(onNotificationChange(_:)), name: .appearanceSettingsChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(onNotificationChange(_:)), name: .terminalActivityChanged, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(onTerminalFocused(_:)), name: .terminalSurfaceFocused, object: nil)
     }
 
     @objc private func onNotificationChange(_ n: Notification) {
@@ -189,6 +196,20 @@ class SidebarView: NSView {
                 self?.reloadWorkspaces()
             }
         } else {
+            reloadWorkspaces()
+        }
+    }
+
+    @objc private func onTerminalFocused(_ n: Notification) {
+        guard let terminal = n.object as? TerminalSurface else { return }
+        // Update focusedPane on the tab that contains this terminal
+        guard let workspace = workspaceManager.activeWorkspace,
+              let tab = workspace.activeTab else { return }
+        // Check if this terminal is one of the panes in the active tab's split
+        let leaves = tab.splitContainer.allLeafViews
+        if leaves.contains(where: { $0 === terminal }) {
+            tab.focusedPane = terminal
+            tab.splitContainer.focusedPane = terminal
             reloadWorkspaces()
         }
     }
@@ -285,6 +306,11 @@ class SidebarView: NSView {
             return
         }
 
+        // Don't rebuild views while a tab drag-to-split is in progress
+        if isDraggingTab {
+            return
+        }
+
         // Auto-expand all workspaces on first load only
         if !hasAutoExpanded {
             hasAutoExpanded = true
@@ -299,13 +325,10 @@ class SidebarView: NSView {
             let isExpanded = expandedWorkspaces.contains(workspace.id)
             let capturedWsIndex = wsIndex
 
-            // ── Workspace group container (rounded background when active) ──
+            // ── Workspace group container (no background, separated by spacing) ──
             let wsGroup = NSView()
             wsGroup.translatesAutoresizingMaskIntoConstraints = false
             wsGroup.wantsLayer = true
-            wsGroup.layer?.cornerRadius = 8
-            wsGroup.layer?.cornerCurve = .continuous
-            wsGroup.layer?.backgroundColor = isActive ? NSColor(white: 1.0, alpha: 0.08).cgColor : NSColor.clear.cgColor
 
             let wsStack = NSStackView()
             wsStack.orientation = .vertical
@@ -317,8 +340,8 @@ class SidebarView: NSView {
             NSLayoutConstraint.activate([
                 wsStack.leadingAnchor.constraint(equalTo: wsGroup.leadingAnchor),
                 wsStack.trailingAnchor.constraint(equalTo: wsGroup.trailingAnchor),
-                wsStack.topAnchor.constraint(equalTo: wsGroup.topAnchor, constant: 4),
-                wsStack.bottomAnchor.constraint(equalTo: wsGroup.bottomAnchor, constant: -4),
+                wsStack.topAnchor.constraint(equalTo: wsGroup.topAnchor),
+                wsStack.bottomAnchor.constraint(equalTo: wsGroup.bottomAnchor),
             ])
 
             // ── Workspace header ──
@@ -351,7 +374,7 @@ class SidebarView: NSView {
                 view.addSub(plusIcon, trailing: 6, centerY: true, width: 20, height: 20)
             }
 
-            header.bgHover = isActive ? nil : NSColor(white: 1.0, alpha: 0.04)
+            header.bgHover = NSColor(white: 1.0, alpha: 0.04)
             header.onHoverChange = { hovering in
                 NSAnimationContext.runAnimationGroup { ctx in
                     ctx.duration = 0.15
@@ -394,12 +417,168 @@ class SidebarView: NSView {
                     let isTabActive = isActive && tabIndex == workspace.activeTabIndex
                     let capturedTabIndex = tabIndex
 
-                    // Check if this is a terminal tab with activity info
+                    // Check if this is a non-split terminal tab with activity info
                     let terminal = tab.view as? TerminalSurface
-                    let hasActivity = terminal != nil && (terminal?.detectedProgram != nil || terminal?.outputPreview != nil)
+                    let hasActivity = !tab.isSplit && terminal != nil && (terminal?.detectedProgram != nil || terminal?.outputPreview != nil)
 
-                    if hasActivity, let terminal {
-                        // ── Rich terminal activity card ──
+                    if tab.isSplit {
+                        // ── Split tab: plain text header with collapse/expand + close ──
+                        let isSplitCollapsed = collapsedSplitTabs.contains(tab.id)
+                        let splitHeader = SidebarRow(height: 26)
+                        let splitCloseBtn = NSButton()
+                        splitHeader.configure { view in
+                            let tc = isTabActive ? NSColor(white: 0.55, alpha: 1.0) : NSColor(white: 0.40, alpha: 1.0)
+
+                            let chevron = NSImageView()
+                            let chevCfg = NSImage.SymbolConfiguration(pointSize: 8, weight: .medium)
+                            let chevName = isSplitCollapsed ? "chevron.right" : "chevron.down"
+                            chevron.image = NSImage(systemSymbolName: chevName, accessibilityDescription: nil)?.withSymbolConfiguration(chevCfg)
+                            chevron.contentTintColor = tc
+                            view.addSub(chevron, leading: 10, centerY: true, width: 10, height: 10)
+
+                            let title = NSTextField(labelWithString: tab.splitDescription)
+                            title.font = .systemFont(ofSize: 11, weight: .regular)
+                            title.textColor = tc
+                            title.lineBreakMode = .byTruncatingTail
+                            view.addSub(title, leading: 24, centerY: true, trailingOffset: 26)
+
+                            splitCloseBtn.translatesAutoresizingMaskIntoConstraints = false
+                            splitCloseBtn.bezelStyle = .texturedRounded
+                            splitCloseBtn.isBordered = false
+                            splitCloseBtn.title = ""
+                            let closeCfg = NSImage.SymbolConfiguration(pointSize: 9, weight: .medium)
+                            splitCloseBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")?.withSymbolConfiguration(closeCfg)
+                            splitCloseBtn.contentTintColor = NSColor(white: 0.4, alpha: 1.0)
+                            splitCloseBtn.alphaValue = 0
+                            splitCloseBtn.target = self
+                            splitCloseBtn.action = #selector(closeTabButtonTapped(_:))
+                            splitCloseBtn.identifier = NSUserInterfaceItemIdentifier("closeTab-\(capturedWsIndex)-\(capturedTabIndex)")
+                            view.addSub(splitCloseBtn, trailing: 6, centerY: true, width: 20, height: 20)
+                        }
+
+                        splitHeader.cornerRadius = 4
+                        splitHeader.onHoverChange = { hovering in
+                            NSAnimationContext.runAnimationGroup { ctx in
+                                ctx.duration = 0.15
+                                splitCloseBtn.animator().alphaValue = hovering ? 1.0 : 0.0
+                            }
+                        }
+                        splitHeader.onClick = { [weak self] clickPoint in
+                            guard let self else { return }
+                            let closeHit = clickPoint.x > splitHeader.bounds.width - 28
+                            if !closeHit {
+                                self.workspaceManager.switchTo(index: capturedWsIndex)
+                                workspace.selectTab(capturedTabIndex)
+                                if self.collapsedSplitTabs.contains(tab.id) {
+                                    self.collapsedSplitTabs.remove(tab.id)
+                                } else {
+                                    self.collapsedSplitTabs.insert(tab.id)
+                                }
+                                self.reloadWorkspaces()
+                            }
+                        }
+                        splitHeader.onRightClick = { [weak self] event in
+                            self?.showTabContextMenu(workspace: workspace, wsIndex: capturedWsIndex, tabIndex: capturedTabIndex, event: event)
+                        }
+                        splitHeader.onDragBegan = { [weak self] point in
+                            self?.isDraggingTab = true
+                            self?.onDragTabBegan?(capturedWsIndex, capturedTabIndex)
+                        }
+                        splitHeader.onDragMoved = { [weak self] point in
+                            self?.onDragTabMoved?(capturedWsIndex, capturedTabIndex, point)
+                        }
+                        splitHeader.onDragEnded = { [weak self] point in
+                            self?.onDragTabEnded?(capturedWsIndex, capturedTabIndex, point)
+                            self?.isDraggingTab = false
+                            self?.setNeedsReload()
+                        }
+
+                        wsStack.addArrangedSubview(splitHeader)
+                        splitHeader.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 2).isActive = true
+                        splitHeader.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -2).isActive = true
+
+                        // ── Pane group (collapsible) ──
+                        if !isSplitCollapsed && isTabActive {
+                            let splitGroup = NSView()
+                            splitGroup.translatesAutoresizingMaskIntoConstraints = false
+                            splitGroup.wantsLayer = true
+                            splitGroup.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.05).cgColor
+                            splitGroup.layer?.cornerRadius = 8
+                            splitGroup.layer?.cornerCurve = .continuous
+
+                            let splitStack = NSStackView()
+                            splitStack.orientation = .vertical
+                            splitStack.spacing = 0
+                            splitStack.alignment = .leading
+                            splitStack.translatesAutoresizingMaskIntoConstraints = false
+                            splitGroup.addSubview(splitStack)
+
+                            NSLayoutConstraint.activate([
+                                splitStack.leadingAnchor.constraint(equalTo: splitGroup.leadingAnchor),
+                                splitStack.trailingAnchor.constraint(equalTo: splitGroup.trailingAnchor),
+                                splitStack.topAnchor.constraint(equalTo: splitGroup.topAnchor, constant: 4),
+                                splitStack.bottomAnchor.constraint(equalTo: splitGroup.bottomAnchor, constant: -4),
+                            ])
+
+                            for paneView in tab.splitContainer.allLeafViews {
+                                let isFocused = paneView === tab.focusedPane
+                                let capturedPane = paneView
+
+                                let focusAction: () -> Void = { [weak self] in
+                                    self?.workspaceManager.switchTo(index: capturedWsIndex)
+                                    tab.focusedPane = capturedPane
+                                    tab.splitContainer.focusedPane = capturedPane
+                                    workspace.selectTab(capturedTabIndex)
+                                    self?.reloadWorkspaces()
+                                }
+
+                                if let terminal = paneView as? TerminalSurface,
+                                   terminal.detectedProgram != nil || terminal.outputPreview != nil {
+                                    let card = makePaneActivityCard(
+                                        terminal: terminal,
+                                        isFocused: isFocused,
+                                        onClick: focusAction
+                                    )
+                                    splitStack.addArrangedSubview(card)
+                                    card.leadingAnchor.constraint(equalTo: splitStack.leadingAnchor).isActive = true
+                                    card.trailingAnchor.constraint(equalTo: splitStack.trailingAnchor).isActive = true
+                                } else {
+                                    let (paneIcon, paneTitle) = WorkspaceTab.paneLabel(for: paneView)
+                                    let paneRow = SidebarRow(height: 28)
+                                    paneRow.configure { view in
+                                        let tc = isFocused ? NSColor(white: 0.85, alpha: 1.0) : NSColor(white: 0.45, alpha: 1.0)
+
+                                        let icon = NSImageView()
+                                        let iconCfg = NSImage.SymbolConfiguration(pointSize: 10, weight: isFocused ? .semibold : .regular)
+                                        icon.image = NSImage(systemSymbolName: paneIcon, accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
+                                        icon.contentTintColor = isFocused ? NSColor.controlAccentColor : tc
+                                        icon.imageScaling = .scaleProportionallyDown
+                                        view.addSub(icon, leading: 14, centerY: true, width: 14, height: 14)
+
+                                        let title = NSTextField(labelWithString: paneTitle)
+                                        title.font = .systemFont(ofSize: 11, weight: isFocused ? .medium : .regular)
+                                        title.textColor = tc
+                                        title.lineBreakMode = .byTruncatingTail
+                                        view.addSub(title, leading: 32, centerY: true, trailingOffset: 10)
+                                    }
+
+                                    paneRow.bgHover = NSColor(white: 1.0, alpha: 0.04)
+                                    paneRow.cornerRadius = 6
+                                    paneRow.onClick = { _ in focusAction() }
+
+                                    splitStack.addArrangedSubview(paneRow)
+                                    paneRow.leadingAnchor.constraint(equalTo: splitStack.leadingAnchor).isActive = true
+                                    paneRow.trailingAnchor.constraint(equalTo: splitStack.trailingAnchor).isActive = true
+                                }
+                            }
+
+                            wsStack.addArrangedSubview(splitGroup)
+                            splitGroup.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 2).isActive = true
+                            splitGroup.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -2).isActive = true
+                        }
+
+                    } else if hasActivity, let terminal {
+                        // ── Rich terminal activity card (non-split) ──
                         let card = makeTerminalActivityCard(
                             terminal: terminal,
                             isActive: isTabActive,
@@ -409,10 +588,10 @@ class SidebarView: NSView {
                             workspace: workspace
                         )
                         wsStack.addArrangedSubview(card)
-                        card.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 4).isActive = true
-                        card.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -4).isActive = true
+                        card.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 2).isActive = true
+                        card.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -2).isActive = true
                     } else {
-                        // ── Standard tab row ──
+                        // ── Standard tab row (non-split) ──
                         let tabRow = SidebarRow(height: 32)
                         let tabCloseBtn = NSButton()
                         tabRow.configure { view in
@@ -431,15 +610,12 @@ class SidebarView: NSView {
                             }
                             view.addSub(icon, leading: 14, centerY: true, width: 16, height: 16)
 
-                            // Show split description or plain title
-                            let titleText = tab.isSplit ? tab.splitDescription : tab.title
-                            let title = NSTextField(labelWithString: titleText)
+                            let title = NSTextField(labelWithString: tab.title)
                             title.font = .systemFont(ofSize: 11, weight: isTabActive ? .medium : .regular)
                             title.textColor = tc
                             title.lineBreakMode = .byTruncatingTail
                             view.addSub(title, leading: 36, centerY: true, trailingOffset: 26)
 
-                            // Close button (hidden until hover)
                             tabCloseBtn.translatesAutoresizingMaskIntoConstraints = false
                             tabCloseBtn.bezelStyle = .texturedRounded
                             tabCloseBtn.isBordered = false
@@ -453,7 +629,6 @@ class SidebarView: NSView {
                             tabCloseBtn.identifier = NSUserInterfaceItemIdentifier("closeTab-\(capturedWsIndex)-\(capturedTabIndex)")
                             view.addSub(tabCloseBtn, trailing: 6, centerY: true, width: 20, height: 20)
 
-                            // Terminal activity mini-indicator (for non-active terminal tabs)
                             if let terminal, terminal.detectedProgram != nil {
                                 let statusDot = NSView()
                                 statusDot.translatesAutoresizingMaskIntoConstraints = false
@@ -468,22 +643,13 @@ class SidebarView: NSView {
                                     statusDot.heightAnchor.constraint(equalToConstant: 6),
                                 ])
                             }
-
-                            // Split icon indicator
-                            if tab.isSplit {
-                                let splitIcon = NSImageView()
-                                let sCfg = NSImage.SymbolConfiguration(pointSize: 8, weight: .medium)
-                                splitIcon.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: nil)?.withSymbolConfiguration(sCfg)
-                                splitIcon.contentTintColor = NSColor.controlAccentColor.withAlphaComponent(0.6)
-                                view.addSub(splitIcon, trailing: 26, centerY: true, width: 12, height: 12)
-                            }
                         }
 
-                        tabRow.bgActive = isTabActive ? NSColor.controlAccentColor.withAlphaComponent(0.12) : nil
-                        tabRow.borderColor = isTabActive ? NSColor.controlAccentColor.withAlphaComponent(0.35) : nil
-                        tabRow.bgHover = NSColor(white: 1.0, alpha: 0.06)
+                        if isTabActive {
+                            tabRow.bgActive = NSColor(red: 0.0, green: 0.48, blue: 1.0, alpha: 1.0)
+                        }
+                        tabRow.bgHover = NSColor(white: 1.0, alpha: 0.04)
                         tabRow.cornerRadius = 6
-                        tabRow.showAccentBar = isTabActive
                         tabRow.onHoverChange = { hovering in
                             NSAnimationContext.runAnimationGroup { ctx in
                                 ctx.duration = 0.15
@@ -503,6 +669,7 @@ class SidebarView: NSView {
                             self?.showTabContextMenu(workspace: workspace, wsIndex: capturedWsIndex, tabIndex: capturedTabIndex, event: event)
                         }
                         tabRow.onDragBegan = { [weak self] point in
+                            self?.isDraggingTab = true
                             self?.onDragTabBegan?(capturedWsIndex, capturedTabIndex)
                         }
                         tabRow.onDragMoved = { [weak self] point in
@@ -510,70 +677,13 @@ class SidebarView: NSView {
                         }
                         tabRow.onDragEnded = { [weak self] point in
                             self?.onDragTabEnded?(capturedWsIndex, capturedTabIndex, point)
+                            self?.isDraggingTab = false
+                            self?.setNeedsReload()
                         }
 
                         wsStack.addArrangedSubview(tabRow)
-                        tabRow.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 4).isActive = true
-                        tabRow.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -4).isActive = true
-                    }
-
-                    // ── Pane sub-rows for split tabs ──
-                    if tab.isSplit && isTabActive {
-                        for paneView in tab.splitContainer.allLeafViews {
-                            let (paneIcon, paneTitle) = WorkspaceTab.paneLabel(for: paneView)
-                            let isFocused = paneView === tab.focusedPane
-                            let paneRow = SidebarRow(height: 26)
-                            paneRow.configure { view in
-                                let tc = isFocused ? NSColor(white: 0.8, alpha: 1.0) : NSColor(white: 0.45, alpha: 1.0)
-
-                                let icon = NSImageView()
-                                let iconCfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .regular)
-                                icon.image = NSImage(systemSymbolName: paneIcon, accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
-                                icon.contentTintColor = tc
-                                view.addSub(icon, leading: 30, centerY: true, width: 14, height: 14)
-
-                                let title = NSTextField(labelWithString: paneTitle)
-                                title.font = .systemFont(ofSize: 11)
-                                title.textColor = tc
-                                title.lineBreakMode = .byTruncatingTail
-                                view.addSub(title, leading: 48, centerY: true, trailingOffset: 10)
-
-                                if isFocused {
-                                    let dot = NSView()
-                                    dot.translatesAutoresizingMaskIntoConstraints = false
-                                    dot.wantsLayer = true
-                                    dot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-                                    dot.layer?.cornerRadius = 2
-                                    view.addSubview(dot)
-                                    NSLayoutConstraint.activate([
-                                        dot.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 22),
-                                        dot.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-                                        dot.widthAnchor.constraint(equalToConstant: 4),
-                                        dot.heightAnchor.constraint(equalToConstant: 4),
-                                    ])
-                                }
-                            }
-
-                            paneRow.bgActive = isFocused ? NSColor(white: 1.0, alpha: 0.05) : nil
-                            paneRow.bgHover = NSColor(white: 1.0, alpha: 0.03)
-                            paneRow.cornerRadius = 6
-
-                            let capturedPane = paneView
-                            paneRow.onClick = { [weak self] _ in
-                                self?.workspaceManager.switchTo(index: capturedWsIndex)
-                                workspace.selectTab(capturedTabIndex)
-                                tab.focusedPane = capturedPane
-                                tab.splitContainer.focusedPane = capturedPane
-                                if let terminal = capturedPane as? TerminalSurface {
-                                    terminal.window?.makeFirstResponder(terminal)
-                                }
-                                self?.reloadWorkspaces()
-                            }
-
-                            wsStack.addArrangedSubview(paneRow)
-                            paneRow.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 12).isActive = true
-                            paneRow.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -4).isActive = true
-                        }
+                        tabRow.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 2).isActive = true
+                        tabRow.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -2).isActive = true
                     }
 
                     // ── File explorer inline for active project tab ──
@@ -716,8 +826,8 @@ class SidebarView: NSView {
 
             // Add workspace group to main stack
             stackView.addArrangedSubview(wsGroup)
-            wsGroup.leadingAnchor.constraint(equalTo: stackView.leadingAnchor, constant: 4).isActive = true
-            wsGroup.trailingAnchor.constraint(equalTo: stackView.trailingAnchor, constant: -4).isActive = true
+            wsGroup.leadingAnchor.constraint(equalTo: stackView.leadingAnchor).isActive = true
+            wsGroup.trailingAnchor.constraint(equalTo: stackView.trailingAnchor).isActive = true
         }
     }
 
@@ -731,18 +841,14 @@ class SidebarView: NSView {
         tabIndex: Int,
         workspace: Workspace
     ) -> NSView {
-        let card = NSView()
+        let card: NSView = isActive ? OpaqueCardView() : NSView()
         card.translatesAutoresizingMaskIntoConstraints = false
         card.wantsLayer = true
-        card.layer?.backgroundColor = isActive
-            ? NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor
-            : NSColor(white: 1.0, alpha: 0.08).cgColor
+        if isActive {
+            card.layer?.backgroundColor = NSColor(red: 0.0, green: 0.48, blue: 1.0, alpha: 1.0).cgColor
+        }
         card.layer?.cornerRadius = 8
         card.layer?.cornerCurve = .continuous
-        if isActive {
-            card.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.35).cgColor
-            card.layer?.borderWidth = 1.0
-        }
 
         let programName = terminal.detectedProgram ?? "Terminal"
         
@@ -761,17 +867,17 @@ class SidebarView: NSView {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         let iconCfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .bold)
         iconView.image = NSImage(systemSymbolName: terminal.programIcon, accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
-        iconView.contentTintColor = isActive ? NSColor(white: 0.9, alpha: 1.0) : NSColor(white: 0.6, alpha: 1.0)
+        iconView.contentTintColor = isActive ? .white : NSColor(white: 0.6, alpha: 1.0)
         card.addSubview(iconView)
 
         let titleLabel = NSTextField(labelWithString: programName)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        titleLabel.textColor = isActive ? NSColor(white: 0.95, alpha: 1.0) : NSColor(white: 0.7, alpha: 1.0)
+        titleLabel.textColor = isActive ? .white : NSColor(white: 0.7, alpha: 1.0)
         titleLabel.lineBreakMode = .byTruncatingTail
         card.addSubview(titleLabel)
 
-        // Close button
+        // Close button (hidden until hover)
         let closeBtn = NSButton()
         closeBtn.translatesAutoresizingMaskIntoConstraints = false
         closeBtn.bezelStyle = .texturedRounded
@@ -779,7 +885,8 @@ class SidebarView: NSView {
         closeBtn.title = ""
         let closeCfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
         closeBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")?.withSymbolConfiguration(closeCfg)
-        closeBtn.contentTintColor = NSColor(white: 0.6, alpha: 1.0)
+        closeBtn.contentTintColor = isActive ? NSColor(white: 1.0, alpha: 0.8) : NSColor(white: 0.6, alpha: 1.0)
+        closeBtn.alphaValue = 0
         closeBtn.target = self
         closeBtn.action = #selector(closeTabButtonTapped(_:))
         closeBtn.identifier = NSUserInterfaceItemIdentifier("closeTab-\(wsIndex)-\(tabIndex)")
@@ -826,10 +933,10 @@ class SidebarView: NSView {
             let statusLabel = NSTextField(labelWithString: statusText)
             statusLabel.translatesAutoresizingMaskIntoConstraints = false
             statusLabel.font = .systemFont(ofSize: 10, weight: .medium)
-            statusLabel.textColor = statusColor
+            statusLabel.textColor = isActive ? NSColor(white: 1.0, alpha: 0.85) : statusColor
             statusLabel.lineBreakMode = .byTruncatingTail
             card.addSubview(statusLabel)
-            
+
             NSLayoutConstraint.activate([
                 statusLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
                 statusLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
@@ -843,7 +950,7 @@ class SidebarView: NSView {
             let previewLabel = NSTextField(labelWithString: preview)
             previewLabel.translatesAutoresizingMaskIntoConstraints = false
             previewLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-            previewLabel.textColor = NSColor(white: 0.55, alpha: 1.0)
+            previewLabel.textColor = isActive ? NSColor(white: 1.0, alpha: 0.7) : NSColor(white: 0.55, alpha: 1.0)
             previewLabel.lineBreakMode = .byTruncatingTail
             previewLabel.maximumNumberOfLines = 3
             previewLabel.cell?.wraps = true
@@ -878,7 +985,7 @@ class SidebarView: NSView {
             let infoLabel = NSTextField(labelWithString: infoText)
             infoLabel.translatesAutoresizingMaskIntoConstraints = false
             infoLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-            infoLabel.textColor = NSColor(white: 0.50, alpha: 1.0)
+            infoLabel.textColor = isActive ? NSColor(white: 1.0, alpha: 0.7) : NSColor(white: 0.50, alpha: 1.0)
             infoLabel.lineBreakMode = .byTruncatingTail
             card.addSubview(infoLabel)
 
@@ -898,11 +1005,162 @@ class SidebarView: NSView {
         // (gesture recognizers swallow clicks on child buttons)
         let clickCard = ClickableCardView(wrapping: card)
         clickCard.translatesAutoresizingMaskIntoConstraints = false
+        clickCard.onHoverChange = { hovering in
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.15
+                closeBtn.animator().alphaValue = hovering ? 1.0 : 0.0
+            }
+        }
         clickCard.onClick = { [weak self] in
             self?.workspaceManager.switchTo(index: wsIndex)
             self?.workspaceManager.workspaces[wsIndex].selectTab(tabIndex)
             self?.reloadWorkspaces()
         }
+        clickCard.onDragBegan = { [weak self] point in
+            self?.isDraggingTab = true
+            self?.onDragTabBegan?(wsIndex, tabIndex)
+        }
+        clickCard.onDragMoved = { [weak self] point in
+            self?.onDragTabMoved?(wsIndex, tabIndex, point)
+        }
+        clickCard.onDragEnded = { [weak self] point in
+            self?.onDragTabEnded?(wsIndex, tabIndex, point)
+            self?.isDraggingTab = false
+            self?.setNeedsReload()
+        }
+
+        return clickCard
+    }
+
+    // MARK: - Split Pane Activity Card
+
+    /// Compact activity view for a terminal pane within a split tab.
+    /// No background chrome — just icon, title, status, and preview with indentation.
+    private func makePaneActivityCard(
+        terminal: TerminalSurface,
+        isFocused: Bool,
+        onClick: @escaping () -> Void
+    ) -> NSView {
+        let card = NSView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.wantsLayer = true
+
+        let programName = terminal.detectedProgram ?? "Terminal"
+        let vPad: CGFloat = 4
+        let leading: CGFloat = 14
+
+        // ── Icon + title row ──
+        let iconView = NSImageView()
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        let iconCfg = NSImage.SymbolConfiguration(pointSize: 10, weight: isFocused ? .semibold : .regular)
+        iconView.image = NSImage(systemSymbolName: terminal.programIcon, accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
+        iconView.contentTintColor = isFocused ? NSColor.controlAccentColor : NSColor(white: 0.50, alpha: 1.0)
+        card.addSubview(iconView)
+
+        let titleLabel = NSTextField(labelWithString: programName)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = .systemFont(ofSize: 11, weight: isFocused ? .medium : .regular)
+        titleLabel.textColor = isFocused ? NSColor(white: 0.85, alpha: 1.0) : NSColor(white: 0.50, alpha: 1.0)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        card.addSubview(titleLabel)
+
+        var constraints: [NSLayoutConstraint] = [
+            iconView.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: leading),
+            iconView.topAnchor.constraint(equalTo: card.topAnchor, constant: vPad),
+            iconView.widthAnchor.constraint(equalToConstant: 14),
+            iconView.heightAnchor.constraint(equalToConstant: 14),
+
+            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
+            titleLabel.centerYAnchor.constraint(equalTo: iconView.centerYAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -8),
+        ]
+
+        var lastBottom = iconView.bottomAnchor
+        let infoLeading: CGFloat = leading + 20  // align under title text
+
+        // ── Claude Code status ──
+        if terminal.detectedProgram == "Claude Code", let claudeState = terminal.claudeCodeState {
+            let statusText: String
+            let statusColor: NSColor
+
+            switch claudeState {
+            case .thinking:
+                statusText = "Thinking..."
+                statusColor = NSColor(red: 1.0, green: 0.8, blue: 0.4, alpha: 1.0)
+            case .doneWithTask:
+                statusText = "Done with task."
+                statusColor = NSColor(red: 0.4, green: 0.8, blue: 0.4, alpha: 1.0)
+            case .awaitingSelection:
+                statusText = "Awaiting selection..."
+                statusColor = NSColor(red: 0.4, green: 0.7, blue: 1.0, alpha: 1.0)
+            case .awaitingPermission:
+                statusText = "Awaiting permission..."
+                statusColor = NSColor(red: 1.0, green: 0.6, blue: 0.4, alpha: 1.0)
+            }
+
+            let statusLabel = NSTextField(labelWithString: statusText)
+            statusLabel.translatesAutoresizingMaskIntoConstraints = false
+            statusLabel.font = .systemFont(ofSize: 10, weight: .medium)
+            statusLabel.textColor = statusColor
+            statusLabel.lineBreakMode = .byTruncatingTail
+            card.addSubview(statusLabel)
+
+            constraints.append(contentsOf: [
+                statusLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: infoLeading),
+                statusLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
+                statusLabel.topAnchor.constraint(equalTo: lastBottom, constant: 2),
+            ])
+            lastBottom = statusLabel.bottomAnchor
+        }
+
+        // ── Output preview (2 lines max) ──
+        let rawPreview = terminal.lastNotification ?? terminal.outputPreview
+        let preview = (terminal.activityState == .idle) ? nil : rawPreview
+        if let preview, !preview.isEmpty {
+            let previewLabel = NSTextField(labelWithString: preview)
+            previewLabel.translatesAutoresizingMaskIntoConstraints = false
+            previewLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+            previewLabel.textColor = NSColor(white: 0.40, alpha: 1.0)
+            previewLabel.lineBreakMode = .byTruncatingTail
+            previewLabel.maximumNumberOfLines = 2
+            previewLabel.cell?.wraps = true
+            previewLabel.cell?.truncatesLastVisibleLine = true
+            card.addSubview(previewLabel)
+
+            constraints.append(contentsOf: [
+                previewLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: infoLeading),
+                previewLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
+                previewLabel.topAnchor.constraint(equalTo: lastBottom, constant: 2),
+            ])
+            lastBottom = previewLabel.bottomAnchor
+        }
+
+        // ── Git branch + path ──
+        let hasMeaningfulPath = terminal.shortPath != nil && terminal.shortPath != "~"
+        if let branch = terminal.gitBranch ?? (hasMeaningfulPath ? terminal.shortPath : nil) {
+            let infoLabel = NSTextField(labelWithString: branch)
+            infoLabel.translatesAutoresizingMaskIntoConstraints = false
+            infoLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+            infoLabel.textColor = NSColor(white: 0.35, alpha: 1.0)
+            infoLabel.lineBreakMode = .byTruncatingTail
+            card.addSubview(infoLabel)
+
+            constraints.append(contentsOf: [
+                infoLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: infoLeading),
+                infoLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
+                infoLabel.topAnchor.constraint(equalTo: lastBottom, constant: 2),
+            ])
+            lastBottom = infoLabel.bottomAnchor
+        }
+
+        // Pin bottom
+        constraints.append(lastBottom.constraint(equalTo: card.bottomAnchor, constant: -vPad))
+        NSLayoutConstraint.activate(constraints)
+
+        // ── Interaction ──
+        let clickCard = ClickableCardView(wrapping: card)
+        clickCard.translatesAutoresizingMaskIntoConstraints = false
+        clickCard.onClick = onClick
 
         return clickCard
     }
@@ -1089,6 +1347,14 @@ class SidebarView: NSView {
 
 class ClickableCardView: NSView {
     var onClick: (() -> Void)?
+    var onDragBegan: ((NSPoint) -> Void)?
+    var onDragMoved: ((NSPoint) -> Void)?
+    var onDragEnded: ((NSPoint) -> Void)?
+    var onHoverChange: ((Bool) -> Void)?
+
+    private var dragStartPoint: NSPoint = .zero
+    private var isDragging = false
+    private var hitButton = false  // true if mouseDown landed on a button
 
     init(wrapping inner: NSView) {
         super.init(frame: .zero)
@@ -1104,43 +1370,74 @@ class ClickableCardView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach { removeTrackingArea($0) }
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect], owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { onHoverChange?(true) }
+    override func mouseExited(with event: NSEvent) { onHoverChange?(false) }
+
     override func mouseDown(with event: NSEvent) {
-        // Check if click hit a button — if so, let it handle it
         let loc = convert(event.locationInWindow, from: nil)
-        if hitTestButton(at: loc) != nil {
+        hitButton = findButton(at: loc) != nil
+        if hitButton {
             super.mouseDown(with: event)
             return
         }
-        // Visual feedback
+        dragStartPoint = event.locationInWindow
+        isDragging = false
         subviews.first?.layer?.opacity = 0.8
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        if hitButton { return }
+        guard onDragBegan != nil else { return }
+        let dx = abs(event.locationInWindow.x - dragStartPoint.x)
+        // 20px threshold — same as SidebarRow, avoids accidental drags in a vertical list
+        if dx > 20 {
+            if !isDragging {
+                isDragging = true
+                subviews.first?.layer?.opacity = 0.5
+                onDragBegan?(event.locationInWindow)
+            }
+            onDragMoved?(event.locationInWindow)
+        }
     }
 
     override func mouseUp(with event: NSEvent) {
         subviews.first?.layer?.opacity = 1.0
-        let loc = convert(event.locationInWindow, from: nil)
-        if hitTestButton(at: loc) != nil {
+        if isDragging {
+            isDragging = false
+            onDragEnded?(event.locationInWindow)
+            return
+        }
+        if hitButton {
+            hitButton = false
             super.mouseUp(with: event)
             return
         }
+        let loc = convert(event.locationInWindow, from: nil)
         if bounds.contains(loc) {
             onClick?()
         }
     }
 
-    private func hitTestButton(at point: NSPoint) -> NSButton? {
-        func findButton(in view: NSView, point: NSPoint) -> NSButton? {
+    private func findButton(at point: NSPoint) -> NSButton? {
+        func search(in view: NSView, point: NSPoint) -> NSButton? {
             for sub in view.subviews {
                 let local = sub.convert(point, from: self)
                 if sub is NSButton && sub.bounds.contains(local) {
                     return sub as? NSButton
                 }
-                if let found = findButton(in: sub, point: point) {
+                if let found = search(in: sub, point: point) {
                     return found
                 }
             }
             return nil
         }
-        return findButton(in: self, point: point)
+        return search(in: self, point: point)
     }
 }
 
@@ -1243,7 +1540,13 @@ class SidebarRow: NSView {
     var onDragMoved: ((NSPoint) -> Void)?
     var onDragEnded: ((NSPoint) -> Void)?
 
-    var bgActive: NSColor? { didSet { layer?.backgroundColor = (bgActive ?? NSColor.clear).cgColor } }
+    override var allowsVibrancy: Bool { bgActive != nil ? false : super.allowsVibrancy }
+
+    var bgActive: NSColor? {
+        didSet {
+            layer?.backgroundColor = (bgActive ?? NSColor.clear).cgColor
+        }
+    }
     var bgHover: NSColor?
     var cornerRadius: CGFloat = 6 { didSet { layer?.cornerRadius = cornerRadius } }
     var borderColor: NSColor? {
@@ -1282,6 +1585,7 @@ class SidebarRow: NSView {
     private var dragStartY: CGFloat = 0
     private var dragStartPoint: NSPoint = .zero
     private var isDragToSplit = false
+    private var mouseDownConsumed = false
 
     init(height: CGFloat) {
         self.rowHeight = height
@@ -1317,19 +1621,25 @@ class SidebarRow: NSView {
         dragStartY = event.locationInWindow.y
         dragStartPoint = event.locationInWindow
         isDragToSplit = false
-        if event.clickCount == 2 { onDoubleClick?(); return }
+        mouseDownConsumed = false
+
+        if event.clickCount == 2 { mouseDownConsumed = true; onDoubleClick?(); return }
+
         // Defer onClick to mouseUp if drag callbacks are set (to avoid selecting while dragging)
         if onDragBegan == nil {
+            mouseDownConsumed = true
             onClick?(convert(event.locationInWindow, from: nil))
         }
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if mouseDownConsumed { return }
+
         let dx = event.locationInWindow.x - dragStartPoint.x
         let dy = event.locationInWindow.y - dragStartY
 
-        // Horizontal drag → drag-to-split (if handler set)
-        if onDragBegan != nil && abs(dx) > 6 {
+        // Drag-to-split: require 20px horizontal movement (sidebar is vertical, avoid accidental drags)
+        if onDragBegan != nil && abs(dx) > 20 {
             if !isDragToSplit {
                 isDragToSplit = true
                 layer?.opacity = 0.5
@@ -1339,7 +1649,7 @@ class SidebarRow: NSView {
             return
         }
 
-        // Vertical drag → reorder
+        // Vertical drag → reorder workspaces
         if abs(dy) > 8 { onDragReorder?(dy); dragStartY = event.locationInWindow.y }
     }
 
@@ -1348,10 +1658,11 @@ class SidebarRow: NSView {
             layer?.opacity = 1.0
             isDragToSplit = false
             onDragEnded?(event.locationInWindow)
-        } else if onDragBegan != nil {
-            // Deferred click (when drag handlers are set)
+        } else if !mouseDownConsumed && onDragBegan != nil {
+            // Deferred click (when drag handlers are set but no drag occurred)
             onClick?(convert(event.locationInWindow, from: nil))
         }
+        mouseDownConsumed = false
     }
 
     override func rightMouseDown(with event: NSEvent) { onRightClick?(event) }
@@ -1450,6 +1761,12 @@ class ExplorerResizeHandle: NSView {
             indicator.animator().layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.0).cgColor
         }
     }
+}
+
+// MARK: - Opaque Card View (opts out of NSVisualEffectView vibrancy)
+
+class OpaqueCardView: NSView {
+    override var allowsVibrancy: Bool { false }
 }
 
 // MARK: - Flipped Clip View (pins content to top)

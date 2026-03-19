@@ -60,26 +60,37 @@ class SplitDropZoneView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// Show the drop zones.
-    func show() {
+    /// Show the drop zones. Uses instant display during drag for responsiveness.
+    func show(animated: Bool = false) {
         isHidden = false
-        alphaValue = 0
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.15
-            animator().alphaValue = 1
+        if animated {
+            alphaValue = 0
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.1
+                animator().alphaValue = 1
+            }
+        } else {
+            alphaValue = 1
         }
     }
 
     /// Hide the drop zones.
-    func hide() {
-        NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.12
-            animator().alphaValue = 0
-        }, completionHandler: {
-            self.isHidden = true
-            self.activeZone = .none
-            self.targetPane = nil
-        })
+    func hide(animated: Bool = false) {
+        if animated {
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.08
+                animator().alphaValue = 0
+            }, completionHandler: {
+                self.isHidden = true
+                self.activeZone = .none
+                self.targetPane = nil
+            })
+        } else {
+            isHidden = true
+            alphaValue = 0
+            activeZone = .none
+            targetPane = nil
+        }
     }
 
     /// Reposition zones over a specific pane's frame (in our coordinate space).
