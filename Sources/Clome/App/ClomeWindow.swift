@@ -55,6 +55,7 @@ class ClomeWindow: NSWindow {
         self.backgroundColor = .clear
         self.isOpaque = false
         self.hasShadow = true
+        self.isReleasedWhenClosed = false
         self.center()
 
         setupLayout()

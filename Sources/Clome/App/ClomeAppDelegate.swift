@@ -1,7 +1,7 @@
 import AppKit
 
 @MainActor
-class ClomeAppDelegate: NSObject, NSApplicationDelegate {
+class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private(set) var mainWindow: ClomeWindow?
     private(set) var ghosttyApp: GhosttyAppManager?
     private var socketServer: SocketServer?
@@ -48,6 +48,9 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate {
 
         // Keyboard navigation
         keyboardHandler = KeyboardNavigationHandler(window: window)
+
+        // Nil out mainWindow when the window closes to avoid dangling references
+        window.delegate = self
 
         // Auto-save session state periodically
         autoSaveTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
@@ -108,6 +111,12 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         return true
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard (notification.object as? NSWindow) === mainWindow else { return }
+        debouncedSaveWork?.cancel()
+        mainWindow = nil
     }
 
     /// Schedule a save 2 seconds from now. Resets on each call so rapid changes batch into one save.
