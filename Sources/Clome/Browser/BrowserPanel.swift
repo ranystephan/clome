@@ -463,7 +463,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         // Using autoresizing masks instead of Auto Layout to avoid
         // conflicting with Web Inspector's internal NSSplitView.
         let navHeight: CGFloat = 40
-        let webFrame = CGRect(x: 0, y: navHeight, width: bounds.width, height: bounds.height - navHeight)
+        let webFrame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height - navHeight)
         if webView.frame != webFrame {
             webView.frame = webFrame
         }

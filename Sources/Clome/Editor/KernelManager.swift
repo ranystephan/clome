@@ -204,8 +204,9 @@ final class KernelManager {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: executable)
         proc.arguments = arguments
-        // Inherit PATH so venv pip can find git, compilers, etc.
-        proc.environment = ProcessInfo.processInfo.environment
+        // Use enriched PATH so venv pip can find git, compilers, etc.
+        // in Release builds where Finder provides a minimal PATH.
+        proc.environment = PythonEnvironmentManager.enrichedEnvironment()
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -274,7 +275,7 @@ final class KernelManager {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: pythonPath)
         proc.arguments = [bridgePath]
-        proc.environment = ProcessInfo.processInfo.environment.merging(
+        proc.environment = PythonEnvironmentManager.enrichedEnvironment().merging(
             ["PYTHONUNBUFFERED": "1"], uniquingKeysWith: { _, new in new }
         )
 

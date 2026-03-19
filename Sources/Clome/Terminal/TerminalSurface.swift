@@ -109,6 +109,9 @@ class TerminalSurface: NSView {
         if result, let surface {
             ghostty_surface_set_focus(surface, true)
         }
+        if result {
+            NotificationCenter.default.post(name: .terminalSurfaceFocused, object: self)
+        }
         return result
     }
 
@@ -769,35 +772,78 @@ class TerminalSurface: NSView {
     /// Detect Claude Code specific state from terminal output patterns.
     private func detectClaudeCodeState(lastLine: String, lines: [String]) -> ClaudeCodeState? {
         let lastFewLines = Array(lines.suffix(10)).joined(separator: " ").lowercased()
-        let recentLines = Array(lines.suffix(5)).joined(separator: " ").lowercased()
-        
+
         // Priority 1: Permission requests (highest priority)
         if lastFewLines.contains("do you want to allow claude to") ||
-           lastFewLines.contains("claude wants to") ||
-           (lastFewLines.contains("❯") && lastFewLines.contains("1.") && lastFewLines.contains("2.")) {
+           lastFewLines.contains("claude wants to") {
             return .awaitingPermission
         }
-        
-        // Priority 2: Selection prompts
-        if (lastFewLines.contains("enter to select") && lastFewLines.contains("↑/↓ to navigate")) ||
-           (lastFewLines.contains("❯") && lastFewLines.contains("1.") && !lastFewLines.contains("allow")) {
-            return .awaitingSelection
-        }
-        
-        // Priority 3: Active thinking - ONLY based on action words with ellipsis (most reliable)
+
+        // Priority 2: Active thinking - check before selection to avoid false positives
+        // when Claude is actively processing but output contains numbered lists
         if hasThinkingActionWords(lines) {
             return .thinking
         }
-        
-        // Priority 4: Done with task - if we see ⏺ recently and no active thinking
+
+        // Priority 3: Selection prompts - require explicit selection UI indicators
+        // or ❯ appearing as an inline selector on the same line as a numbered option
+        if lastFewLines.contains("enter to select") && lastFewLines.contains("↑/↓ to navigate") {
+            return .awaitingSelection
+        }
+        if hasSelectionMenu(lines) {
+            return .awaitingSelection
+        }
+
+        // Priority 4: Permission with numbered choices (e.g. "1. Allow  2. Deny")
+        if hasNumberedPermissionMenu(lines) {
+            return .awaitingPermission
+        }
+
+        // Priority 5: Done with task - if we see ⏺ recently and no active thinking
         let largerWindow = Array(lines.suffix(20)).joined(separator: " ")
-        if largerWindow.contains("⏺") && !hasThinkingActionWords(lines) {
+        if largerWindow.contains("⏺") {
             return .doneWithTask
         }
-        
+
         return nil
     }
     
+    /// Check if recent lines contain an actual selection menu (❯ as inline selector before a numbered option on the same line).
+    /// This avoids false positives from shell prompts (❯) appearing near unrelated numbered lists in Claude output.
+    private func hasSelectionMenu(_ lines: [String]) -> Bool {
+        for line in lines.suffix(10) {
+            let stripped = Self.stripAnsiCodes(line).trimmingCharacters(in: .whitespaces)
+            // Match lines like "❯ 1. Some option" or "  ❯ SomeChoice" - the ❯ is the cursor in a selection menu
+            if stripped.hasPrefix("❯") {
+                let afterCursor = stripped.dropFirst().trimmingCharacters(in: .whitespaces)
+                // Selection menu item: starts with a number+dot or is a non-empty choice
+                if afterCursor.range(of: #"^\d+\."#, options: .regularExpression) != nil {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /// Check for numbered permission/choice menus (e.g. "1. Allow  2. Deny" with ❯ on same or adjacent line).
+    private func hasNumberedPermissionMenu(_ lines: [String]) -> Bool {
+        let recent = Array(lines.suffix(8))
+        for (i, line) in recent.enumerated() {
+            let stripped = Self.stripAnsiCodes(line).lowercased()
+            if stripped.contains("❯") && stripped.contains("1.") && stripped.contains("2.") {
+                return true
+            }
+            // ❯ on one line, numbered options on adjacent lines
+            if stripped.contains("❯"), i + 1 < recent.count {
+                let next = Self.stripAnsiCodes(recent[i + 1]).lowercased()
+                if next.contains("1.") && (next.contains("allow") || next.contains("deny") || next.contains("yes") || next.contains("no")) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     /// Check for actual thinking action words (most reliable indicator)
     private func hasThinkingActionWords(_ lines: [String]) -> Bool {
         // ULTRA SIMPLE: just detect any ellipsis anywhere (what was working)
@@ -831,4 +877,5 @@ class TerminalSurface: NSView {
 extension Notification.Name {
     static let terminalSurfaceTitleChanged = Notification.Name("terminalSurfaceTitleChanged")
     static let terminalActivityChanged = Notification.Name("terminalActivityChanged")
+    static let terminalSurfaceFocused = Notification.Name("terminalSurfaceFocused")
 }

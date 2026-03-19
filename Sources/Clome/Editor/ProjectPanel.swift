@@ -13,8 +13,12 @@ class ProjectPanel: NSView {
     private var tabBar: NSView!
     private var tabScrollView: NSScrollView!
     private var tabStackView: NSStackView!
-    private var editorContainer: NSView!
+    private var splitContainer: PaneContainerView!
+    private var primarySlot: EditorSlot!
+    private weak var activeSlot: EditorSlot?
+    private var splitDropZone: SplitDropZoneView!
     private var welcomeLabel: NSTextField?
+    private var dragSourceTabIndex: Int = -1
 
     struct OpenFile {
         let path: String
@@ -88,11 +92,21 @@ class ProjectPanel: NSView {
         bottomBorder.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.06).cgColor
         tabBar.addSubview(bottomBorder)
 
-        // Editor container
-        editorContainer = NSView()
-        editorContainer.translatesAutoresizingMaskIntoConstraints = false
-        editorContainer.wantsLayer = true
-        addSubview(editorContainer)
+        // Split container with primary editor slot
+        primarySlot = EditorSlot()
+        activeSlot = primarySlot
+        splitContainer = PaneContainerView()
+        splitContainer.translatesAutoresizingMaskIntoConstraints = false
+        splitContainer.setRoot(primarySlot)
+        splitContainer.onClosePane = { [weak self] pane in
+            self?.handleSplitPaneClosed(pane)
+        }
+        addSubview(splitContainer)
+
+        // Drop zone overlay for drag-to-split (frame-based positioning)
+        splitDropZone = SplitDropZoneView()
+        splitDropZone.translatesAutoresizingMaskIntoConstraints = true
+        addSubview(splitDropZone)
 
         NSLayoutConstraint.activate([
             tabBar.topAnchor.constraint(equalTo: topAnchor),
@@ -115,10 +129,10 @@ class ProjectPanel: NSView {
             bottomBorder.bottomAnchor.constraint(equalTo: tabBar.bottomAnchor),
             bottomBorder.heightAnchor.constraint(equalToConstant: 1),
 
-            editorContainer.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
-            editorContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
-            editorContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
-            editorContainer.bottomAnchor.constraint(equalTo: bottomAnchor),
+            splitContainer.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
+            splitContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
+            splitContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
+            splitContainer.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
         showWelcome()
@@ -130,10 +144,10 @@ class ProjectPanel: NSView {
         label.font = .systemFont(ofSize: 14)
         label.textColor = NSColor(white: 0.4, alpha: 1.0)
         label.alignment = .center
-        editorContainer.addSubview(label)
+        primarySlot.addSubview(label)
         NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: editorContainer.centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: editorContainer.centerYAnchor),
+            label.centerXAnchor.constraint(equalTo: primarySlot.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: primarySlot.centerYAnchor),
         ])
         welcomeLabel = label
     }
@@ -196,23 +210,24 @@ class ProjectPanel: NSView {
         welcomeLabel?.removeFromSuperview()
         welcomeLabel = nil
 
-        editorContainer.subviews.forEach { $0.removeFromSuperview() }
-        let contentView = openFiles[index].panel
-        contentView.translatesAutoresizingMaskIntoConstraints = false
-        editorContainer.addSubview(contentView)
-        NSLayoutConstraint.activate([
-            contentView.leadingAnchor.constraint(equalTo: editorContainer.leadingAnchor),
-            contentView.trailingAnchor.constraint(equalTo: editorContainer.trailingAnchor),
-            contentView.topAnchor.constraint(equalTo: editorContainer.topAnchor),
-            contentView.bottomAnchor.constraint(equalTo: editorContainer.bottomAnchor),
-        ])
+        let panel = openFiles[index].panel
+
+        // Check if this panel is already visible in a split slot
+        if let slot = slotContaining(panel) {
+            activeSlot = slot
+            splitContainer.focusedPane = slot
+        } else {
+            // Show in the currently active slot
+            let slot = activeSlot ?? primarySlot!
+            slot.showPanel(panel)
+        }
 
         // Make the content the first responder
         DispatchQueue.main.async {
-            if let editor = contentView as? EditorPanel {
+            if let editor = panel as? EditorPanel {
                 editor.window?.makeFirstResponder(editor.editorView)
             } else {
-                contentView.window?.makeFirstResponder(contentView)
+                panel.window?.makeFirstResponder(panel)
             }
         }
 
@@ -220,6 +235,16 @@ class ProjectPanel: NSView {
         fileExplorer.activeFilePath = openFiles[index].path
 
         updateTabHighlights()
+    }
+
+    /// Find which EditorSlot (if any) currently displays the given panel.
+    private func slotContaining(_ panel: NSView) -> EditorSlot? {
+        for leaf in splitContainer.allLeafViews {
+            if let slot = leaf as? EditorSlot, slot.currentPanel === panel {
+                return slot
+            }
+        }
+        return nil
     }
 
     func closeFile(_ index: Int) {
@@ -259,13 +284,26 @@ class ProjectPanel: NSView {
             }
         }
 
+        // Remove panel from any split slot
+        if let slot = slotContaining(file.panel) {
+            if slot !== primarySlot && splitContainer.leafCount > 1 {
+                slot.clear()
+                splitContainer.removePaneAndCollapse(slot)
+                if activeSlot === slot {
+                    activeSlot = primarySlot
+                    splitContainer.focusedPane = primarySlot
+                }
+            } else {
+                slot.clear()
+            }
+        }
+
         file.editor?.editorView.cleanup()
         openFiles.remove(at: index)
 
         if openFiles.isEmpty {
             activeFileIndex = -1
             fileExplorer.activeFilePath = nil
-            editorContainer.subviews.forEach { $0.removeFromSuperview() }
             showWelcome()
         } else {
             selectFile(min(activeFileIndex, openFiles.count - 1))
@@ -334,6 +372,9 @@ class ProjectPanel: NSView {
             tab.onHoverChanged = { [weak self] hovered in
                 self?.updateSeparatorVisibility(hoveredIndex: hovered ? capturedIndex : nil)
             }
+            tab.onTabDragBegan = { [weak self] in self?.handleTabDragBegan(capturedIndex) }
+            tab.onTabDragMoved = { [weak self] point in self?.handleTabDragMoved(capturedIndex, windowPoint: point) }
+            tab.onTabDragEnded = { [weak self] point in self?.handleTabDragEnded(capturedIndex, windowPoint: point) }
             tabStackView.addArrangedSubview(tab)
         }
     }
@@ -355,15 +396,14 @@ class ProjectPanel: NSView {
     }
 
     private func closeOtherFiles(_ keepIndex: Int) {
-        _ = openFiles[keepIndex].path
         for i in stride(from: openFiles.count - 1, through: 0, by: -1) where i != keepIndex {
             openFiles[i].editor?.editorView.cleanup()
             openFiles.remove(at: i)
         }
+        collapseAllSplits()
         activeFileIndex = 0
         if openFiles.isEmpty {
             activeFileIndex = -1
-            editorContainer.subviews.forEach { $0.removeFromSuperview() }
             showWelcome()
         } else {
             selectFile(0)
@@ -374,15 +414,20 @@ class ProjectPanel: NSView {
     private func closeAllFiles() {
         for file in openFiles { file.editor?.editorView.cleanup() }
         openFiles.removeAll()
+        collapseAllSplits()
         activeFileIndex = -1
         fileExplorer.activeFilePath = nil
-        editorContainer.subviews.forEach { $0.removeFromSuperview() }
+        primarySlot.clear()
         showWelcome()
         rebuildTabBar()
     }
 
     private func closeFilesToRight(_ fromIndex: Int) {
         for i in stride(from: openFiles.count - 1, through: fromIndex + 1, by: -1) {
+            if let slot = slotContaining(openFiles[i].panel), slot !== primarySlot, splitContainer.leafCount > 1 {
+                slot.clear()
+                splitContainer.removePaneAndCollapse(slot)
+            }
             openFiles[i].editor?.editorView.cleanup()
             openFiles.remove(at: i)
         }
@@ -390,6 +435,40 @@ class ProjectPanel: NSView {
             selectFile(fromIndex)
         }
         rebuildTabBar()
+    }
+
+    /// Collapse all split panes back to a single primary slot.
+    private func collapseAllSplits() {
+        let allLeaves = splitContainer.allLeafViews.compactMap { $0 as? EditorSlot }
+        for slot in allLeaves where slot !== primarySlot {
+            slot.clear()
+            if splitContainer.leafCount > 1 {
+                splitContainer.removePaneAndCollapse(slot)
+            }
+        }
+        activeSlot = primarySlot
+        splitContainer.focusedPane = primarySlot
+    }
+
+    /// Handle a split pane being closed via its header close button.
+    private func handleSplitPaneClosed(_ pane: NSView) {
+        guard let slot = pane as? EditorSlot else { return }
+        if splitContainer.leafCount <= 1 {
+            // Only one pane left, don't close — just clear it
+            return
+        }
+        slot.clear()
+        splitContainer.removePaneAndCollapse(slot)
+        if activeSlot === slot {
+            activeSlot = splitContainer.allLeafViews.first as? EditorSlot ?? primarySlot
+            splitContainer.focusedPane = activeSlot
+        }
+        // Update active file based on what the new active slot shows
+        if let slot = activeSlot, let panel = slot.currentPanel,
+           let idx = openFiles.firstIndex(where: { $0.panel === panel }) {
+            activeFileIndex = idx
+        }
+        updateTabHighlights()
     }
 
     private func updateTabHighlights() {
@@ -419,6 +498,139 @@ class ProjectPanel: NSView {
             guard FileManager.default.fileExists(atPath: path) else { continue }
             openFile(path)
         }
+    }
+
+    // MARK: - Tab Drag to Split
+
+    private func handleTabDragBegan(_ tabIndex: Int) {
+        dragSourceTabIndex = tabIndex
+        // Position drop zone over the split container area
+        let containerFrame = splitContainer.convert(splitContainer.bounds, to: self)
+        splitDropZone.frame = containerFrame
+        splitDropZone.positionOverArea(frame: NSRect(origin: .zero, size: containerFrame.size))
+        splitDropZone.show()
+    }
+
+    private func handleTabDragMoved(_ tabIndex: Int, windowPoint: NSPoint) {
+        let containerFrame = splitContainer.convert(splitContainer.bounds, to: self)
+        let container = splitContainer!
+
+        // Check if hovering over a specific pane (when there are multiple)
+        if container.leafCount > 1 {
+            if let (pane, paneFrame) = container.paneAt(windowPoint: windowPoint) {
+                let frameInSelf = container.convert(paneFrame, to: self)
+                splitDropZone.frame = frameInSelf
+                splitDropZone.positionOverPane(pane, paneFrame: NSRect(origin: .zero, size: frameInSelf.size))
+                splitDropZone.updateHover(at: windowPoint)
+                return
+            }
+        }
+
+        // Single pane or outside any pane — show over entire area
+        splitDropZone.frame = containerFrame
+        splitDropZone.positionOverArea(frame: NSRect(origin: .zero, size: containerFrame.size))
+        splitDropZone.updateHover(at: windowPoint)
+    }
+
+    private func handleTabDragEnded(_ tabIndex: Int, windowPoint: NSPoint) {
+        let result = splitDropZone.dropResult
+        splitDropZone.hide()
+        dragSourceTabIndex = -1
+
+        guard let result = result,
+              let direction = result.zone.splitDirection else { return }
+
+        splitFileToNewPane(fileIndex: tabIndex, direction: direction, targetPane: result.targetPane)
+    }
+
+    /// Move a file into a new split pane.
+    private func splitFileToNewPane(fileIndex: Int, direction: SplitDirection, targetPane: NSView?) {
+        guard fileIndex >= 0, fileIndex < openFiles.count else { return }
+        let panel = openFiles[fileIndex].panel
+
+        // If this panel is already in a slot, remove it from that slot first
+        if let existingSlot = slotContaining(panel) {
+            existingSlot.clear()
+            // If the existing slot is empty and not the only pane, collapse it
+            if splitContainer.leafCount > 1 {
+                splitContainer.removePaneAndCollapse(existingSlot)
+                if activeSlot === existingSlot {
+                    activeSlot = primarySlot
+                }
+            }
+        }
+
+        let newSlot = EditorSlot()
+        newSlot.showPanel(panel)
+
+        if let target = targetPane {
+            splitContainer.split(view: target, with: newSlot, direction: direction)
+        } else {
+            let targetSlot = activeSlot ?? primarySlot!
+            splitContainer.split(view: targetSlot, with: newSlot, direction: direction)
+        }
+
+        activeSlot = newSlot
+        splitContainer.focusedPane = newSlot
+        activeFileIndex = fileIndex
+        updateTabHighlights()
+    }
+
+    // MARK: - Open File in Split
+
+    /// Open a file in a new split pane (used for LaTeX PDF preview, etc.)
+    func openFileInSplit(_ path: String, direction: SplitDirection) {
+        // Check if already open
+        if let existingIndex = openFiles.firstIndex(where: { $0.path == path }) {
+            // If already in a split pane, just focus it
+            if let slot = slotContaining(openFiles[existingIndex].panel) {
+                activeSlot = slot
+                activeFileIndex = existingIndex
+                splitContainer.focusedPane = slot
+                updateTabHighlights()
+                rebuildTabBar()
+                return
+            }
+            // Otherwise split it out
+            splitFileToNewPane(fileIndex: existingIndex, direction: direction, targetPane: activeSlot ?? primarySlot)
+            rebuildTabBar()
+            return
+        }
+
+        // Open the file
+        let panel: NSView
+        let lowerPath = path.lowercased()
+        if lowerPath.hasSuffix(".pdf") {
+            let pdfPanel = PDFPanel()
+            pdfPanel.loadPDF(at: path)
+            panel = pdfPanel
+        } else if lowerPath.hasSuffix(".ipynb") {
+            let notebookPanel = NotebookPanel(projectDirectory: rootDirectory)
+            do {
+                try notebookPanel.loadNotebook(at: path)
+            } catch {
+                NSLog("Failed to open notebook: \(error)")
+                return
+            }
+            panel = notebookPanel
+        } else {
+            let editor = EditorPanel()
+            do {
+                try editor.openFile(path)
+            } catch {
+                NSLog("Failed to open file: \(error)")
+                return
+            }
+            editor.editorView.navigationDelegate = self
+            editor.compileDelegate = self
+            panel = editor
+        }
+
+        let file = OpenFile(path: path, panel: panel)
+        openFiles.append(file)
+        rebuildTabBar()
+
+        splitFileToNewPane(fileIndex: openFiles.count - 1, direction: direction, targetPane: activeSlot ?? primarySlot)
     }
 }
 
@@ -451,7 +663,7 @@ extension ProjectPanel: EditorViewNavigationDelegate {
 
 extension ProjectPanel: LatexCompileDelegate {
     func editorPanel(_ panel: EditorPanel, didCompileLatexToPDF pdfPath: String) {
-        openFile(pdfPath)
+        openFileInSplit(pdfPath, direction: .right)
     }
 }
 
@@ -548,12 +760,17 @@ class ProjectFileTab: NSView {
     var onRevealInFinder: (() -> Void)?
     var onCopyPath: (() -> Void)?
     var onHoverChanged: ((Bool) -> Void)?
+    var onTabDragBegan: (() -> Void)?
+    var onTabDragMoved: ((NSPoint) -> Void)?
+    var onTabDragEnded: ((NSPoint) -> Void)?
 
     private var isActiveTab: Bool
     private var isDirtyFile: Bool
     private var isHovered: Bool = false
     private let filePath: String
     let tabIndex: Int
+    private var dragStartPoint: NSPoint = .zero
+    private var isTabDragging: Bool = false
 
     private let iconView: NSImageView
     private let titleLabel: NSTextField
@@ -738,12 +955,32 @@ class ProjectFileTab: NSView {
     @objc private func closeTapped() { onClose?() }
 
     override func mouseDown(with event: NSEvent) {
+        dragStartPoint = event.locationInWindow
+        isTabDragging = false
         // Brief press feedback
         layer?.backgroundColor = pressedBg.cgColor
         onSelect?()
     }
 
+    override func mouseDragged(with event: NSEvent) {
+        let dx = abs(event.locationInWindow.x - dragStartPoint.x)
+        let dy = abs(event.locationInWindow.y - dragStartPoint.y)
+        if dx > 4 || dy > 4 {
+            if !isTabDragging {
+                isTabDragging = true
+                alphaValue = 0.5
+                onTabDragBegan?()
+            }
+            onTabDragMoved?(event.locationInWindow)
+        }
+    }
+
     override func mouseUp(with event: NSEvent) {
+        if isTabDragging {
+            alphaValue = 1.0
+            isTabDragging = false
+            onTabDragEnded?(event.locationInWindow)
+        }
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.1)
         layer?.backgroundColor = isActiveTab ? activeBg.cgColor : (isHovered ? hoverBg.cgColor : NSColor.clear.cgColor)
@@ -822,5 +1059,53 @@ class ProjectFileTab: NSView {
             CATransaction.commit()
         }
         updateCloseButtonVisibility()
+    }
+}
+
+// MARK: - Editor Slot (Split Pane Container)
+
+/// A lightweight container view that acts as a leaf in PaneContainerView.
+/// Holds one file panel (EditorPanel, PDFPanel, NotebookPanel) at a time,
+/// allowing the split layout to remain stable while swapping file content.
+class EditorSlot: NSView {
+    private(set) var currentPanel: NSView?
+
+    override init(frame: NSRect = .zero) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func showPanel(_ panel: NSView) {
+        if currentPanel === panel { return }
+        currentPanel?.removeFromSuperview()
+        currentPanel = panel
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(panel)
+        NSLayoutConstraint.activate([
+            panel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            panel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            panel.topAnchor.constraint(equalTo: topAnchor),
+            panel.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    func clear() {
+        currentPanel?.removeFromSuperview()
+        currentPanel = nil
+    }
+
+    /// Info for PaneHeaderBar display.
+    var headerInfo: (icon: String, title: String) {
+        guard let panel = currentPanel else { return ("square", "Empty") }
+        if let editor = panel as? EditorPanel {
+            return ("doc.text", editor.title)
+        } else if let pdf = panel as? PDFPanel {
+            return ("doc.richtext", pdf.title.isEmpty ? "PDF" : pdf.title)
+        } else if let notebook = panel as? NotebookPanel {
+            return ("book", notebook.title.isEmpty ? "Notebook" : notebook.title)
+        }
+        return ("doc", "File")
     }
 }

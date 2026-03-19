@@ -673,11 +673,41 @@ final class PythonEnvironmentManager {
 
     // MARK: - Process Helper
 
+    /// Build a rich PATH that includes common tool locations.
+    /// When launched from Finder (DMG), the inherited PATH is minimal
+    /// (/usr/bin:/bin:/usr/sbin:/sbin), missing Homebrew, conda, pyenv, etc.
+    static func enrichedEnvironment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let home = env["HOME"] ?? NSHomeDirectory()
+        let extraPaths = [
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+            "\(home)/.pyenv/shims",
+            "\(home)/.pyenv/bin",
+            "\(home)/.local/bin",
+            "\(home)/miniconda3/bin",
+            "\(home)/anaconda3/bin",
+            "\(home)/miniforge3/bin",
+            "\(home)/mambaforge/bin",
+            "/opt/miniconda3/bin",
+            "/opt/anaconda3/bin",
+        ]
+        let currentPath = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        let currentParts = Set(currentPath.components(separatedBy: ":"))
+        let newParts = extraPaths.filter { !currentParts.contains($0) }
+        if !newParts.isEmpty {
+            env["PATH"] = (newParts + [currentPath]).joined(separator: ":")
+        }
+        return env
+    }
+
     private static func runProcess(_ executable: String, args: [String], workingDirectory: String? = nil) throws -> (exitCode: Int32, stdout: String, stderr: String) {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: executable)
         proc.arguments = args
-        proc.environment = ProcessInfo.processInfo.environment
+        proc.environment = enrichedEnvironment()
         
         if let workingDir = workingDirectory {
             proc.currentDirectoryURL = URL(fileURLWithPath: workingDir)

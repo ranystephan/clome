@@ -23,6 +23,9 @@ class ClomeWindow: NSWindow {
     private var paneDragView: NSView?
     private let tabBarBgColor = NSColor(red: 0.13, green: 0.13, blue: 0.145, alpha: 0.6)
     private let outerEdgeMargin: CGFloat = 40
+    /// Throttle drop zone updates during drag (limit to ~60fps)
+    private var lastDropZoneUpdate: CFTimeInterval = 0
+    private let dropZoneUpdateInterval: CFTimeInterval = 1.0 / 60.0
 
     // Sidebar state
     enum SidebarMode { case pinned, compact, hidden }
@@ -357,6 +360,20 @@ class ClomeWindow: NSWindow {
             (NSApp.delegate as? ClomeAppDelegate)?.scheduleSave()
         }
 
+        // Lightweight callback — only a tab's title changed (no view rebuild)
+        workspace.onTabTitleChanged = { [weak self] index, tab in
+            guard self?.workspaceManager.activeWorkspace === workspace else { return }
+            let icon = (tab.view as? TerminalSurface)?.programIcon ?? tab.type.icon
+            self?.tabBarView.updateTabTitle(
+                at: index,
+                title: tab.title,
+                icon: icon,
+                isSplit: tab.isSplit,
+                splitDescription: tab.splitDescription
+            )
+            self?.sidebarView?.setNeedsReload()
+        }
+
         wirePaneDragCallbacks()
         updateTabBar()
     }
@@ -611,6 +628,17 @@ extension ClomeWindow: @preconcurrency WorkspaceTabBarDelegate {
     /// When the cursor is near the outer edges of the content area and there are multiple panes,
     /// shows root-level drop zones (full content area). Otherwise, shows per-pane drop zones.
     private func showPerPaneDropZones(at windowPoint: NSPoint) {
+        // Throttle updates to avoid excessive coordinate conversions during drag
+        let now = CACurrentMediaTime()
+        if now - lastDropZoneUpdate < dropZoneUpdateInterval {
+            // Still update hover on the existing drop zone (cheap operation)
+            if !splitDropZone.isHidden {
+                splitDropZone.updateHover(at: windowPoint)
+            }
+            return
+        }
+        lastDropZoneUpdate = now
+
         guard let tab = workspaceManager.activeWorkspace?.activeTab else { return }
         let container = tab.splitContainer
         let contentFrame = contentArea.convert(contentArea.bounds, to: splitDropZone.superview)
