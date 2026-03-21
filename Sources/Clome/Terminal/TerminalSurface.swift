@@ -55,6 +55,9 @@ class TerminalSurface: NSView {
     /// Per-surface working directory override. Set before the surface is added to a window.
     var restoreWorkingDirectory: String?
 
+    /// Claude Code session ID if this terminal was launched to resume a session.
+    var claudeSessionId: String?
+
     init(ghosttyApp: GhosttyAppManager) {
         self.ghosttyApp = ghosttyApp
         super.init(frame: .zero)

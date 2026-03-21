@@ -15,6 +15,12 @@ class SidebarView: NSView {
     private var isShelfVisible = false
     private var shelfBtn: NSButton!
 
+    /// Claude sessions popover
+    private var sessionsBtn: NSButton!
+    private var sessionsPopover: NSPopover?
+    private var sessionsBtnIcon: NSImageView?
+    private var sessionsBtnLabel: NSTextField?
+
     /// Which workspaces are expanded
     private var expandedWorkspaces: Set<UUID> = []
 
@@ -113,6 +119,39 @@ class SidebarView: NSView {
         shelfBtn.image = NSImage(systemSymbolName: "tray.and.arrow.down.fill", accessibilityDescription: nil)?.withSymbolConfiguration(smallCfg)
         bottomBar.addSubview(shelfBtn)
 
+        // Claude sessions button — sparkles icon + "Claude" label
+        sessionsBtn = NSButton()
+        sessionsBtn.translatesAutoresizingMaskIntoConstraints = false
+        sessionsBtn.bezelStyle = .texturedRounded
+        sessionsBtn.isBordered = false
+        sessionsBtn.title = ""
+        sessionsBtn.target = self
+        sessionsBtn.action = #selector(sessionsToggleTapped)
+
+        let sparkleIcon = NSImageView(); sessionsBtnIcon = sparkleIcon
+        sparkleIcon.translatesAutoresizingMaskIntoConstraints = false
+        sparkleIcon.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Claude Sessions")?.withSymbolConfiguration(smallCfg)
+        sparkleIcon.contentTintColor = NSColor(red: 0.85, green: 0.55, blue: 0.35, alpha: 1.0) // Claude warm orange
+        sparkleIcon.imageScaling = .scaleProportionallyDown
+        sessionsBtn.addSubview(sparkleIcon)
+
+        let claudeLabel = NSTextField(labelWithString: "Claude"); sessionsBtnLabel = claudeLabel
+        claudeLabel.translatesAutoresizingMaskIntoConstraints = false
+        claudeLabel.font = .systemFont(ofSize: 10, weight: .semibold)
+        claudeLabel.textColor = NSColor(white: 1.0, alpha: 0.65)
+        sessionsBtn.addSubview(claudeLabel)
+
+        NSLayoutConstraint.activate([
+            sparkleIcon.leadingAnchor.constraint(equalTo: sessionsBtn.leadingAnchor, constant: 4),
+            sparkleIcon.centerYAnchor.constraint(equalTo: sessionsBtn.centerYAnchor),
+            sparkleIcon.widthAnchor.constraint(equalToConstant: 14),
+            sparkleIcon.heightAnchor.constraint(equalToConstant: 14),
+            claudeLabel.leadingAnchor.constraint(equalTo: sparkleIcon.trailingAnchor, constant: 3),
+            claudeLabel.centerYAnchor.constraint(equalTo: sessionsBtn.centerYAnchor),
+            claudeLabel.trailingAnchor.constraint(equalTo: sessionsBtn.trailingAnchor, constant: -4),
+        ])
+        bottomBar.addSubview(sessionsBtn)
+
         // ──── Layout ────
         scrollViewBottomConstraint = scrollView.bottomAnchor.constraint(equalTo: bottomBar.topAnchor)
 
@@ -162,6 +201,11 @@ class SidebarView: NSView {
             shelfBtn.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
             shelfBtn.widthAnchor.constraint(equalToConstant: 28),
             shelfBtn.heightAnchor.constraint(equalToConstant: 28),
+
+            // Claude sessions button next to shelf button
+            sessionsBtn.leadingAnchor.constraint(equalTo: shelfBtn.trailingAnchor, constant: 4),
+            sessionsBtn.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
+            sessionsBtn.heightAnchor.constraint(equalToConstant: 28),
         ])
     }
 
@@ -225,6 +269,95 @@ class SidebarView: NSView {
         }
     }
 
+    @objc private func sessionsToggleTapped() {
+        toggleSessionsPopover()
+    }
+
+    /// Toggle the Claude sessions popover anchored to the sessions button.
+    func toggleSessionsPopover() {
+        if let popover = sessionsPopover, popover.isShown {
+            popover.performClose(nil)
+            sessionsPopover = nil
+            sessionsBtnIcon?.contentTintColor = NSColor(red: 0.85, green: 0.55, blue: 0.35, alpha: 1.0)
+            sessionsBtnLabel?.textColor = NSColor(white: 1.0, alpha: 0.65)
+            return
+        }
+
+        sessionsBtnIcon?.contentTintColor = NSColor.controlAccentColor
+        sessionsBtnLabel?.textColor = NSColor.controlAccentColor
+
+        let listView = ClaudeSessionListView()
+        listView.translatesAutoresizingMaskIntoConstraints = false
+
+        // Wire up callbacks
+        listView.onResumeSession = { [weak self] session in
+            self?.launchClaudeSession(sessionId: session.id, projectPath: session.projectPath, fork: false)
+            self?.sessionsPopover?.performClose(nil)
+        }
+        listView.onForkSession = { [weak self] session in
+            self?.launchClaudeSession(sessionId: session.id, projectPath: session.projectPath, fork: true)
+            self?.sessionsPopover?.performClose(nil)
+        }
+        listView.onResumeInNewTab = { [weak self] session in
+            self?.launchClaudeSession(sessionId: session.id, projectPath: session.projectPath, fork: false)
+            self?.sessionsPopover?.performClose(nil)
+        }
+        listView.onSessionSelected = { [weak self] session in
+            self?.launchClaudeSession(sessionId: session.id, projectPath: session.projectPath, fork: false)
+            self?.sessionsPopover?.performClose(nil)
+        }
+        listView.onRenameSession = { session, name in
+            ClaudeSessionManager.shared.saveSessionName(session.id, name: name)
+            // Refresh the list to show updated name
+            let projectPath = self.workspaceManager.activeWorkspace?.workingDirectory ?? session.projectPath
+            let sessions = ClaudeSessionManager.shared.refreshSessions(forProject: projectPath)
+            listView.reloadSessions(sessions)
+        }
+        listView.onRefresh = { [weak self] in
+            guard let self else { return }
+            let projectPath = self.workspaceManager.activeWorkspace?.workingDirectory ?? ""
+            let sessions = ClaudeSessionManager.shared.refreshSessions(forProject: projectPath)
+            listView.reloadSessions(sessions)
+        }
+
+        // Load initial sessions for the current project
+        let projectPath = workspaceManager.activeWorkspace?.workingDirectory ?? ""
+        if !projectPath.isEmpty {
+            let sessions = ClaudeSessionManager.shared.discoverSessions(forProject: projectPath)
+            listView.reloadSessions(sessions)
+        } else {
+            // If no active working directory, show all sessions
+            let sessions = ClaudeSessionManager.shared.discoverAllSessions()
+            listView.reloadSessions(sessions)
+        }
+
+        let vc = NSViewController()
+        let effectView = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 300, height: 400))
+        effectView.material = .popover
+        effectView.blendingMode = .behindWindow
+        effectView.state = .active
+        vc.view = effectView
+
+        listView.translatesAutoresizingMaskIntoConstraints = true
+        listView.frame = effectView.bounds
+        listView.autoresizingMask = [.width, .height]
+        effectView.addSubview(listView)
+
+        let popover = NSPopover()
+        popover.contentSize = NSSize(width: 300, height: 400)
+        popover.behavior = .transient
+        popover.contentViewController = vc
+        popover.delegate = self
+        popover.show(relativeTo: sessionsBtn.bounds, of: sessionsBtn, preferredEdge: .maxY)
+        sessionsPopover = popover
+    }
+
+    private func launchClaudeSession(sessionId: String, projectPath: String, fork: Bool) {
+        guard let workspace = workspaceManager.activeWorkspace else { return }
+        workspace.addClaudeSessionTab(sessionId: sessionId, workingDirectory: projectPath, fork: fork)
+        reloadWorkspaces()
+    }
+
     private func showFileShelf() {
         guard fileShelfView == nil else { return }
         isShelfVisible = true
@@ -286,7 +419,7 @@ class SidebarView: NSView {
         guard !reloadScheduled else { return }
         reloadScheduled = true
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, self.reloadScheduled else { return }
             self.reloadScheduled = false
             self.reloadWorkspaces()
         }
@@ -318,6 +451,10 @@ class SidebarView: NSView {
                 expandedWorkspaces.insert(ws.id)
             }
         }
+
+        // Preserve scroll position across rebuild
+        let savedScrollY = scrollView.contentView.bounds.origin.y
+
         stackView.arrangedSubviews.forEach { stackView.removeArrangedSubview($0); $0.removeFromSuperview() }
 
         for (wsIndex, workspace) in workspaceManager.workspaces.enumerated() {
@@ -829,6 +966,10 @@ class SidebarView: NSView {
             wsGroup.leadingAnchor.constraint(equalTo: stackView.leadingAnchor).isActive = true
             wsGroup.trailingAnchor.constraint(equalTo: stackView.trailingAnchor).isActive = true
         }
+
+        // Restore scroll position after rebuild
+        stackView.layoutSubtreeIfNeeded()
+        scrollView.contentView.setBoundsOrigin(NSPoint(x: 0, y: savedScrollY))
     }
 
     // MARK: - Terminal Activity Card
@@ -1340,6 +1481,16 @@ class SidebarView: NSView {
         } else if delta > 20 && index < workspaceManager.workspaces.count - 1 {
             workspaceManager.moveWorkspace(from: index, to: index + 1); reloadWorkspaces()
         }
+    }
+}
+
+// MARK: - NSPopoverDelegate
+
+extension SidebarView: NSPopoverDelegate {
+    func popoverDidClose(_ notification: Notification) {
+        sessionsPopover = nil
+        sessionsBtnIcon?.contentTintColor = NSColor(red: 0.85, green: 0.55, blue: 0.35, alpha: 1.0)
+        sessionsBtnLabel?.textColor = NSColor(white: 1.0, alpha: 0.65)
     }
 }
 
