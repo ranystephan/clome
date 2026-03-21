@@ -92,6 +92,18 @@ class SessionState {
             sqlite3_exec(db, sql, nil, nil, nil)
             upsert(key: "schema_version", value: "2")
         }
+        if version < 3 {
+            let sql = """
+            CREATE TABLE IF NOT EXISTS claude_sessions (
+                session_id TEXT PRIMARY KEY,
+                name TEXT,
+                pinned INTEGER NOT NULL DEFAULT 0,
+                last_opened REAL
+            )
+            """
+            sqlite3_exec(db, sql, nil, nil, nil)
+            upsert(key: "schema_version", value: "3")
+        }
     }
 
     // MARK: - Pinned Files
@@ -536,6 +548,113 @@ class SessionState {
             return [:]
         }
         return obj
+    }
+
+    // MARK: - Claude Sessions
+
+    /// Saves or updates a user-assigned name for a Claude session.
+    func saveClaudeSessionName(sessionId: String, name: String) {
+        guard db != nil else { return }
+        let sql = "INSERT INTO claude_sessions (session_id, name) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET name = excluded.name"
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (sessionId as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, (name as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            let rc = sqlite3_step(stmt)
+            if rc != SQLITE_DONE {
+                print("SessionState: saveClaudeSessionName failed: \(errorMessage())")
+            }
+            sqlite3_finalize(stmt)
+        }
+    }
+
+    /// Retrieves the user-assigned name for a Claude session, or nil if none.
+    func getClaudeSessionName(sessionId: String) -> String? {
+        guard db != nil else { return nil }
+        let sql = "SELECT name FROM claude_sessions WHERE session_id = ?"
+        var stmt: OpaquePointer?
+        var result: String?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (sessionId as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            if sqlite3_step(stmt) == SQLITE_ROW, let ptr = sqlite3_column_text(stmt, 0) {
+                result = String(cString: ptr)
+            }
+            sqlite3_finalize(stmt)
+        }
+        return result
+    }
+
+    /// Returns all saved Claude session metadata (name and pinned state).
+    func getAllClaudeSessionNames() -> [String: (name: String?, pinned: Bool)] {
+        guard db != nil else { return [:] }
+        var results: [String: (name: String?, pinned: Bool)] = [:]
+        let sql = "SELECT session_id, name, pinned FROM claude_sessions"
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let idPtr = sqlite3_column_text(stmt, 0) else { continue }
+                let sessionId = String(cString: idPtr)
+                let name: String?
+                if let namePtr = sqlite3_column_text(stmt, 1) {
+                    name = String(cString: namePtr)
+                } else {
+                    name = nil
+                }
+                let pinned = sqlite3_column_int(stmt, 2) != 0
+                results[sessionId] = (name: name, pinned: pinned)
+            }
+            sqlite3_finalize(stmt)
+        }
+        return results
+    }
+
+    /// Pins or unpins a Claude session.
+    func pinClaudeSession(sessionId: String, pinned: Bool) {
+        guard db != nil else { return }
+        let sql = "INSERT INTO claude_sessions (session_id, pinned) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET pinned = excluded.pinned"
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (sessionId as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_int(stmt, 2, pinned ? 1 : 0)
+            let rc = sqlite3_step(stmt)
+            if rc != SQLITE_DONE {
+                print("SessionState: pinClaudeSession failed: \(errorMessage())")
+            }
+            sqlite3_finalize(stmt)
+        }
+    }
+
+    /// Gets the last-opened timestamp for a Claude session.
+    func getClaudeSessionLastOpened(sessionId: String) -> Date? {
+        guard db != nil else { return nil }
+        let sql = "SELECT last_opened FROM claude_sessions WHERE session_id = ?"
+        var stmt: OpaquePointer?
+        var result: Date?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (sessionId as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            if sqlite3_step(stmt) == SQLITE_ROW {
+                let val = sqlite3_column_double(stmt, 0)
+                if val > 0 { result = Date(timeIntervalSince1970: val) }
+            }
+            sqlite3_finalize(stmt)
+        }
+        return result
+    }
+
+    /// Updates the last-opened timestamp for a Claude session to now.
+    func updateClaudeSessionLastOpened(sessionId: String) {
+        guard db != nil else { return }
+        let sql = "INSERT INTO claude_sessions (session_id, last_opened) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET last_opened = excluded.last_opened"
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (sessionId as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_double(stmt, 2, Date().timeIntervalSince1970)
+            let rc = sqlite3_step(stmt)
+            if rc != SQLITE_DONE {
+                print("SessionState: updateClaudeSessionLastOpened failed: \(errorMessage())")
+            }
+            sqlite3_finalize(stmt)
+        }
     }
 
     // MARK: - Helpers

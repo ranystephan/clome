@@ -369,6 +369,43 @@ class Workspace: Identifiable {
         onTabsChanged?()
     }
 
+    // MARK: - Claude Session
+
+    /// Launch a Claude Code session in a new terminal tab.
+    /// Wraps in a login shell so the user's PATH (including ~/.local/bin) is available.
+    @discardableResult
+    func addClaudeSessionTab(sessionId: String? = nil, workingDirectory: String? = nil, fork: Bool = false) -> WorkspaceTab? {
+        // Resolve the claude binary path. Prefer the user's installed location,
+        // fall back to just "claude" if the file doesn't exist for some reason.
+        let claudePath: String
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let localBin = (home as NSString).appendingPathComponent(".local/bin/claude")
+        if FileManager.default.fileExists(atPath: localBin) {
+            claudePath = localBin
+        } else {
+            // Fall back to launching through a login shell to pick up PATH
+            claudePath = "claude"
+        }
+
+        var args = claudePath
+        if let id = sessionId {
+            args += " --resume \(id)"
+            if fork { args += " --fork-session" }
+        } else {
+            args += " --continue"
+        }
+
+        // Wrap in the user's default shell as a login shell so environment is set up
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let command = "\(shell) -l -c '\(args)'"
+        let tab = addTerminalTab(workingDirectory: workingDirectory, restoreCommand: command)
+        // Tag the terminal with the session ID for workspace matching
+        if let terminal = tab?.view as? TerminalSurface {
+            terminal.claudeSessionId = sessionId
+        }
+        return tab
+    }
+
     // MARK: - Convenience (old API compatibility)
 
     func addSurface() {

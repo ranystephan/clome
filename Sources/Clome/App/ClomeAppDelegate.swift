@@ -171,6 +171,11 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         fileMenu.addItem(withTitle: "New Browser Tab", action: #selector(newBrowserTab(_:)), keyEquivalent: "t")
         fileMenu.items.last?.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(NSMenuItem.separator())
+        fileMenu.addItem(withTitle: "Resume Claude Session...", action: #selector(resumeClaudeSession(_:)), keyEquivalent: "r")
+        fileMenu.items.last?.keyEquivalentModifierMask = [.command, .shift]
+        fileMenu.addItem(withTitle: "Continue Last Claude Session", action: #selector(continueLastClaudeSession(_:)), keyEquivalent: "c")
+        fileMenu.items.last?.keyEquivalentModifierMask = [.command, .shift]
+        fileMenu.addItem(NSMenuItem.separator())
         fileMenu.addItem(withTitle: "Import Browser Data...", action: #selector(importBrowserData(_:)), keyEquivalent: "i")
         fileMenu.items.last?.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(NSMenuItem.separator())
@@ -268,6 +273,14 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func newBrowserTab(_ sender: Any?) {
         mainWindow?.workspaceManager.activeWorkspace?.addBrowserSurface()
+    }
+
+    @objc private func resumeClaudeSession(_ sender: Any?) {
+        mainWindow?.sidebarView?.toggleSessionsPopover()
+    }
+
+    @objc private func continueLastClaudeSession(_ sender: Any?) {
+        mainWindow?.workspaceManager.activeWorkspace?.addClaudeSessionTab()
     }
 
     @objc private func closeTab(_ sender: Any?) {
