@@ -25,6 +25,7 @@ final class BrowserImportWindowController: NSWindowController {
         )
         window.title = "Import Browser Data"
         window.isReleasedWhenClosed = false
+        window.isRestorable = false
         window.backgroundColor = NSColor(red: 0.055, green: 0.055, blue: 0.071, alpha: 1.0)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden

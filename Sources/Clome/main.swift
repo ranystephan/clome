@@ -2,6 +2,8 @@ import AppKit
 
 let app = NSApplication.shared
 
-let delegate = (ClomeAppDelegate.self as NSObject.Type).init() as! ClomeAppDelegate
+let delegate = MainActor.assumeIsolated {
+    ClomeAppDelegate()
+}
 app.delegate = delegate
 app.run()

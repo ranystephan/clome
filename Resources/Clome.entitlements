@@ -10,15 +10,36 @@
     - Passkey/WebAuthn support through system flow
     - Default browser registration capability
     -->
+
+    <!-- Allow debugger attachment during development (requires ad-hoc or dev signing) -->
     <key>com.apple.security.get-task-allow</key>
     <true/>
-    <key>com.apple.security.network.client</key>
+
+    <!-- Disable library validation so WKWebView's WebContent, GPU, and Networking
+         XPC service processes can load without code-signing conflicts.
+         Without this, the WebContent process may fail to launch or lose access
+         to pasteboard, launchservicesd, RunningBoard, audio, etc. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
-    <key>com.apple.security.files.user-selected.read-write</key>
+
+    <!-- Allow unsigned executable memory — needed by WebKit's JIT (JavaScriptCore) -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
-    <key>com.apple.security.files.downloads.read-write</key>
+
+    <!-- Allow JIT compilation — required by JavaScriptCore in WebContent process -->
+    <key>com.apple.security.cs.allow-jit</key>
     <true/>
-    <key>com.apple.security.automation.apple-events</key>
+
+    <!-- Allow DYLD environment variables — needed for development/debugging -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+
+    <!-- Audio recording — needed for WebRTC microphone access in browser panel -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- Camera capture — needed for WebRTC camera access in browser panel -->
+    <key>com.apple.security.device.camera</key>
     <true/>
 </dict>
 </plist>

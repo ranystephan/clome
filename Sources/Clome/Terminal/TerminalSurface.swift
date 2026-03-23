@@ -62,7 +62,7 @@ class TerminalSurface: NSView {
         self.ghosttyApp = ghosttyApp
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = AppearanceSettings.shared.mainPanelBgColor.cgColor
+        layer?.backgroundColor = AppearanceSettings.shared.backgroundBgColor.cgColor
 
         // Register for file drag and drop
         registerForDraggedTypes([.fileURL])
@@ -75,12 +75,32 @@ class TerminalSurface: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil && surface == nil {
-            createSurface()
+            // Defer surface creation to layout() so the view has a real
+            // frame size.  Creating the surface while the frame is still
+            // zero triggers Ghostty's "very small terminal grid detected
+            // with padding set" warning twice (once for columns, once for
+            // rows).
+            needsSurfaceCreation = true
+            needsLayout = true
         }
     }
 
+    /// Set when the view is added to a window but the frame is not yet sized.
+    private var needsSurfaceCreation = false
+
     override func layout() {
         super.layout()
+
+        // Create the surface on the first layout pass that gives us a
+        // reasonable frame (at least 100x50 backing pixels ≈ a few cells).
+        if needsSurfaceCreation && window != nil && surface == nil {
+            let backingSize = convertToBacking(bounds.size)
+            if backingSize.width >= 100 && backingSize.height >= 50 {
+                needsSurfaceCreation = false
+                createSurface()
+            }
+        }
+
         guard let surface else { return }
         let scaleFactor = window?.backingScaleFactor ?? 2.0
         let size = convertToBacking(bounds.size)
@@ -770,6 +790,41 @@ class TerminalSurface: NSView {
         // Wrap in single quotes; escape any existing single quotes
         let escaped = path.replacingOccurrences(of: "'", with: "'\\''")
         return "'\(escaped)'"
+    }
+
+    // MARK: - Keystroke Injection
+
+    /// Inject a text string into the terminal as if the user typed it.
+    func injectText(_ text: String) {
+        guard let surface else { return }
+        for scalar in text.unicodeScalars {
+            var input = ghostty_input_key_s()
+            input.action = GHOSTTY_ACTION_PRESS
+            input.mods = ghostty_input_mods_e(rawValue: 0)
+            input.keycode = 0
+            input.composing = false
+            let char = String(scalar)
+            char.withCString { ptr in
+                input.text = ptr
+                input.unshifted_codepoint = scalar.value
+                ghostty_surface_key(surface, input)
+            }
+        }
+    }
+
+    /// Inject a Return/Enter keystroke into the terminal.
+    func injectReturn() {
+        guard let surface else { return }
+        var input = ghostty_input_key_s()
+        input.action = GHOSTTY_ACTION_PRESS
+        input.mods = ghostty_input_mods_e(rawValue: 0)
+        input.keycode = 36
+        input.composing = false
+        "\r".withCString { ptr in
+            input.text = ptr
+            input.unshifted_codepoint = 13
+            ghostty_surface_key(surface, input)
+        }
     }
 
     /// Detect Claude Code specific state from terminal output patterns.

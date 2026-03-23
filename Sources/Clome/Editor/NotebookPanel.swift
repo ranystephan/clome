@@ -48,11 +48,10 @@ class NotebookPanel: NSView {
 
     // MARK: - Design System Colors (derived from AppearanceSettings)
 
-    private var baseBg: NSColor { AppearanceSettings.shared.mainPanelBgColor }
+    private var baseBg: NSColor { AppearanceSettings.shared.backgroundBgColor }
     private var surface2: NSColor {
-        // Slightly lighter than main panel for toolbar/status bar
-        AppearanceSettings.shared.mainPanelColor.withAlphaComponent(
-            min(1.0, AppearanceSettings.shared.mainPanelOpacity + 0.04)
+        AppearanceSettings.shared.backgroundColor.withAlphaComponent(
+            min(1.0, AppearanceSettings.shared.backgroundOpacity + 0.04)
         )
     }
     private let borderSubtle = NSColor(white: 1.0, alpha: 0.08)

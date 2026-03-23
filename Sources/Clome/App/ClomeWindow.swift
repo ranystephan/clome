@@ -21,6 +21,7 @@ class ClomeWindow: NSWindow {
     private var sidebarDragWsIndex: Int?
     private var sidebarDragTabIndex: Int?
     private var paneDragView: NSView?
+    private(set) var launcherWindow: LauncherWindow?
     private let tabBarBgColor = NSColor(red: 0.13, green: 0.13, blue: 0.145, alpha: 0.6)
     private let outerEdgeMargin: CGFloat = 40
     /// Throttle drop zone updates during drag (limit to ~60fps)
@@ -36,10 +37,8 @@ class ClomeWindow: NSWindow {
     private var hoverTrackingArea: NSTrackingArea?
     private let hoverEdgeWidth: CGFloat = 6 // px from left edge to trigger reveal
 
-    // Colors
-    private let windowBgColor = NSColor(red: 0.118, green: 0.118, blue: 0.133, alpha: 0.82)
-    private var sidebarTintLayer: NSView?
-    private let borderColor = NSColor(white: 1.0, alpha: 0.12)
+    // Background tint layer (unified for sidebar + main panel)
+    private var bgTintLayer: NSView?
 
     init() {
         let frame = NSRect(x: 0, y: 0, width: 1200, height: 800)
@@ -59,6 +58,7 @@ class ClomeWindow: NSWindow {
         self.isOpaque = false
         self.hasShadow = true
         self.isReleasedWhenClosed = false
+        self.isRestorable = false
         self.center()
 
         setupLayout()
@@ -69,9 +69,7 @@ class ClomeWindow: NSWindow {
     }
 
     @objc private func appearanceDidChange() {
-        let settings = AppearanceSettings.shared
-        sidebarTintLayer?.layer?.backgroundColor = settings.sidebarTintColor.cgColor
-        mainPanel?.layer?.backgroundColor = settings.mainPanelBgColor.cgColor
+        bgTintLayer?.layer?.backgroundColor = AppearanceSettings.shared.backgroundBgColor.cgColor
     }
 
     // MARK: - Layout
@@ -80,7 +78,7 @@ class ClomeWindow: NSWindow {
     private let cornerRadius: CGFloat = 14
 
     private func setupLayout() {
-        // Root — the liquid glass border (visual effect with rounded corners)
+        // Root — unified background with rounded corners
         let root = NSVisualEffectView()
         root.translatesAutoresizingMaskIntoConstraints = false
         root.material = .hudWindow
@@ -92,7 +90,21 @@ class ClomeWindow: NSWindow {
         root.layer?.masksToBounds = true
         contentView = root
 
-        // Inner container — holds all app content, inset by borderWidth
+        // Background tint overlay — unified color for the entire window
+        let tint = NSView()
+        tint.translatesAutoresizingMaskIntoConstraints = false
+        tint.wantsLayer = true
+        tint.layer?.backgroundColor = AppearanceSettings.shared.backgroundBgColor.cgColor
+        root.addSubview(tint)
+        bgTintLayer = tint
+        NSLayoutConstraint.activate([
+            tint.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            tint.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            tint.topAnchor.constraint(equalTo: root.topAnchor),
+            tint.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+        ])
+
+        // Inner container — holds all app content
         let inner = NSView()
         inner.translatesAutoresizingMaskIntoConstraints = false
         inner.wantsLayer = true
@@ -102,32 +114,13 @@ class ClomeWindow: NSWindow {
         inner.layer?.backgroundColor = NSColor.clear.cgColor
         root.addSubview(inner)
 
-        // Sidebar container — NSVisualEffectView for backdrop blur
-        let sidebarBlur = NSVisualEffectView()
-        sidebarBlur.translatesAutoresizingMaskIntoConstraints = false
-        sidebarBlur.material = .hudWindow
-        sidebarBlur.blendingMode = .behindWindow
-        sidebarBlur.state = .active
-        sidebarBlur.wantsLayer = true
-        sidebarBlur.layer?.cornerRadius = cornerRadius - borderWidth
-        sidebarBlur.layer?.cornerCurve = .continuous
-        sidebarBlur.layer?.masksToBounds = true
-        sidebarContainer = sidebarBlur
+        // Sidebar container — plain view, transparent (root blur shows through)
+        let sidebarBox = NSView()
+        sidebarBox.translatesAutoresizingMaskIntoConstraints = false
+        sidebarBox.wantsLayer = true
+        sidebarBox.layer?.backgroundColor = NSColor.clear.cgColor
+        sidebarContainer = sidebarBox
         inner.addSubview(sidebarContainer)
-
-        // Blue tint overlay on top of blur
-        let sidebarTint = NSView()
-        sidebarTint.translatesAutoresizingMaskIntoConstraints = false
-        sidebarTint.wantsLayer = true
-        sidebarTint.layer?.backgroundColor = AppearanceSettings.shared.sidebarTintColor.cgColor
-        sidebarContainer.addSubview(sidebarTint)
-        sidebarTintLayer = sidebarTint
-        NSLayoutConstraint.activate([
-            sidebarTint.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor),
-            sidebarTint.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor),
-            sidebarTint.topAnchor.constraint(equalTo: sidebarContainer.topAnchor),
-            sidebarTint.bottomAnchor.constraint(equalTo: sidebarContainer.bottomAnchor),
-        ])
 
         // Sidebar content
         sidebarView = SidebarView(workspaceManager: workspaceManager)
@@ -145,15 +138,14 @@ class ClomeWindow: NSWindow {
         }
         sidebarContainer.addSubview(sidebarView)
 
-        // Main panel — rounded left corners where it meets the sidebar
+        // Main panel — rounded on all corners, transparent (root blur shows through)
         // Uses NonDraggableView to prevent system titlebar drag interception
         mainPanel = NonDraggableView()
         mainPanel.translatesAutoresizingMaskIntoConstraints = false
         mainPanel.wantsLayer = true
-        mainPanel.layer?.backgroundColor = AppearanceSettings.shared.mainPanelBgColor.cgColor
+        mainPanel.layer?.backgroundColor = NSColor.clear.cgColor
         mainPanel.layer?.cornerRadius = 10
         mainPanel.layer?.cornerCurve = .continuous
-        mainPanel.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMinXMaxYCorner]
         mainPanel.layer?.masksToBounds = true
         inner.addSubview(mainPanel)
 
@@ -181,7 +173,6 @@ class ClomeWindow: NSWindow {
         mainPanel.addSubview(splitDropZone)
 
         // Constraints
-        let panelGap: CGFloat = 2
         sidebarWidthConstraint = sidebarContainer.widthAnchor.constraint(equalToConstant: sidebarWidth)
         sidebarLeadingConstraint = sidebarContainer.leadingAnchor.constraint(equalTo: inner.leadingAnchor)
 
@@ -209,8 +200,8 @@ class ClomeWindow: NSWindow {
             dividerHandle.bottomAnchor.constraint(equalTo: inner.bottomAnchor),
             dividerHandle.widthAnchor.constraint(equalToConstant: 6),
 
-            // Main panel — flush on right/top/bottom, gap only on left (sidebar side)
-            mainPanel.leadingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor, constant: panelGap),
+            // Main panel — flush against sidebar, no gap
+            mainPanel.leadingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor),
             mainPanel.trailingAnchor.constraint(equalTo: inner.trailingAnchor),
             mainPanel.topAnchor.constraint(equalTo: inner.topAnchor),
             mainPanel.bottomAnchor.constraint(equalTo: inner.bottomAnchor),
@@ -326,6 +317,33 @@ class ClomeWindow: NSWindow {
         sidebarWidthConstraint.constant = sidebarWidth
     }
 
+    // MARK: - Launcher
+
+    /// Whether the launcher is currently visible.
+    var isLauncherActive: Bool {
+        launcherWindow?.isActive ?? false
+    }
+
+    func toggleLauncher() {
+        ensureLauncherWindow()
+        launcherWindow?.toggle()
+    }
+
+    func showLauncher() {
+        ensureLauncherWindow()
+        launcherWindow?.show()
+    }
+
+    func dismissLauncher() {
+        launcherWindow?.dismiss()
+    }
+
+    private func ensureLauncherWindow() {
+        if launcherWindow == nil {
+            launcherWindow = LauncherWindow(workspaceManager: workspaceManager, clomeWindow: self)
+        }
+    }
+
     // MARK: - Content
 
     func showWorkspaceContent(_ workspace: Workspace) {
@@ -347,15 +365,15 @@ class ClomeWindow: NSWindow {
             self?.updateTabBar()
             self?.sidebarView?.setNeedsReload()
             self?.wirePaneDragCallbacks()
-            // Debounced session save so state survives Xcode re-run (SIGKILL)
             (NSApp.delegate as? ClomeAppDelegate)?.scheduleSave()
         }
 
-        // Lightweight callback — only active tab selection changed
+        // Lightweight callback — only active tab selection changed.
+        // Do NOT rebuild the sidebar here — it destroys hover states and eats clicks.
+        // The tab bar handles its own selection highlighting.
         workspace.onActiveTabChanged = { [weak self] in
             guard self?.workspaceManager.activeWorkspace === workspace else { return }
             self?.tabBarView.updateSelection(activeIndex: workspace.activeTabIndex)
-            self?.sidebarView?.setNeedsReload()
             self?.wirePaneDragCallbacks()
             (NSApp.delegate as? ClomeAppDelegate)?.scheduleSave()
         }
@@ -371,7 +389,15 @@ class ClomeWindow: NSWindow {
                 isSplit: tab.isSplit,
                 splitDescription: tab.splitDescription
             )
+            // Don't rebuild sidebar on title changes — too frequent (terminal output)
+        }
+
+        // Project roots changed — update sidebar
+        workspace.onProjectRootsChanged = { [weak self] in
+            guard self?.workspaceManager.activeWorkspace === workspace else { return }
             self?.sidebarView?.setNeedsReload()
+            self?.sidebarView?.updateSourceControl()
+            (NSApp.delegate as? ClomeAppDelegate)?.scheduleSave()
         }
 
         wirePaneDragCallbacks()
@@ -522,8 +548,9 @@ extension ClomeWindow: @preconcurrency WorkspaceTabBarDelegate {
         panel.prompt = "Open Project"
         panel.beginSheetModal(for: self) { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
-            // addProjectTab fires onTabsChanged
-            self?.workspaceManager.activeWorkspace?.addProjectTab(directory: url.path)
+            self?.workspaceManager.activeWorkspace?.addProjectRoot(path: url.path)
+            WelcomeView.addRecentProject(url.path)
+            self?.sidebarView.reloadWorkspaces()
         }
     }
 

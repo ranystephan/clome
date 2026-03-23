@@ -545,7 +545,7 @@
       .final { padding: 100px 24px 140px; }
       footer { padding: 32px 24px; flex-direction: column; gap: 16px; text-align: center; }
       .f-links { justify-content: center; }
-      #helix-canvas { width: 100%; max-width: 600px; }
+      #helix-canvas { width: 100%; max-width: 600px; bottom: -80px; }
     }
     @media (max-width: 520px) {
       nav { padding: 14px 16px; }
@@ -560,7 +560,7 @@
       .hero-sub { font-size: 15px; margin-bottom: 36px; }
       .hero-cta { padding: 12px 28px; font-size: 14px; }
       .hero-footnote { font-size: 11px; bottom: 24px; }
-      #helix-canvas { height: 280px; }
+      #helix-canvas { height: 240px; bottom: -100px; }
       .features { padding: 0 20px; }
       .features-header { margin-bottom: 48px; }
       .features-header h2 { font-size: clamp(28px, 7vw, 40px); }
@@ -845,7 +845,7 @@ document.querySelectorAll('.rv').forEach(el => obs.observe(el));
     ctx.clearRect(0, 0, w, h);
     const cx = w / 2, cy = h * 0.55;
     const curves = 14;
-    const maxR = 340;
+    const maxR = Math.min(340, w * 0.45);
 
     for (let i = 0; i < curves; i++) {
       const phase = (i / curves) * Math.PI * 2 + time * 0.3;

@@ -31,6 +31,11 @@ protocol BrowserPanelDelegate: AnyObject {
 /// An embedded browser panel that can be placed in any split pane.
 /// Supports persistent cookies, bookmarks, history, and send-to-context.
 class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDelegate, WKHTTPCookieStoreObserver, WKScriptMessageHandler {
+    /// Shared process pool for all browser panels. Using a single pool means all
+    /// WKWebView instances share WebContent processes, reducing the number of
+    /// child processes that need sandbox/entitlement validation.
+    static let sharedProcessPool = WKProcessPool()
+
     private(set) var webView: WKWebView!
     private var backButton: NSButton!
     private var forwardButton: NSButton!
@@ -86,7 +91,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     override init(frame: NSRect = .zero) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.backgroundColor = AppearanceSettings.shared.mainPanelBgColor.cgColor
+        layer?.backgroundColor = AppearanceSettings.shared.backgroundBgColor.cgColor
         setupUI()
     }
 
@@ -136,7 +141,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         let navBar = NSView()
         navBar.translatesAutoresizingMaskIntoConstraints = false
         navBar.wantsLayer = true
-        navBar.layer?.backgroundColor = AppearanceSettings.shared.mainPanelBgColor.withAlphaComponent(1.0).cgColor
+        navBar.layer?.backgroundColor = AppearanceSettings.shared.backgroundBgColor.withAlphaComponent(1.0).cgColor
         addSubview(navBar)
 
         // Back button
@@ -263,6 +268,18 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
 
         config.websiteDataStore = persistentDataStore
+
+        // Share a single process pool across all browser panels to reduce the number
+        // of WebContent processes and avoid redundant sandbox entitlement checks.
+        config.processPool = BrowserPanel.sharedProcessPool
+
+        // Media playback configuration — reduces WebContent/GPU process restrictions
+        config.mediaTypesRequiringUserActionForPlayback = []
+        config.allowsAirPlayForMediaPlayback = true
+        if #available(macOS 14.0, *) {
+            config.preferences.isTextInteractionEnabled = true
+        }
+
         let pagePrefs = WKWebpagePreferences()
         pagePrefs.allowsContentJavaScript = true
         pagePrefs.preferredContentMode = .desktop
@@ -487,8 +504,22 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         return button
     }
 
+    func willClose() {
+        webView?.stopLoading()
+        webView?.loadHTMLString("", baseURL: nil)
+        webView?.navigationDelegate = nil
+        webView?.uiDelegate = nil
+        loadingBar?.stopAnimation(nil)
+        formAutofillManager?.unregister(from: webView.configuration)
+        formAutofillManager?.webView = nil
+        webView?.removeObserver(self, forKeyPath: "title")
+        webView?.removeFromSuperview()
+        webView = nil
+    }
+
     deinit {
         MainActor.assumeIsolated {
+            webView?.stopLoading()
             webView?.navigationDelegate = nil
             webView?.uiDelegate = nil
             loadingBar?.stopAnimation(nil)

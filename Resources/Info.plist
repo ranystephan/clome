@@ -20,11 +20,36 @@
     <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>LSMinimumSystemVersion</key>
     <string>$(MACOSX_DEPLOYMENT_TARGET)</string>
-    <key>NSMainNibFile</key>
-    <string></string>
     <key>CFBundleIconName</key>
     <string>AppIcon</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>NSQuitAlwaysKeepsWindows</key>
+    <false/>
+
+    <!-- TCC usage descriptions required for sandbox entitlements -->
+    <key>NSCameraUsageDescription</key>
+    <string>Clome needs camera access for web pages that use video (e.g. video calls).</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Clome needs microphone access for web pages that use audio input (e.g. voice calls).</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Clome needs to send Apple Events to control other applications.</string>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Clome needs access to your Desktop for project files.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Clome needs access to your Documents for project files.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>Clome needs access to Downloads to save files from the browser.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Clome needs local network access to connect to local development servers.</string>
+
+    <!-- WKWebView: allow loading HTTP content (for local dev servers etc.) -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
 </dict>
 </plist>

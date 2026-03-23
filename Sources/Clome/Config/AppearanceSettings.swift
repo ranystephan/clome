@@ -4,24 +4,16 @@ extension Notification.Name {
     static let appearanceSettingsChanged = Notification.Name("clomeAppearanceSettingsChanged")
 }
 
-/// Manages sidebar and main panel appearance (color + opacity), persisted via SessionState.
+/// Manages appearance settings, persisted via SessionState.
 @MainActor
 class AppearanceSettings {
     static let shared = AppearanceSettings()
 
-    // Sidebar
-    var sidebarColor: NSColor {
+    // Background (unified for entire window)
+    var backgroundColor: NSColor {
         didSet { save(); notify() }
     }
-    var sidebarOpacity: CGFloat {
-        didSet { save(); notify() }
-    }
-
-    // Main panel
-    var mainPanelColor: NSColor {
-        didSet { save(); notify() }
-    }
-    var mainPanelOpacity: CGFloat {
+    var backgroundOpacity: CGFloat {
         didSet { save(); notify() }
     }
 
@@ -36,16 +28,12 @@ class AppearanceSettings {
     }
 
     // Defaults
-    static let defaultSidebarColor = NSColor(red: 0.145, green: 0.588, blue: 0.745, alpha: 1.0) // #2596be
-    static let defaultSidebarOpacity: CGFloat = 0.15
-    static let defaultMainPanelColor = NSColor(red: 0.08, green: 0.08, blue: 0.10, alpha: 1.0)
-    static let defaultMainPanelOpacity: CGFloat = 0.92
+    static let defaultBackgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.10, alpha: 1.0)
+    static let defaultBackgroundOpacity: CGFloat = 0.92
 
     private init() {
-        sidebarColor = Self.defaultSidebarColor
-        sidebarOpacity = Self.defaultSidebarOpacity
-        mainPanelColor = Self.defaultMainPanelColor
-        mainPanelOpacity = Self.defaultMainPanelOpacity
+        backgroundColor = Self.defaultBackgroundColor
+        backgroundOpacity = Self.defaultBackgroundOpacity
         colorfulFileIcons = UserDefaults.standard.object(forKey: "clome.colorfulFileIcons") as? Bool ?? true
         openLinksInClomeBrowser = UserDefaults.standard.object(forKey: "clome.openLinksInClomeBrowser") as? Bool ?? true
         load()
@@ -59,29 +47,20 @@ class AppearanceSettings {
 
     private func save() {
         SessionState.shared.saveAppearance(
-            sidebarColor: sidebarColor,
-            sidebarOpacity: sidebarOpacity,
-            mainPanelColor: mainPanelColor,
-            mainPanelOpacity: mainPanelOpacity
+            backgroundColor: backgroundColor,
+            backgroundOpacity: backgroundOpacity
         )
     }
 
     private func load() {
         if let restored = SessionState.shared.restoreAppearance() {
-            sidebarColor = restored.sidebarColor
-            sidebarOpacity = restored.sidebarOpacity
-            mainPanelColor = restored.mainPanelColor
-            mainPanelOpacity = restored.mainPanelOpacity
+            backgroundColor = restored.backgroundColor
+            backgroundOpacity = restored.backgroundOpacity
         }
     }
 
-    /// Returns the sidebar tint color with the configured opacity applied.
-    var sidebarTintColor: NSColor {
-        sidebarColor.withAlphaComponent(sidebarOpacity)
-    }
-
-    /// Returns the main panel color with the configured opacity applied.
-    var mainPanelBgColor: NSColor {
-        mainPanelColor.withAlphaComponent(mainPanelOpacity)
+    /// Returns the background color with the configured opacity applied.
+    var backgroundBgColor: NSColor {
+        backgroundColor.withAlphaComponent(backgroundOpacity)
     }
 }

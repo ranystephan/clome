@@ -56,8 +56,8 @@ class EditorView: NSView {
     private(set) var visibleLineRange: Range<Int> = 0..<0
 
     // Colors
-    private var bgColor: NSColor { AppearanceSettings.shared.mainPanelBgColor }
-    private var gutterBgColor: NSColor { AppearanceSettings.shared.mainPanelColor.withAlphaComponent(max(0, AppearanceSettings.shared.mainPanelOpacity - 0.05)) }
+    private var bgColor: NSColor { AppearanceSettings.shared.backgroundBgColor }
+    private var gutterBgColor: NSColor { AppearanceSettings.shared.backgroundColor.withAlphaComponent(max(0, AppearanceSettings.shared.backgroundOpacity - 0.05)) }
     private let gutterTextColor = NSColor(white: 0.35, alpha: 1.0)
     private let textColor = NSColor(white: 0.85, alpha: 1.0)
     private let cursorColor = NSColor(white: 0.9, alpha: 1.0)
@@ -262,11 +262,7 @@ class EditorView: NSView {
             context.fill(CGRect(x: gutterWidth, y: cursorY, width: bounds.width - gutterWidth, height: lineHeight))
         }
 
-        // Clip text area so horizontal scroll doesn't bleed into gutter
-        context.saveGState()
-        context.clip(to: CGRect(x: gutterWidth, y: 0, width: bounds.width - gutterWidth, height: bounds.height))
-
-        // Draw visible lines
+        // Draw gutter content (line numbers + diagnostic icons) before clipping
         for lineIdx in visibleLineRange {
             let y = bounds.height - CGFloat(lineIdx - firstVisibleLine + 1) * lineHeight
 
@@ -285,6 +281,15 @@ class EditorView: NSView {
 
             // Diagnostic gutter icons
             drawDiagnosticGutterIcon(for: lineIdx, at: y, in: context)
+        }
+
+        // Clip text area so horizontal scroll doesn't bleed into gutter
+        context.saveGState()
+        context.clip(to: CGRect(x: gutterWidth, y: 0, width: bounds.width - gutterWidth, height: bounds.height))
+
+        // Draw visible lines (text only, inside clip)
+        for lineIdx in visibleLineRange {
+            let y = bounds.height - CGFloat(lineIdx - firstVisibleLine + 1) * lineHeight
 
             // Line text
             let lineText = buffer.line(lineIdx)
@@ -1869,12 +1874,12 @@ class EditorView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        scrollOffset -= event.scrollingDeltaY * 2
+        scrollOffset -= event.scrollingDeltaY * 3
         let maxScroll = max(0, CGFloat(buffer.lineCount) * lineHeight - bounds.height)
         scrollOffset = max(0, min(scrollOffset, maxScroll))
 
         // Horizontal scroll
-        horizontalScrollOffset -= event.scrollingDeltaX * 2
+        horizontalScrollOffset -= event.scrollingDeltaX * 3
         let maxHScroll = max(0, maxLineWidth - (bounds.width - gutterWidth - textInset))
         horizontalScrollOffset = max(0, min(horizontalScrollOffset, maxHScroll))
 

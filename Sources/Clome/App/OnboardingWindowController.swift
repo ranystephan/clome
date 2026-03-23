@@ -51,6 +51,7 @@ class OnboardingWindowController: NSWindowController {
         window.backgroundColor = NSColor(red: 0.024, green: 0.024, blue: 0.039, alpha: 1.0) // #06060A
         window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
+        window.isRestorable = false
         window.center()
         self.init(window: window)
         setupUI()

@@ -104,6 +104,27 @@ class SessionState {
             sqlite3_exec(db, sql, nil, nil, nil)
             upsert(key: "schema_version", value: "3")
         }
+        if version < 4 {
+            let sql = """
+            CREATE TABLE IF NOT EXISTS project_roots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+            );
+            CREATE TABLE IF NOT EXISTS open_editors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                is_preview INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+            );
+            """
+            sqlite3_exec(db, sql, nil, nil, nil)
+            upsert(key: "schema_version", value: "4")
+        }
     }
 
     // MARK: - Pinned Files
@@ -199,12 +220,11 @@ class SessionState {
 
         var success = true
 
-        // Clear existing
-        if sqlite3_exec(db, "DELETE FROM surfaces", nil, nil, nil) != SQLITE_OK {
-            print("SessionState: DELETE FROM surfaces failed: \(errorMessage())")
-            success = false
-        }
-        if success && sqlite3_exec(db, "DELETE FROM workspaces", nil, nil, nil) != SQLITE_OK {
+        // Clear existing — delete child tables BEFORE parent (foreign key constraints)
+        sqlite3_exec(db, "DELETE FROM surfaces", nil, nil, nil)
+        sqlite3_exec(db, "DELETE FROM project_roots", nil, nil, nil)
+        sqlite3_exec(db, "DELETE FROM open_editors", nil, nil, nil)  // May exist from migration
+        if sqlite3_exec(db, "DELETE FROM workspaces", nil, nil, nil) != SQLITE_OK {
             print("SessionState: DELETE FROM workspaces failed: \(errorMessage())")
             success = false
         }
@@ -232,6 +252,8 @@ class SessionState {
                     if success {
                         // Save tabs for this workspace (inside the same transaction)
                         saveTabs(workspace.tabs, workspaceId: idStr, activeTabIndex: workspace.activeTabIndex)
+                        // Save project roots
+                        saveProjectRoots(workspace.projectRoots, workspaceId: idStr)
                     }
                 } else {
                     print("SessionState: prepare INSERT workspace failed: \(errorMessage())")
@@ -326,6 +348,20 @@ class SessionState {
         upsert(key: "active_tab_\(workspaceId)", value: "\(activeTabIndex)")
     }
 
+    private func saveProjectRoots(_ roots: [ProjectRoot], workspaceId: String) {
+        let sql = "INSERT INTO project_roots (workspace_id, path, position) VALUES (?, ?, ?)"
+        for (index, root) in roots.enumerated() {
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, (workspaceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 2, (root.path as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int(stmt, 3, Int32(index))
+                sqlite3_step(stmt)
+                sqlite3_finalize(stmt)
+            }
+        }
+    }
+
     // MARK: - Restore
 
     func restoreWindowFrame() -> NSRect? {
@@ -363,6 +399,7 @@ class SessionState {
         let color: String
         var tabs: [SavedTab]
         var activeTabIndex: Int
+        var projectRootPaths: [String]
     }
 
     func restoreWorkspaces() -> [SavedWorkspace] {
@@ -390,10 +427,12 @@ class SessionState {
 
                 let tabs = restoreTabs(forWorkspaceId: id)
                 let activeTab = Int(getValue(key: "active_tab_\(id)") ?? "0") ?? 0
+                let projectRoots = restoreProjectRoots(forWorkspaceId: id)
 
                 workspaces.append(SavedWorkspace(
                     id: id, name: name, icon: icon, position: position,
-                    color: color, tabs: tabs, activeTabIndex: activeTab
+                    color: color, tabs: tabs, activeTabIndex: activeTab,
+                    projectRootPaths: projectRoots
                 ))
             }
             sqlite3_finalize(stmt)
@@ -436,36 +475,44 @@ class SessionState {
         return tabs
     }
 
+    private func restoreProjectRoots(forWorkspaceId workspaceId: String) -> [String] {
+        var paths: [String] = []
+        let sql = "SELECT path FROM project_roots WHERE workspace_id = ? ORDER BY position"
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (workspaceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let ptr = sqlite3_column_text(stmt, 0) {
+                    paths.append(String(cString: ptr))
+                }
+            }
+            sqlite3_finalize(stmt)
+        }
+        return paths
+    }
+
     // MARK: - Appearance
 
     struct SavedAppearance {
-        let sidebarColor: NSColor
-        let sidebarOpacity: CGFloat
-        let mainPanelColor: NSColor
-        let mainPanelOpacity: CGFloat
+        let backgroundColor: NSColor
+        let backgroundOpacity: CGFloat
     }
 
-    func saveAppearance(sidebarColor: NSColor, sidebarOpacity: CGFloat, mainPanelColor: NSColor, mainPanelOpacity: CGFloat) {
+    func saveAppearance(backgroundColor: NSColor, backgroundOpacity: CGFloat) {
         guard db != nil else { return }
         guard beginTransaction() else { return }
-        upsert(key: "sidebar_color", value: colorToHex(sidebarColor))
-        upsert(key: "sidebar_opacity", value: "\(sidebarOpacity)")
-        upsert(key: "main_panel_color", value: colorToHex(mainPanelColor))
-        upsert(key: "main_panel_opacity", value: "\(mainPanelOpacity)")
+        upsert(key: "bg_color", value: colorToHex(backgroundColor))
+        upsert(key: "bg_opacity", value: "\(backgroundOpacity)")
         commitTransaction()
     }
 
     func restoreAppearance() -> SavedAppearance? {
         guard db != nil else { return nil }
-        guard let sc = getValue(key: "sidebar_color") else { return nil }
-        let so = getValue(key: "sidebar_opacity").flatMap { CGFloat(Double($0) ?? -1) } ?? 0.15
-        let mc = getValue(key: "main_panel_color") ?? ""
-        let mo = getValue(key: "main_panel_opacity").flatMap { CGFloat(Double($0) ?? -1) } ?? 0.92
+        guard let bc = getValue(key: "bg_color") else { return nil }
+        let bo = getValue(key: "bg_opacity").flatMap { CGFloat(Double($0) ?? -1) } ?? 0.92
         return SavedAppearance(
-            sidebarColor: hexToColor(sc),
-            sidebarOpacity: so,
-            mainPanelColor: mc.isEmpty ? NSColor(red: 0.08, green: 0.08, blue: 0.10, alpha: 1.0) : hexToColor(mc),
-            mainPanelOpacity: mo
+            backgroundColor: hexToColor(bc),
+            backgroundOpacity: bo
         )
     }
 

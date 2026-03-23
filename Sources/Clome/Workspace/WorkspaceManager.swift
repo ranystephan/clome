@@ -102,6 +102,12 @@ class WorkspaceManager {
             )
             workspaces.append(workspace)
 
+            // Restore project roots
+            for rootPath in savedWs.projectRootPaths {
+                guard FileManager.default.fileExists(atPath: rootPath) else { continue }
+                workspace.addProjectRoot(path: rootPath)
+            }
+
             // Restore tabs
             for tab in savedWs.tabs {
                 restoreTab(tab, into: workspace)
@@ -185,20 +191,23 @@ class WorkspaceManager {
             try? workspace.addEditorTab(path: savedTab.resourcePath)
 
         case .project:
+            // Saved .project tabs are restored as project roots + editor tabs
             guard !savedTab.resourcePath.isEmpty else { return }
             var isDir: ObjCBool = false
             guard FileManager.default.fileExists(atPath: savedTab.resourcePath, isDirectory: &isDir),
                   isDir.boolValue else {
-                print("[Session] Skipping project tab: directory not found at \(savedTab.resourcePath)")
+                print("[Session] Skipping project: directory not found at \(savedTab.resourcePath)")
                 return
             }
-            workspace.addProjectTab(directory: savedTab.resourcePath)
-            // Restore open sub-files within the project tab
+            workspace.addProjectRoot(path: savedTab.resourcePath)
+            // Restore open sub-files as editor tabs
             if !savedTab.extraData.isEmpty,
                let data = savedTab.extraData.data(using: .utf8),
-               let paths = try? JSONSerialization.jsonObject(with: data) as? [String],
-               let projectPanel = workspace.tabs.last?.view as? ProjectPanel {
-                projectPanel.restoreOpenFiles(paths)
+               let paths = try? JSONSerialization.jsonObject(with: data) as? [String] {
+                for filePath in paths {
+                    guard FileManager.default.fileExists(atPath: filePath) else { continue }
+                    try? workspace.addEditorTab(path: filePath)
+                }
             }
 
         case .pdf:
