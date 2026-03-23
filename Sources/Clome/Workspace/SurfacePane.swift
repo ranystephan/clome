@@ -124,6 +124,9 @@ class SurfacePane: NSView, @preconcurrency TabBarDelegate, BrowserPanelDelegate 
         if let terminal = surface as? TerminalSurface {
             terminal.destroySurface()
         }
+        if let browser = surface as? BrowserPanel {
+            browser.willClose()
+        }
         surface.removeFromSuperview()
 
         // Rebuild tabs first so selectTab's updateSelection operates on current tab views

@@ -48,9 +48,11 @@ class WorkspaceTab: Identifiable {
     /// Label for a specific pane view.
     static func paneLabel(for view: NSView) -> (icon: String, title: String) {
         if let terminal = view as? TerminalSurface {
-            return ("terminal", terminal.title.isEmpty ? "Terminal" : terminal.title)
+            let title = terminal.detectedProgram ?? terminal.shortPath ?? (terminal.title.isEmpty ? "Terminal" : terminal.title)
+            return ("terminal", title)
         } else if let browser = view as? BrowserPanel {
-            return ("globe", browser.title.isEmpty ? "Browser" : browser.title)
+            let title = browser.title.isEmpty ? (browser.currentURL?.host ?? "Browser") : browser.title
+            return ("globe", title)
         } else if let editor = view as? EditorPanel {
             return ("doc.text", editor.title)
         } else if let pdf = view as? PDFPanel {
@@ -122,7 +124,7 @@ enum WorkspaceColor: String, CaseIterable {
 }
 
 /// Represents a single workspace in Clome.
-/// A workspace contains a list of tabs, each holding a terminal, browser, editor, etc.
+/// A workspace contains project roots (directories), open editors, and tabs (terminals/browsers).
 @MainActor
 class Workspace: Identifiable {
     let id = UUID()
@@ -151,6 +153,14 @@ class Workspace: Identifiable {
 
     /// Currently active tab index
     private(set) var activeTabIndex: Int = -1
+
+    // MARK: - Project Roots
+
+    /// Project root directories that define this workspace's development context.
+    private(set) var projectRoots: [ProjectRoot] = []
+
+    /// Called when project roots change (add/remove).
+    var onProjectRootsChanged: (() -> Void)?
 
     /// Working directory of the active surface (tracked via OSC 7).
     var workingDirectory: String?
@@ -193,6 +203,99 @@ class Workspace: Identifiable {
     /// Call after session restore is complete to re-enable auto-terminal creation
     func finishRestore() {
         suppressAutoTerminal = false
+    }
+
+    // MARK: - Project Root Management
+
+    /// Add a project root directory to this workspace.
+    @discardableResult
+    func addProjectRoot(path: String) -> ProjectRoot {
+        // Check if already added
+        if let existing = projectRoots.first(where: { $0.path == path }) {
+            return existing
+        }
+
+        // Pre-warm TCC access for this directory to avoid repeated permission prompts
+        FileAccessManager.shared.ensureAccess(to: path)
+
+        let root = ProjectRoot(path: path)
+        // File changes within a root should NOT trigger full sidebar rebuild.
+        // onProjectRootsChanged is only for structural changes (root added/removed).
+        // File changes are handled by the file explorer's own FileWatcher.
+        projectRoots.append(root)
+        onProjectRootsChanged?()
+        return root
+    }
+
+    /// Remove a project root at the given index.
+    func removeProjectRoot(at index: Int) {
+        guard index >= 0, index < projectRoots.count else { return }
+        let root = projectRoots.remove(at: index)
+        root.stopWatching()
+
+        // Close any editor tabs whose files belong to this root
+        for i in stride(from: tabs.count - 1, through: 0, by: -1) {
+            if let editor = tabs[i].view as? EditorPanel,
+               let path = editor.filePath,
+               path.hasPrefix(root.path + "/") {
+                closeTab(i)
+            }
+        }
+
+        onProjectRootsChanged?()
+    }
+
+    /// Remove a project root by reference.
+    func removeProjectRoot(_ root: ProjectRoot) {
+        if let index = projectRoots.firstIndex(where: { $0 === root }) {
+            removeProjectRoot(at: index)
+        }
+    }
+
+    /// Find which project root a file path belongs to.
+    func projectRoot(for filePath: String) -> ProjectRoot? {
+        projectRoots.first(where: { filePath.hasPrefix($0.path + "/") || filePath == $0.path })
+    }
+
+    /// Reorder project roots.
+    func moveProjectRoot(from: Int, to: Int) {
+        guard from >= 0, from < projectRoots.count, to >= 0, to < projectRoots.count, from != to else { return }
+        let root = projectRoots.remove(at: from)
+        projectRoots.insert(root, at: to)
+        onProjectRootsChanged?()
+    }
+
+    /// Open a file as a workspace tab. If already open, selects it.
+    func openFileAsTab(_ path: String) {
+        // Check if already open as an editor/pdf/notebook tab
+        for (i, tab) in tabs.enumerated() {
+            if let editor = tab.view as? EditorPanel, editor.filePath == path {
+                selectTab(i)
+                return
+            }
+            if let pdf = tab.view as? PDFPanel, pdf.filePath == path {
+                selectTab(i)
+                return
+            }
+            if let notebook = tab.view as? NotebookPanel, notebook.filePath == path {
+                selectTab(i)
+                return
+            }
+            if let project = tab.view as? ProjectPanel, project.rootDirectory == path {
+                selectTab(i)
+                return
+            }
+        }
+
+        // Open as new tab based on file type
+        let lowerPath = path.lowercased()
+        if lowerPath.hasSuffix(".pdf") {
+            addPDFTab(path: path)
+        } else if lowerPath.hasSuffix(".ipynb") {
+            try? addNotebookTab(path: path)
+        } else {
+            try? addEditorTab(path: path)
+        }
     }
 
     // MARK: - Tab Management
@@ -325,6 +428,9 @@ class Workspace: Identifiable {
             }
             if let notebook = pane as? NotebookPanel {
                 notebook.willClose()
+            }
+            if let browser = pane as? BrowserPanel {
+                browser.willClose()
             }
         }
         tab.splitContainer.removeFromSuperview()

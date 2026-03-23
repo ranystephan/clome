@@ -9,6 +9,19 @@ class GhosttyAppManager {
     private(set) var config: ghostty_config_t?
 
     init() {
+        // Point Ghostty at the bundled resources directory so it can find
+        // terminfo entries (ghostty / xterm-ghostty) and shell-integration
+        // scripts.  The bundle layout is:
+        //   Contents/Resources/ghostty/          — shell-integration, themes
+        //   Contents/Resources/terminfo/78/xterm-ghostty  — terminfo sentinel
+        // Ghostty's resourcesDir() auto-detects this by walking up from the
+        // executable, but we also set the env var as a reliable fallback
+        // (e.g. when launched from Xcode DerivedData via symlinks).
+        if let resourcePath = Bundle.main.resourcePath {
+            let ghosttyResDir = (resourcePath as NSString).appendingPathComponent("ghostty")
+            setenv("GHOSTTY_RESOURCES_DIR", ghosttyResDir, 1)
+        }
+
         // Initialize ghostty
         ghostty_init(0, nil)
 
@@ -20,8 +33,18 @@ class GhosttyAppManager {
         // Override command to launch the user's shell directly instead of
         // using /usr/bin/login, which fails with PermissionDenied for
         // ad-hoc signed apps due to macOS SIP.
+        // Also set reasonable padding to avoid "very small terminal grid"
+        // warnings when the window starts at a compact size.
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        let overrideConfig = "command=\(shell) -l\n"
+        var overrideLines = [
+            "command=\(shell) -l",
+            "window-padding-x=2",
+            "window-padding-y=2",
+            "window-padding-balance=true",
+        ]
+        // Ensure TERM is set to xterm-ghostty now that we bundle the terminfo
+        overrideLines.append("term=xterm-ghostty")
+        let overrideConfig = overrideLines.joined(separator: "\n") + "\n"
         let tmpURL = FileManager.default.temporaryDirectory.appendingPathComponent("clome-ghostty-override.conf")
         try? overrideConfig.write(to: tmpURL, atomically: true, encoding: .utf8)
         ghostty_config_load_file(cfg, tmpURL.path)

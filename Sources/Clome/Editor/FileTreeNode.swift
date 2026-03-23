@@ -18,7 +18,27 @@ class GitStatusTracker {
     private(set) var isGitRepo: Bool = false
     private(set) var gitRoot: String?
 
+    /// Timestamp of last successful refresh — used to throttle.
+    private var lastRefreshTime: Date = .distantPast
+
+    /// Minimum interval between git status refreshes (seconds).
+    /// Prevents spawning too many git processes, which triggers repeated
+    /// macOS TCC permission prompts for protected directories.
+    var minimumRefreshInterval: TimeInterval = 3.0
+
+    /// Whether a refresh is currently in progress.
+    private var isRefreshing = false
+
     func refresh(for rootPath: String) {
+        // Throttle: skip if we refreshed recently or a refresh is in progress.
+        let now = Date()
+        guard now.timeIntervalSince(lastRefreshTime) >= minimumRefreshInterval,
+              !isRefreshing else {
+            return
+        }
+        isRefreshing = true
+        defer { isRefreshing = false }
+
         // Find git root
         var dir = rootPath
         while dir != "/" {
@@ -36,10 +56,13 @@ class GitStatusTracker {
         }
 
         // Run git status --porcelain=v1
+        // Note: use -unormal instead of -uall to avoid traversing every untracked
+        // subdirectory, which is expensive and triggers extra TCC file-access checks
+        // on protected directories like ~/Desktop.
         let pipe = Pipe()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["status", "--porcelain=v1", "-uall"]
+        process.arguments = ["status", "--porcelain=v1", "-unormal"]
         process.currentDirectoryURL = URL(fileURLWithPath: root)
         process.standardOutput = pipe
         process.standardError = Pipe()
@@ -51,6 +74,8 @@ class GitStatusTracker {
             fileStatuses = [:]
             return
         }
+
+        lastRefreshTime = Date()
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         guard let output = String(data: data, encoding: .utf8) else {

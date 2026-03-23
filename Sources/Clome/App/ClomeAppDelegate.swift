@@ -12,6 +12,15 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var debouncedSaveWork: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Disable macOS window restoration — Clome manages its own session state via SQLite.
+        // This prevents "Unable to find className=(null)" errors from NSWindowRestoration.
+        UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
+
+        // Pre-warm TCC file access early — triggers a single permission prompt per
+        // protected directory instead of repeated prompts from individual subsystems
+        // (file watchers, git status, directory listings, etc.).
+        FileAccessManager.shared.prewarmAccess()
+
         setupMenuBar()
 
         // Initialize the Ghostty terminal backend
@@ -167,7 +176,7 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         fileMenu.addItem(withTitle: "New Workspace", action: #selector(newWorkspace(_:)), keyEquivalent: "n")
         fileMenu.addItem(withTitle: "New Tab", action: #selector(newTab(_:)), keyEquivalent: "t")
         fileMenu.addItem(NSMenuItem.separator())
-        fileMenu.addItem(withTitle: "Open File...", action: #selector(openFile(_:)), keyEquivalent: "o")
+        fileMenu.addItem(withTitle: "Open...", action: #selector(openFile(_:)), keyEquivalent: "o")
         fileMenu.addItem(withTitle: "New Browser Tab", action: #selector(newBrowserTab(_:)), keyEquivalent: "t")
         fileMenu.items.last?.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(NSMenuItem.separator())
@@ -248,11 +257,25 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func openFile(_ sender: Any?) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
             let path = url.path
+
+            // Record access from NSOpenPanel — this grants persistent TCC access
+            // and prevents repeated permission prompts for this directory.
+            FileAccessManager.shared.recordOpenPanelAccess(url: url)
+
+            // Check if it's a directory — add as project root
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
+                self?.mainWindow?.workspaceManager.activeWorkspace?.addProjectRoot(path: path)
+                WelcomeView.addRecentProject(path)
+                self?.mainWindow?.sidebarView.reloadWorkspaces()
+                return
+            }
+
             do {
                 if path.lowercased().hasSuffix(".pdf") {
                     self?.mainWindow?.workspaceManager.activeWorkspace?.openPDF(path)

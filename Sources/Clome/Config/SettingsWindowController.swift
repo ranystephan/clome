@@ -24,12 +24,9 @@ class SettingsWindowController: NSWindowController {
     private var activePage: Int = 0
 
     // Appearance controls
-    private var sidebarColorWell: NSColorWell!
-    private var sidebarOpacitySlider: NSSlider!
-    private var sidebarOpacityLabel: NSTextField!
-    private var mainColorWell: NSColorWell!
-    private var mainOpacitySlider: NSSlider!
-    private var mainOpacityLabel: NSTextField!
+    private var bgColorWell: NSColorWell!
+    private var bgOpacitySlider: NSSlider!
+    private var bgOpacityLabel: NSTextField!
     private var colorfulIconsToggle: NSButton!
     private var openLinksInBrowserToggle: NSButton!
 
@@ -46,6 +43,7 @@ class SettingsWindowController: NSWindowController {
         window.title = "Settings"
         window.center()
         window.isReleasedWhenClosed = false
+        window.isRestorable = false
         self.init(window: window)
         setupUI()
     }
@@ -159,64 +157,34 @@ class SettingsWindowController: NSWindowController {
 
         var y: CGFloat = contentArea.frame.height > 0 ? contentArea.frame.height - 40 : 440
 
-        // Sidebar section
-        let sidebarHeader = makeHeader("Sidebar")
-        sidebarHeader.frame.origin = NSPoint(x: padding, y: y)
-        contentArea.addSubview(sidebarHeader)
+        // Background section
+        let bgHeader = makeHeader("Background")
+        bgHeader.frame.origin = NSPoint(x: padding, y: y)
+        contentArea.addSubview(bgHeader)
         y -= 36
 
-        let sidebarColorLabel = makeLabel("Color")
-        sidebarColorLabel.frame.origin = NSPoint(x: padding + 12, y: y + 2)
-        contentArea.addSubview(sidebarColorLabel)
+        let bgColorLabel = makeLabel("Color")
+        bgColorLabel.frame.origin = NSPoint(x: padding + 12, y: y + 2)
+        contentArea.addSubview(bgColorLabel)
 
-        sidebarColorWell = NSColorWell(frame: NSRect(x: controlX, y: y, width: 44, height: 28))
-        sidebarColorWell.color = settings.sidebarColor
-        sidebarColorWell.target = self
-        sidebarColorWell.action = #selector(sidebarColorChanged(_:))
-        contentArea.addSubview(sidebarColorWell)
+        bgColorWell = NSColorWell(frame: NSRect(x: controlX, y: y, width: 44, height: 28))
+        bgColorWell.color = settings.backgroundColor
+        bgColorWell.target = self
+        bgColorWell.action = #selector(bgColorChanged(_:))
+        contentArea.addSubview(bgColorWell)
         y -= 36
 
-        let sidebarOpLabel = makeLabel("Opacity")
-        sidebarOpLabel.frame.origin = NSPoint(x: padding + 12, y: y + 2)
-        contentArea.addSubview(sidebarOpLabel)
+        let bgOpLabel = makeLabel("Opacity")
+        bgOpLabel.frame.origin = NSPoint(x: padding + 12, y: y + 2)
+        contentArea.addSubview(bgOpLabel)
 
-        sidebarOpacitySlider = NSSlider(value: Double(settings.sidebarOpacity), minValue: 0.0, maxValue: 1.0, target: self, action: #selector(sidebarOpacityChanged(_:)))
-        sidebarOpacitySlider.frame = NSRect(x: controlX, y: y + 2, width: 160, height: 20)
-        contentArea.addSubview(sidebarOpacitySlider)
+        bgOpacitySlider = NSSlider(value: Double(settings.backgroundOpacity), minValue: 0.0, maxValue: 1.0, target: self, action: #selector(bgOpacityChanged(_:)))
+        bgOpacitySlider.frame = NSRect(x: controlX, y: y + 2, width: 160, height: 20)
+        contentArea.addSubview(bgOpacitySlider)
 
-        sidebarOpacityLabel = makeValueLabel(String(format: "%.0f%%", settings.sidebarOpacity * 100))
-        sidebarOpacityLabel.frame.origin = NSPoint(x: controlX + 168, y: y + 2)
-        contentArea.addSubview(sidebarOpacityLabel)
-        y -= 44
-
-        // Main Window section
-        let mainHeader = makeHeader("Main Window")
-        mainHeader.frame.origin = NSPoint(x: padding, y: y)
-        contentArea.addSubview(mainHeader)
-        y -= 36
-
-        let mainColorLabel = makeLabel("Color")
-        mainColorLabel.frame.origin = NSPoint(x: padding + 12, y: y + 2)
-        contentArea.addSubview(mainColorLabel)
-
-        mainColorWell = NSColorWell(frame: NSRect(x: controlX, y: y, width: 44, height: 28))
-        mainColorWell.color = settings.mainPanelColor
-        mainColorWell.target = self
-        mainColorWell.action = #selector(mainColorChanged(_:))
-        contentArea.addSubview(mainColorWell)
-        y -= 36
-
-        let mainOpLabel = makeLabel("Opacity")
-        mainOpLabel.frame.origin = NSPoint(x: padding + 12, y: y + 2)
-        contentArea.addSubview(mainOpLabel)
-
-        mainOpacitySlider = NSSlider(value: Double(settings.mainPanelOpacity), minValue: 0.0, maxValue: 1.0, target: self, action: #selector(mainOpacityChanged(_:)))
-        mainOpacitySlider.frame = NSRect(x: controlX, y: y + 2, width: 160, height: 20)
-        contentArea.addSubview(mainOpacitySlider)
-
-        mainOpacityLabel = makeValueLabel(String(format: "%.0f%%", settings.mainPanelOpacity * 100))
-        mainOpacityLabel.frame.origin = NSPoint(x: controlX + 168, y: y + 2)
-        contentArea.addSubview(mainOpacityLabel)
+        bgOpacityLabel = makeValueLabel(String(format: "%.0f%%", settings.backgroundOpacity * 100))
+        bgOpacityLabel.frame.origin = NSPoint(x: controlX + 168, y: y + 2)
+        contentArea.addSubview(bgOpacityLabel)
         y -= 44
 
         // File Explorer section
@@ -269,22 +237,13 @@ class SettingsWindowController: NSWindowController {
 
     // MARK: - Actions
 
-    @objc private func sidebarColorChanged(_ sender: NSColorWell) {
-        settings.sidebarColor = sender.color
+    @objc private func bgColorChanged(_ sender: NSColorWell) {
+        settings.backgroundColor = sender.color
     }
 
-    @objc private func sidebarOpacityChanged(_ sender: NSSlider) {
-        settings.sidebarOpacity = CGFloat(sender.doubleValue)
-        sidebarOpacityLabel.stringValue = String(format: "%.0f%%", sender.doubleValue * 100)
-    }
-
-    @objc private func mainColorChanged(_ sender: NSColorWell) {
-        settings.mainPanelColor = sender.color
-    }
-
-    @objc private func mainOpacityChanged(_ sender: NSSlider) {
-        settings.mainPanelOpacity = CGFloat(sender.doubleValue)
-        mainOpacityLabel.stringValue = String(format: "%.0f%%", sender.doubleValue * 100)
+    @objc private func bgOpacityChanged(_ sender: NSSlider) {
+        settings.backgroundOpacity = CGFloat(sender.doubleValue)
+        bgOpacityLabel.stringValue = String(format: "%.0f%%", sender.doubleValue * 100)
     }
 
     @objc private func colorfulIconsChanged(_ sender: NSButton) {
@@ -296,19 +255,14 @@ class SettingsWindowController: NSWindowController {
     }
 
     @objc private func resetDefaults(_ sender: Any?) {
-        settings.sidebarColor = AppearanceSettings.defaultSidebarColor
-        settings.sidebarOpacity = AppearanceSettings.defaultSidebarOpacity
-        settings.mainPanelColor = AppearanceSettings.defaultMainPanelColor
-        settings.mainPanelOpacity = AppearanceSettings.defaultMainPanelOpacity
+        settings.backgroundColor = AppearanceSettings.defaultBackgroundColor
+        settings.backgroundOpacity = AppearanceSettings.defaultBackgroundOpacity
         settings.colorfulFileIcons = true
         settings.openLinksInClomeBrowser = true
 
-        sidebarColorWell.color = settings.sidebarColor
-        sidebarOpacitySlider.doubleValue = Double(settings.sidebarOpacity)
-        sidebarOpacityLabel.stringValue = String(format: "%.0f%%", settings.sidebarOpacity * 100)
-        mainColorWell.color = settings.mainPanelColor
-        mainOpacitySlider.doubleValue = Double(settings.mainPanelOpacity)
-        mainOpacityLabel.stringValue = String(format: "%.0f%%", settings.mainPanelOpacity * 100)
+        bgColorWell.color = settings.backgroundColor
+        bgOpacitySlider.doubleValue = Double(settings.backgroundOpacity)
+        bgOpacityLabel.stringValue = String(format: "%.0f%%", settings.backgroundOpacity * 100)
         colorfulIconsToggle.state = .on
         openLinksInBrowserToggle.state = .on
     }

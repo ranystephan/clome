@@ -18,6 +18,7 @@ class SidebarView: NSView {
     /// Claude sessions popover
     private var sessionsBtn: NSButton!
     private var sessionsPopover: NSPopover?
+    private var sessionsRefreshTimer: Timer?
     private var sessionsBtnIcon: NSImageView?
     private var sessionsBtnLabel: NSTextField?
 
@@ -51,6 +52,26 @@ class SidebarView: NSView {
     /// Coalescing flag for setNeedsReload()
     private var reloadScheduled = false
 
+    // MARK: - New Sectioned Layout Components
+
+    /// Compact workspace selector at top
+    private var workspaceSwitcher: WorkspaceSwitcherView?
+
+    /// Multi-root file explorer
+    private var multiRootExplorer: MultiRootExplorerView?
+
+    /// Source control section
+    private var sourceControlSection: SourceControlSection?
+
+    /// Explorer resize handle
+    private var explorerResizeHandle: ExplorerResizeHandle?
+
+    /// Tabs section header
+    private var tabsSectionHeader: SidebarSectionHeader?
+
+    /// Whether the tabs section is expanded
+    private var isTabsSectionExpanded: Bool = true
+
     /// Callbacks
     var onToggleSidebar: (() -> Void)?
     var onDragTabBegan: ((Int, Int) -> Void)?                // (wsIndex, tabIndex)
@@ -71,24 +92,59 @@ class SidebarView: NSView {
         wantsLayer = true
         layer?.backgroundColor = bgColor.cgColor
 
-        // ──── Top navigation bar (traffic light space + sidebar toggle) ────
-        let navBar = NSView()
-        navBar.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(navBar)
+        // ──── Workspace Switcher (top, replaces old nav bar) ────
+        let switcher = WorkspaceSwitcherView(workspaceManager: workspaceManager)
+        switcher.translatesAutoresizingMaskIntoConstraints = false
+        switcher.onToggleSidebar = { [weak self] in self?.onToggleSidebar?() }
+        addSubview(switcher)
+        workspaceSwitcher = switcher
 
-        // Sidebar toggle button (next to traffic lights)
-        let sidebarBtn = makeNavButton(symbol: "sidebar.left", action: #selector(sidebarToggleTapped))
-        navBar.addSubview(sidebarBtn)
+        // ──── Multi-Root File Explorer ────
+        let explorer = MultiRootExplorerView()
+        explorer.translatesAutoresizingMaskIntoConstraints = false
+        explorer.delegate = self
+        addSubview(explorer)
+        multiRootExplorer = explorer
 
-        // Notification bell button
-        let bellBtn = makeNavButton(symbol: "bell", action: #selector(bellTapped))
-        navBar.addSubview(bellBtn)
+        // ──── Explorer Resize Handle ────
+        let resizeHandle = ExplorerResizeHandle()
+        resizeHandle.translatesAutoresizingMaskIntoConstraints = false
+        resizeHandle.onDrag = { [weak self] delta in
+            guard let self else { return }
+            let newHeight = max(100, min(600, self.explorerHeight - delta))
+            self.explorerHeight = newHeight
+            self.explorerHeightConstraint?.constant = newHeight
+        }
+        resizeHandle.onDragBegan = { [weak self] in self?.isExplorerResizing = true }
+        resizeHandle.onDragEnded = { [weak self] in
+            guard let self else { return }
+            self.isExplorerResizing = false
+            if self.needsReloadAfterResize {
+                self.needsReloadAfterResize = false
+                self.reloadWorkspaces()
+            }
+        }
+        addSubview(resizeHandle)
+        explorerResizeHandle = resizeHandle
 
-        // New tab plus button
-        let plusBtn = makeNavButton(symbol: "plus", action: #selector(plusTapped))
-        navBar.addSubview(plusBtn)
+        // ──── Source Control Section ────
+        let scSection = SourceControlSection()
+        scSection.translatesAutoresizingMaskIntoConstraints = false
+        scSection.onFileSelected = { [weak self] path in
+            guard let workspace = self?.workspaceManager.activeWorkspace else { return }
+            workspace.openFileAsTab(path)
+        }
+        addSubview(scSection)
+        sourceControlSection = scSection
 
-        // ──── Scrollable workspace/tab list ────
+        // ──── Separator ────
+        let separator = NSView()
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.wantsLayer = true
+        separator.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.06).cgColor
+        addSubview(separator)
+
+        // ──── Scrollable tab list (terminals/browsers only) ────
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
@@ -97,7 +153,7 @@ class SidebarView: NSView {
         addSubview(scrollView)
 
         stackView.orientation = .vertical
-        stackView.spacing = 14
+        stackView.spacing = 2
         stackView.alignment = .centerX
         stackView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -153,37 +209,42 @@ class SidebarView: NSView {
         bottomBar.addSubview(sessionsBtn)
 
         // ──── Layout ────
-        scrollViewBottomConstraint = scrollView.bottomAnchor.constraint(equalTo: bottomBar.topAnchor)
+        explorerHeightConstraint = explorer.heightAnchor.constraint(equalToConstant: explorerHeight)
+        scrollViewBottomConstraint = scSection.bottomAnchor.constraint(lessThanOrEqualTo: bottomBar.topAnchor)
 
         NSLayoutConstraint.activate([
-            // Nav bar
-            navBar.topAnchor.constraint(equalTo: topAnchor),
-            navBar.leadingAnchor.constraint(equalTo: leadingAnchor),
-            navBar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            navBar.heightAnchor.constraint(equalToConstant: 44),
+            // Workspace switcher (top)
+            switcher.topAnchor.constraint(equalTo: topAnchor),
+            switcher.leadingAnchor.constraint(equalTo: leadingAnchor),
+            switcher.trailingAnchor.constraint(equalTo: trailingAnchor),
 
-            // Sidebar toggle button (aligned with traffic lights center)
-            sidebarBtn.leadingAnchor.constraint(equalTo: navBar.leadingAnchor, constant: 76),
-            sidebarBtn.topAnchor.constraint(equalTo: navBar.topAnchor, constant: 3),
-            sidebarBtn.widthAnchor.constraint(equalToConstant: 28),
-            sidebarBtn.heightAnchor.constraint(equalToConstant: 28),
-
-            // Bell button
-            bellBtn.leadingAnchor.constraint(equalTo: sidebarBtn.trailingAnchor, constant: 8),
-            bellBtn.centerYAnchor.constraint(equalTo: sidebarBtn.centerYAnchor),
-            bellBtn.widthAnchor.constraint(equalToConstant: 28),
-            bellBtn.heightAnchor.constraint(equalToConstant: 28),
-
-            // Plus button
-            plusBtn.leadingAnchor.constraint(equalTo: bellBtn.trailingAnchor, constant: 8),
-            plusBtn.centerYAnchor.constraint(equalTo: sidebarBtn.centerYAnchor),
-            plusBtn.widthAnchor.constraint(equalToConstant: 28),
-            plusBtn.heightAnchor.constraint(equalToConstant: 28),
-
-            // Scrollable list
-            scrollView.topAnchor.constraint(equalTo: navBar.bottomAnchor, constant: 2),
+            // Scrollable tab list (workspaces)
+            scrollView.topAnchor.constraint(equalTo: switcher.bottomAnchor, constant: 4),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+
+            // Resize handle (between workspaces and explorer)
+            resizeHandle.topAnchor.constraint(equalTo: scrollView.bottomAnchor),
+            resizeHandle.leadingAnchor.constraint(equalTo: leadingAnchor),
+            resizeHandle.trailingAnchor.constraint(equalTo: trailingAnchor),
+            resizeHandle.heightAnchor.constraint(equalToConstant: 12),
+
+            // File explorer
+            explorer.topAnchor.constraint(equalTo: resizeHandle.bottomAnchor),
+            explorer.leadingAnchor.constraint(equalTo: leadingAnchor),
+            explorer.trailingAnchor.constraint(equalTo: trailingAnchor),
+            explorerHeightConstraint!,
+
+            // Separator
+            separator.topAnchor.constraint(equalTo: explorer.bottomAnchor, constant: 4),
+            separator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            separator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            separator.heightAnchor.constraint(equalToConstant: 1),
+
+            // Source control
+            scSection.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 2),
+            scSection.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scSection.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollViewBottomConstraint,
 
             stackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
@@ -234,33 +295,27 @@ class SidebarView: NSView {
 
     @objc private func onNotificationChange(_ n: Notification) {
         if n.name == .terminalActivityChanged {
-            // Debounce activity updates to avoid sidebar flickering
-            activityDebounceTimer?.invalidate()
-            activityDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
-                self?.reloadWorkspaces()
-            }
-        } else {
-            reloadWorkspaces()
+            // Terminal activity changes (output preview, program detection) happen every ~1s.
+            // Do NOT rebuild the entire sidebar — it destroys hover states and eats clicks.
+            // Only rebuild if we detect structural changes (tab count, titles).
+            return
         }
+        reloadWorkspaces()
     }
 
     @objc private func onTerminalFocused(_ n: Notification) {
         guard let terminal = n.object as? TerminalSurface else { return }
-        // Update focusedPane on the tab that contains this terminal
         guard let workspace = workspaceManager.activeWorkspace,
               let tab = workspace.activeTab else { return }
-        // Check if this terminal is one of the panes in the active tab's split
         let leaves = tab.splitContainer.allLeafViews
         if leaves.contains(where: { $0 === terminal }) {
             tab.focusedPane = terminal
             tab.splitContainer.focusedPane = terminal
-            reloadWorkspaces()
+            // Don't rebuild — just update the focused pane tracking.
+            // The sidebar will rebuild on the next structural change.
         }
     }
     @objc private func sidebarToggleTapped() { onToggleSidebar?() }
-    @objc private func bellTapped() {
-        // Future: show notifications panel
-    }
     @objc private func shelfToggleTapped() {
         if isShelfVisible {
             hideFileShelf()
@@ -277,6 +332,8 @@ class SidebarView: NSView {
     func toggleSessionsPopover() {
         if let popover = sessionsPopover, popover.isShown {
             popover.performClose(nil)
+            sessionsRefreshTimer?.invalidate()
+            sessionsRefreshTimer = nil
             sessionsPopover = nil
             sessionsBtnIcon?.contentTintColor = NSColor(red: 0.85, green: 0.55, blue: 0.35, alpha: 1.0)
             sessionsBtnLabel?.textColor = NSColor(white: 1.0, alpha: 0.65)
@@ -315,21 +372,13 @@ class SidebarView: NSView {
         }
         listView.onRefresh = { [weak self] in
             guard let self else { return }
-            let projectPath = self.workspaceManager.activeWorkspace?.workingDirectory ?? ""
-            let sessions = ClaudeSessionManager.shared.refreshSessions(forProject: projectPath)
-            listView.reloadSessions(sessions)
+            ClaudeSessionManager.shared.invalidateCache()
+            listView.reloadSessions(self.loadClaudeSessions())
         }
 
-        // Load initial sessions for the current project
-        let projectPath = workspaceManager.activeWorkspace?.workingDirectory ?? ""
-        if !projectPath.isEmpty {
-            let sessions = ClaudeSessionManager.shared.discoverSessions(forProject: projectPath)
-            listView.reloadSessions(sessions)
-        } else {
-            // If no active working directory, show all sessions
-            let sessions = ClaudeSessionManager.shared.discoverAllSessions()
-            listView.reloadSessions(sessions)
-        }
+        // Load initial sessions
+        ClaudeSessionManager.shared.invalidateCache()
+        listView.reloadSessions(loadClaudeSessions())
 
         let vc = NSViewController()
         let effectView = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 300, height: 400))
@@ -350,6 +399,23 @@ class SidebarView: NSView {
         popover.delegate = self
         popover.show(relativeTo: sessionsBtn.bounds, of: sessionsBtn, preferredEdge: .maxY)
         sessionsPopover = popover
+
+        // Auto-refresh every 5s while popover is open
+        sessionsRefreshTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self, weak listView] _ in
+            guard let self, let listView else { return }
+            ClaudeSessionManager.shared.invalidateCache()
+            let sessions = self.loadClaudeSessions()
+            listView.reloadSessions(sessions)
+        }
+    }
+
+    private func loadClaudeSessions() -> [ClaudeSession] {
+        let projectPath = workspaceManager.activeWorkspace?.workingDirectory ?? ""
+        if !projectPath.isEmpty {
+            return ClaudeSessionManager.shared.discoverSessions(forProject: projectPath)
+        } else {
+            return ClaudeSessionManager.shared.discoverAllSessions()
+        }
     }
 
     private func launchClaudeSession(sessionId: String, projectPath: String, fork: Bool) {
@@ -369,9 +435,11 @@ class SidebarView: NSView {
         addSubview(shelf)
         fileShelfView = shelf
 
-        // Swap scroll view bottom constraint
+        // Swap bottom constraint so source control connects to shelf instead of bottom bar
         scrollViewBottomConstraint.isActive = false
-        scrollViewBottomConstraint = scrollView.bottomAnchor.constraint(equalTo: shelf.topAnchor)
+        if let sc = sourceControlSection {
+            scrollViewBottomConstraint = sc.bottomAnchor.constraint(lessThanOrEqualTo: shelf.topAnchor)
+        }
         scrollViewBottomConstraint.isActive = true
 
         NSLayoutConstraint.activate([
@@ -401,7 +469,9 @@ class SidebarView: NSView {
             shelf.removeFromSuperview()
             self.fileShelfView = nil
             self.scrollViewBottomConstraint.isActive = false
-            self.scrollViewBottomConstraint = self.scrollView.bottomAnchor.constraint(equalTo: self.bottomBar.topAnchor)
+            if let sc = self.sourceControlSection {
+                self.scrollViewBottomConstraint = sc.bottomAnchor.constraint(lessThanOrEqualTo: self.bottomBar.topAnchor)
+            }
             self.scrollViewBottomConstraint.isActive = true
         })
     }
@@ -444,6 +514,22 @@ class SidebarView: NSView {
             return
         }
 
+        // ── Update new sectioned components (lightweight — no file tree reload) ──
+        workspaceSwitcher?.update()
+
+        // Update file explorer with project roots from active workspace
+        if let workspace = workspaceManager.activeWorkspace {
+            multiRootExplorer?.setProjectRoots(workspace.projectRoots)
+            // Update active file highlight from the current editor tab
+            if let activeTab = workspace.activeTab, let editor = activeTab.view as? EditorPanel {
+                multiRootExplorer?.activeFilePath = editor.filePath
+            } else {
+                multiRootExplorer?.activeFilePath = nil
+            }
+        } else {
+            multiRootExplorer?.setProjectRoots([])
+        }
+
         // Auto-expand all workspaces on first load only
         if !hasAutoExpanded {
             hasAutoExpanded = true
@@ -482,39 +568,56 @@ class SidebarView: NSView {
             ])
 
             // ── Workspace header ──
-            let header = SidebarRow(height: 32)
+            let header = SidebarRow(height: 30)
+            let folderIcon = NSImageView()
+            let chevronIcon = NSImageView()
             let plusIcon = NSImageView()
             header.configure { view in
                 let tc = isActive ? NSColor(white: 0.92, alpha: 1.0) : NSColor(white: 0.55, alpha: 1.0)
 
-                let folderIcon = NSImageView()
-                let folderCfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+                // Folder icon — visible by default, hides on hover
+                let folderCfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
                 let folderName = isExpanded ? "folder.fill" : "folder"
+                folderIcon.translatesAutoresizingMaskIntoConstraints = false
                 folderIcon.image = NSImage(systemSymbolName: folderName, accessibilityDescription: nil)?.withSymbolConfiguration(folderCfg)
                 folderIcon.contentTintColor = isActive ? workspace.color.nsColor : workspace.color.nsColor.withAlphaComponent(0.6)
                 folderIcon.imageScaling = .scaleProportionallyDown
-                view.addSub(folderIcon, leading: 8, centerY: true, width: 18, height: 16)
+                view.addSub(folderIcon, leading: 10, centerY: true, width: 16, height: 14)
+
+                // Chevron — same position as folder, hidden by default, replaces folder on hover
+                let chevCfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+                let chevName = isExpanded ? "chevron.down" : "chevron.right"
+                chevronIcon.translatesAutoresizingMaskIntoConstraints = false
+                chevronIcon.image = NSImage(systemSymbolName: chevName, accessibilityDescription: nil)?.withSymbolConfiguration(chevCfg)
+                chevronIcon.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+                chevronIcon.imageScaling = .scaleProportionallyDown
+                chevronIcon.alphaValue = 0
+                view.addSub(chevronIcon, leading: 10, centerY: true, width: 16, height: 14)
 
                 let title = NSTextField(labelWithString: workspace.name)
-                title.font = .systemFont(ofSize: 12, weight: .semibold)
+                title.font = .systemFont(ofSize: 12, weight: .medium)
                 title.textColor = tc
                 title.lineBreakMode = .byTruncatingTail
-                view.addSub(title, leading: 30, centerY: true, trailingOffset: 28)
+                view.addSub(title, leading: 32, centerY: true, trailingOffset: 28)
 
                 // Small "+" icon on the right, hidden until hover
                 let cfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
                 plusIcon.translatesAutoresizingMaskIntoConstraints = false
                 plusIcon.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New tab")?.withSymbolConfiguration(cfg)
-                plusIcon.contentTintColor = NSColor(white: tc.whiteComponent, alpha: 0.5)
+                plusIcon.contentTintColor = NSColor(white: 0.50, alpha: 1.0)
                 plusIcon.imageScaling = .scaleProportionallyDown
                 plusIcon.alphaValue = 0
                 view.addSub(plusIcon, trailing: 6, centerY: true, width: 20, height: 20)
             }
 
             header.bgHover = NSColor(white: 1.0, alpha: 0.04)
+            header.cornerRadius = 6
             header.onHoverChange = { hovering in
                 NSAnimationContext.runAnimationGroup { ctx in
                     ctx.duration = 0.15
+                    // Crossfade: folder ↔ chevron
+                    folderIcon.animator().alphaValue = hovering ? 0.0 : 1.0
+                    chevronIcon.animator().alphaValue = hovering ? 1.0 : 0.0
                     plusIcon.animator().alphaValue = hovering ? 1.0 : 0.0
                 }
             }
@@ -548,8 +651,27 @@ class SidebarView: NSView {
             header.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 4).isActive = true
             header.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -4).isActive = true
 
-            // ── Tab rows ──
+            // ── Tab rows (indented with vertical guide line) ──
             if isExpanded {
+                // Container with subtle left indent line
+                let tabsContainer = NSView()
+                tabsContainer.translatesAutoresizingMaskIntoConstraints = false
+                tabsContainer.wantsLayer = true
+
+                let tabsStack = NSStackView()
+                tabsStack.orientation = .vertical
+                tabsStack.spacing = 1
+                tabsStack.alignment = .leading
+                tabsStack.translatesAutoresizingMaskIntoConstraints = false
+                tabsContainer.addSubview(tabsStack)
+
+                NSLayoutConstraint.activate([
+                    tabsStack.leadingAnchor.constraint(equalTo: tabsContainer.leadingAnchor, constant: 10),
+                    tabsStack.trailingAnchor.constraint(equalTo: tabsContainer.trailingAnchor),
+                    tabsStack.topAnchor.constraint(equalTo: tabsContainer.topAnchor),
+                    tabsStack.bottomAnchor.constraint(equalTo: tabsContainer.bottomAnchor),
+                ])
+
                 for (tabIndex, tab) in workspace.tabs.enumerated() {
                     let isTabActive = isActive && tabIndex == workspace.activeTabIndex
                     let capturedTabIndex = tabIndex
@@ -630,9 +752,9 @@ class SidebarView: NSView {
                             self?.setNeedsReload()
                         }
 
-                        wsStack.addArrangedSubview(splitHeader)
-                        splitHeader.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 2).isActive = true
-                        splitHeader.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -2).isActive = true
+                        tabsStack.addArrangedSubview(splitHeader)
+                        splitHeader.leadingAnchor.constraint(equalTo: tabsStack.leadingAnchor, constant: 2).isActive = true
+                        splitHeader.trailingAnchor.constraint(equalTo: tabsStack.trailingAnchor, constant: -2).isActive = true
 
                         // ── Pane group (collapsible) ──
                         if !isSplitCollapsed && isTabActive {
@@ -709,9 +831,9 @@ class SidebarView: NSView {
                                 }
                             }
 
-                            wsStack.addArrangedSubview(splitGroup)
-                            splitGroup.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 2).isActive = true
-                            splitGroup.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -2).isActive = true
+                            tabsStack.addArrangedSubview(splitGroup)
+                            splitGroup.leadingAnchor.constraint(equalTo: tabsStack.leadingAnchor, constant: 2).isActive = true
+                            splitGroup.trailingAnchor.constraint(equalTo: tabsStack.trailingAnchor, constant: -2).isActive = true
                         }
 
                     } else if hasActivity, let terminal {
@@ -724,9 +846,9 @@ class SidebarView: NSView {
                             tabIndex: capturedTabIndex,
                             workspace: workspace
                         )
-                        wsStack.addArrangedSubview(card)
-                        card.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 2).isActive = true
-                        card.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -2).isActive = true
+                        tabsStack.addArrangedSubview(card)
+                        card.leadingAnchor.constraint(equalTo: tabsStack.leadingAnchor, constant: 2).isActive = true
+                        card.trailingAnchor.constraint(equalTo: tabsStack.trailingAnchor, constant: -2).isActive = true
                     } else {
                         // ── Standard tab row (non-split) ──
                         let tabRow = SidebarRow(height: 32)
@@ -797,7 +919,9 @@ class SidebarView: NSView {
                         tabRow.onClick = { [weak self] _ in
                             self?.workspaceManager.switchTo(index: capturedWsIndex)
                             workspace.selectTab(capturedTabIndex)
-                            self?.reloadWorkspaces()
+                            // Don't call reloadWorkspaces() here — it destroys the view
+                            // being clicked, causing flickering and missed clicks.
+                            // The tab bar and content area update via callbacks.
                         }
                         tabRow.onDoubleClick = { [weak self] in
                             self?.startRenameTab(workspace: workspace, tabIndex: capturedTabIndex)
@@ -818,9 +942,9 @@ class SidebarView: NSView {
                             self?.setNeedsReload()
                         }
 
-                        wsStack.addArrangedSubview(tabRow)
-                        tabRow.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 2).isActive = true
-                        tabRow.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -2).isActive = true
+                        tabsStack.addArrangedSubview(tabRow)
+                        tabRow.leadingAnchor.constraint(equalTo: tabsStack.leadingAnchor, constant: 2).isActive = true
+                        tabRow.trailingAnchor.constraint(equalTo: tabsStack.trailingAnchor, constant: -2).isActive = true
                     }
 
                     // ── File explorer inline for active project tab ──
@@ -841,10 +965,10 @@ class SidebarView: NSView {
                             divider.centerYAnchor.constraint(equalTo: dividerWrap.centerYAnchor),
                             divider.heightAnchor.constraint(equalToConstant: 1),
                         ])
-                        wsStack.addArrangedSubview(dividerWrap)
+                        tabsStack.addArrangedSubview(dividerWrap)
                         NSLayoutConstraint.activate([
-                            dividerWrap.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor),
-                            dividerWrap.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor),
+                            dividerWrap.leadingAnchor.constraint(equalTo: tabsStack.leadingAnchor),
+                            dividerWrap.trailingAnchor.constraint(equalTo: tabsStack.trailingAnchor),
                             dividerWrap.heightAnchor.constraint(equalToConstant: 8),
                         ])
 
@@ -857,12 +981,12 @@ class SidebarView: NSView {
                             old.isActive = false
                         }
 
-                        wsStack.addArrangedSubview(explorer)
+                        tabsStack.addArrangedSubview(explorer)
                         let heightConstraint = explorer.heightAnchor.constraint(equalToConstant: self.explorerHeight)
                         self.explorerHeightConstraint = heightConstraint
                         NSLayoutConstraint.activate([
-                            explorer.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor),
-                            explorer.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor),
+                            explorer.leadingAnchor.constraint(equalTo: tabsStack.leadingAnchor),
+                            explorer.trailingAnchor.constraint(equalTo: tabsStack.trailingAnchor),
                             heightConstraint,
                         ])
 
@@ -871,7 +995,7 @@ class SidebarView: NSView {
                         handle.translatesAutoresizingMaskIntoConstraints = false
                         handle.onDrag = { [weak self] delta in
                             guard let self else { return }
-                            let newHeight = max(100, min(600, self.explorerHeight + delta))
+                            let newHeight = max(100, min(600, self.explorerHeight - delta))
                             self.explorerHeight = newHeight
                             self.explorerHeightConstraint?.constant = newHeight
                         }
@@ -886,10 +1010,10 @@ class SidebarView: NSView {
                                 self.reloadWorkspaces()
                             }
                         }
-                        wsStack.addArrangedSubview(handle)
+                        tabsStack.addArrangedSubview(handle)
                         NSLayoutConstraint.activate([
-                            handle.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor),
-                            handle.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor),
+                            handle.leadingAnchor.constraint(equalTo: tabsStack.leadingAnchor),
+                            handle.trailingAnchor.constraint(equalTo: tabsStack.trailingAnchor),
                             handle.heightAnchor.constraint(equalToConstant: 12),
                         ])
                     }
@@ -946,10 +1070,10 @@ class SidebarView: NSView {
                     cardStack.addArrangedSubview(projectCard)
                     cardStack.addArrangedSubview(editorCard)
 
-                    wsStack.addArrangedSubview(cardsContainer)
+                    tabsStack.addArrangedSubview(cardsContainer)
                     NSLayoutConstraint.activate([
-                        cardsContainer.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 4),
-                        cardsContainer.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -4),
+                        cardsContainer.leadingAnchor.constraint(equalTo: tabsStack.leadingAnchor, constant: 4),
+                        cardsContainer.trailingAnchor.constraint(equalTo: tabsStack.trailingAnchor, constant: -4),
                         cardsContainer.heightAnchor.constraint(equalToConstant: 52),
 
                         cardStack.leadingAnchor.constraint(equalTo: cardsContainer.leadingAnchor),
@@ -959,6 +1083,10 @@ class SidebarView: NSView {
                     ])
                 }
 
+                // Add the indented tabs container to the workspace group
+                wsStack.addArrangedSubview(tabsContainer)
+                tabsContainer.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor).isActive = true
+                tabsContainer.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor).isActive = true
             }
 
             // Add workspace group to main stack
@@ -1332,7 +1460,8 @@ class SidebarView: NSView {
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
             self?.workspaceManager.switchTo(index: wsIndex)
-            workspace.addProjectTab(directory: url.path)
+            workspace.addProjectRoot(path: url.path)
+            WelcomeView.addRecentProject(url.path)
             self?.reloadWorkspaces()
             self?.notifyTabsChanged()
         }
@@ -1488,9 +1617,54 @@ class SidebarView: NSView {
 
 extension SidebarView: NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) {
+        sessionsRefreshTimer?.invalidate()
+        sessionsRefreshTimer = nil
         sessionsPopover = nil
         sessionsBtnIcon?.contentTintColor = NSColor(red: 0.85, green: 0.55, blue: 0.35, alpha: 1.0)
         sessionsBtnLabel?.textColor = NSColor(white: 1.0, alpha: 0.65)
+    }
+}
+
+// MARK: - MultiRootExplorerDelegate
+
+extension SidebarView: MultiRootExplorerDelegate {
+    func multiRootExplorer(_ explorer: MultiRootExplorerView, didSelectFile path: String) {
+        guard let workspace = workspaceManager.activeWorkspace else { return }
+        workspace.openFileAsTab(path)
+    }
+
+    func multiRootExplorer(_ explorer: MultiRootExplorerView, didDoubleClickFile path: String) {
+        guard let workspace = workspaceManager.activeWorkspace else { return }
+        workspace.openFileAsTab(path)
+    }
+
+    func multiRootExplorer(_ explorer: MultiRootExplorerView, didRequestAddRoot sender: Any?) {
+        guard let workspace = workspaceManager.activeWorkspace else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a folder to add to workspace"
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            workspace.addProjectRoot(path: url.path)
+            WelcomeView.addRecentProject(url.path)
+            self?.reloadWorkspaces()
+            self?.updateSourceControl()
+        }
+    }
+
+    /// Update the source control section with current git status.
+    func updateSourceControl() {
+        guard let workspace = workspaceManager.activeWorkspace else { return }
+        sourceControlSection?.update(roots: workspace.projectRoots)
+    }
+
+    func multiRootExplorer(_ explorer: MultiRootExplorerView, didRequestRemoveRoot root: ProjectRoot) {
+        guard let workspace = workspaceManager.activeWorkspace else { return }
+        workspace.removeProjectRoot(root)
+        reloadWorkspaces()
     }
 }
 
@@ -1597,18 +1771,8 @@ class ClickableCardView: NSView {
 class NewTabCard: NSView {
     var onClick: (() -> Void)?
 
-    private static func sidebarIsLight() -> Bool {
-        let s = AppearanceSettings.shared
-        let c = s.sidebarColor.usingColorSpace(.sRGB) ?? s.sidebarColor
-        let o = s.sidebarOpacity
-        let base: CGFloat = 0.1
-        let r = base * (1 - o) + c.redComponent * o
-        let g = base * (1 - o) + c.greenComponent * o
-        let b = base * (1 - o) + c.blueComponent * o
-        let luminance = r * 0.299 + g * 0.587 + b * 0.114
-        return luminance > 0.35
-    }
-    private static var fgWhite: CGFloat { sidebarIsLight() ? 0.0 : 1.0 }
+    private static func sidebarIsLight() -> Bool { false }
+    private static var fgWhite: CGFloat { 1.0 }
 
     init(icon: String, label: String) {
         super.init(frame: .zero)

@@ -25,6 +25,10 @@ settings:
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Manual
     ENABLE_HARDENED_RUNTIME: YES
+    # Disable library validation so WKWebView XPC services (WebContent, GPU,
+    # Networking) can load their dylibs without code-signing team conflicts.
+    # This matches the cs.disable-library-validation entitlement.
+    DISABLE_LIBRARY_VALIDATION: YES
 
 targets:
   Clome:
@@ -41,6 +45,17 @@ targets:
         excludes:
           - "Info.plist"
           - "Clome.entitlements"
+          - "ghostty"
+          - "terminfo"
+      # Ghostty resources (terminfo, shell-integration, themes) are added
+      # as folder references so Xcode copies them verbatim into the bundle
+      # without trying to compile .d directories as DTrace scripts.
+      - path: Resources/ghostty
+        type: folder
+        buildPhase: resources
+      - path: Resources/terminfo
+        type: folder
+        buildPhase: resources
     settings:
       base:
         SWIFT_OBJC_BRIDGING_HEADER: Sources/CGhostty/include/Clome-Bridging-Header.h

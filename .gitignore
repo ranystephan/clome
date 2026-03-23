@@ -33,3 +33,6 @@ dist/
 
 # App bundles
 *.app
+.claude/
+.history/
+claude_session.log

@@ -49,9 +49,18 @@ class ClaudeSessionManager {
     // MARK: - Session Discovery
 
     /// Discovers all Claude sessions for a given project directory.
+    /// `projectPath` can be a real path (e.g. `/Users/x/Desktop/clome`) or an already-encoded
+    /// directory name (e.g. `-Users-x-Desktop-clome`).
     /// Returns sessions sorted by last active date (most recent first).
     func discoverSessions(forProject projectPath: String) -> [ClaudeSession] {
-        let encodedPath = Self.encodedCwd(projectPath)
+        // If projectPath starts with `-`, it's already an encoded directory name.
+        // Don't re-encode it (encoding is lossy for paths containing literal dashes).
+        let encodedPath: String
+        if projectPath.hasPrefix("-") || projectPath.hasPrefix("/private/tmp") {
+            encodedPath = projectPath
+        } else {
+            encodedPath = Self.encodedCwd(projectPath)
+        }
         let projectDir = (claudeProjectsDir as NSString).appendingPathComponent(encodedPath)
 
         // Check cache validity
@@ -73,9 +82,19 @@ class ClaudeSessionManager {
             return []
         }
 
+        // Resolve a real filesystem path for sessions (used for launching).
+        // If projectPath is encoded (starts with `-`), try to decode it.
+        // The decoding is lossy, so also check the actual JSONL for the cwd.
+        let realProjectPath: String
+        if projectPath.hasPrefix("-") {
+            realProjectPath = Self.decodedCwd(projectPath)
+        } else {
+            realProjectPath = projectPath
+        }
+
         for file in files where file.hasSuffix(".jsonl") {
             let filePath = (projectDir as NSString).appendingPathComponent(file)
-            if let session = parseSessionMetadata(at: filePath, projectPath: projectPath) {
+            if let session = parseSessionMetadata(at: filePath, projectPath: realProjectPath) {
                 sessions.append(session)
             }
         }
@@ -124,8 +143,9 @@ class ClaudeSessionManager {
 
         var allSessions: [ClaudeSession] = []
         for dir in dirs {
-            let projectPath = Self.decodedCwd(dir)
-            let sessions = discoverSessions(forProject: projectPath)
+            // Pass the raw encoded directory name directly — don't decode/re-encode
+            // because the encoding is lossy (can't distinguish `-` from `/` in paths).
+            let sessions = discoverSessions(forProject: dir)
             allSessions.append(contentsOf: sessions)
         }
 
@@ -164,6 +184,7 @@ class ClaudeSessionManager {
         guard let files = try? fileManager.contentsOfDirectory(atPath: sessionsDir) else { return result }
 
         var aliveSessionIds: Set<String> = []
+        var pidToSession: [Int: String] = [:]
         for file in files where file.hasSuffix(".json") {
             let path = (sessionsDir as NSString).appendingPathComponent(file)
             guard let data = fileManager.contents(atPath: path),
@@ -172,6 +193,7 @@ class ClaudeSessionManager {
                   let sessionId = json["sessionId"] as? String else { continue }
             if kill(Int32(pid), 0) == 0 {
                 aliveSessionIds.insert(sessionId)
+                pidToSession[pid] = sessionId
             }
         }
 
@@ -182,35 +204,60 @@ class ClaudeSessionManager {
             result[sid] = "Active"
         }
 
-        // Step 3: Try to upgrade label to workspace name by scanning Clome terminals.
-        // First try direct match via claudeSessionId tag (set when launched from Clome),
-        // then fall back to cwd matching for sessions started externally.
+        // Step 3: Try to upgrade "Active" to workspace name.
         guard let appDelegate = NSApp.delegate as? ClomeAppDelegate,
               let window = appDelegate.mainWindow else { return result }
 
+        // 3a: Direct tag match — terminals launched via addClaudeSessionTab
         for workspace in window.workspaceManager.workspaces {
             for tab in workspace.tabs {
                 for leaf in tab.splitContainer.allLeafViews {
-                    guard let terminal = leaf as? TerminalSurface else { continue }
+                    guard let terminal = leaf as? TerminalSurface,
+                          let taggedId = terminal.claudeSessionId,
+                          aliveSessionIds.contains(taggedId) else { continue }
+                    result[taggedId] = workspace.name
+                }
+            }
+        }
 
-                    // Direct match: terminal was launched via addClaudeSessionTab
-                    if let taggedId = terminal.claudeSessionId, aliveSessionIds.contains(taggedId) {
-                        result[taggedId] = workspace.name
-                        continue
-                    }
+        // 3b: PID ancestry match — for sessions launched before the tag was added.
+        // Walk each alive claude PID's parent chain; if Clome's PID is an ancestor,
+        // the session runs inside Clome. Match the specific workspace by finding
+        // which terminal surface detected "Claude Code" with a matching cwd.
+        let clomePid = ProcessInfo.processInfo.processIdentifier
+        for (pid, sessionId) in pidToSession where result[sessionId] == "Active" {
+            // Walk up the parent chain (max 8 levels: claude → zsh → login → ghostty → Clome)
+            var current = Int32(pid)
+            var isClomeChild = false
+            for _ in 0..<8 {
+                var info = kinfo_proc()
+                var size = MemoryLayout<kinfo_proc>.size
+                var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, current]
+                guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { break }
+                let ppid = info.kp_eproc.e_ppid
+                if ppid <= 1 { break }
+                if ppid == clomePid {
+                    isClomeChild = true
+                    break
+                }
+                current = ppid
+            }
 
-                    // Fallback: match by working directory for Claude Code terminals
-                    guard terminal.detectedProgram == "Claude Code",
-                          let termCwd = terminal.workingDirectory else { continue }
+            guard isClomeChild else { continue }
 
-                    for sid in aliveSessionIds where result[sid] == "Active" {
-                        let ctxPath = "/tmp/clome-claude-context/\(sid).json"
-                        if let data = fileManager.contents(atPath: ctxPath),
-                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                           let cwd = json["cwd"] as? String,
-                           cwd == termCwd {
-                            result[sid] = workspace.name
-                        }
+            // Find the workspace — match by cwd from context bridge
+            let ctxPath = "/tmp/clome-claude-context/\(sessionId).json"
+            guard let data = fileManager.contents(atPath: ctxPath),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let cwd = json["cwd"] as? String else { continue }
+
+            for workspace in window.workspaceManager.workspaces {
+                for tab in workspace.tabs {
+                    for leaf in tab.splitContainer.allLeafViews {
+                        guard let terminal = leaf as? TerminalSurface,
+                              terminal.detectedProgram == "Claude Code",
+                              terminal.workingDirectory == cwd else { continue }
+                        result[sessionId] = workspace.name
                     }
                 }
             }
@@ -297,6 +344,7 @@ class ClaudeSessionManager {
         var model: String?
         var gitBranch: String?
         var lastUserMessage: String?
+        var realCwd: String?
 
         let linesToParse = Array(headLines.prefix(5)) + Array(tailLines.suffix(10))
 
@@ -319,6 +367,11 @@ class ClaudeSessionManager {
             // Count user/assistant messages
             if type == "user" || type == "assistant" {
                 messageCount += 1
+            }
+
+            // Extract real working directory from the JSONL record
+            if realCwd == nil, let cwd = json["cwd"] as? String, !cwd.isEmpty {
+                realCwd = cwd
             }
 
             // Extract git branch
@@ -362,9 +415,13 @@ class ClaudeSessionManager {
         guard let created = firstTimestamp else { return nil }
         let lastActive = lastTimestamp ?? created
 
+        // Prefer the real cwd from inside the JSONL (most accurate),
+        // fall back to the decoded project path.
+        let resolvedProjectPath = realCwd ?? projectPath
+
         return ClaudeSession(
             id: sessionId,
-            projectPath: projectPath,
+            projectPath: resolvedProjectPath,
             name: nil,
             createdAt: created,
             lastActiveAt: lastActive,
