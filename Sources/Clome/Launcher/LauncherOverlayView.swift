@@ -71,6 +71,7 @@ class LauncherOverlayView: NSView {
 
     private func setupProviders() {
         guard let wm = workspaceManager else { return }
+        panel.workspaceManager = wm
         panel.registerProvider(NavigationProvider(workspaceManager: wm))
         panel.registerProvider(TerminalProvider(workspaceManager: wm))
         panel.registerProvider(SessionProvider(workspaceManager: wm))
@@ -101,10 +102,12 @@ class LauncherOverlayView: NSView {
 
         panel.searchField.clear()
         panel.refreshResults()
+        panel.startLivePreview()
         panel.searchField.focus()
     }
 
     func deactivate() {
+        panel.stopLivePreview()
         onDismiss?()
 
         // Animate out
@@ -268,6 +271,12 @@ class LauncherOverlayView: NSView {
                 }
                 return
             }
+        }
+
+        // Cmd+Enter: Focus terminal input in preview
+        if mods == .command && event.keyCode == 36 {
+            panel.focusTerminalInput()
+            return
         }
 
         // Swallow unhandled keys to prevent beep

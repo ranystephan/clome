@@ -222,6 +222,92 @@ class SocketServer {
             {"ok": true}
             """
 
+        case "show-diff":
+            guard let path = cmd["path"] as? String else {
+                return """
+                {"error": "Missing path"}
+                """
+            }
+            let oldContent = cmd["oldContent"] as? String
+            let newContent = cmd["newContent"] as? String
+            // Record in tracker and post notification
+            if let old = oldContent {
+                AgentFileTracker.shared.snapshotContent(old, forPath: path)
+            }
+            AgentFileTracker.shared.recordExternalChange(path: path, oldContent: oldContent, newContent: newContent)
+            NotificationCenter.default.post(
+                name: .openDiffReview,
+                object: self,
+                userInfo: ["path": path, "oldContent": oldContent ?? "", "newContent": newContent ?? ""]
+            )
+            return """
+            {"ok": true}
+            """
+
+        case "mark-file-changed":
+            guard let path = cmd["path"] as? String else {
+                return """
+                {"error": "Missing path"}
+                """
+            }
+            // Use existing snapshot (captured before agent ran) as "before" content.
+            // Current disk content is the "after". If no snapshot exists, diff will
+            // show the entire file as new (oldContent = nil).
+            let tracker = AgentFileTracker.shared
+            let oldContent = tracker.change(for: path)?.oldContent
+            let newContent = try? String(contentsOfFile: path, encoding: .utf8)
+            tracker.recordExternalChange(
+                path: path,
+                oldContent: oldContent,
+                newContent: newContent
+            )
+            return """
+            {"ok": true}
+            """
+
+        case "agent-status":
+            let state = cmd["state"] as? String ?? "idle"
+            let files = cmd["files"] as? [String] ?? []
+            if state == "editing" || state == "active" {
+                let roots: [String]
+                if files.isEmpty {
+                    // Use project roots from active workspace
+                    roots = window?.workspaceManager.activeWorkspace?.projectRoots.map { $0.path } ?? []
+                } else {
+                    roots = Array(Set(files.map { ($0 as NSString).deletingLastPathComponent }))
+                }
+                guard !roots.isEmpty else {
+                    return """
+                    {"error": "No project roots available"}
+                    """
+                }
+                AgentFileTracker.shared.startTracking(roots: roots)
+                // Snapshot listed files
+                for file in files {
+                    AgentFileTracker.shared.snapshotFile(at: file)
+                }
+            } else {
+                AgentFileTracker.shared.stopTracking()
+            }
+            return """
+            {"ok": true}
+            """
+
+        case "list-agent-changes":
+            let changes = AgentFileTracker.shared.allChanges.map { change -> [String: Any] in
+                [
+                    "path": change.path,
+                    "type": "\(change.changeType)",
+                    "reviewState": "\(change.reviewState)",
+                    "addedLines": change.addedLines,
+                    "removedLines": change.removedLines,
+                ]
+            }
+            let data = try? JSONSerialization.data(withJSONObject: ["changes": changes])
+            return String(data: data ?? Data(), encoding: .utf8) ?? """
+            {"error": "serialization failed"}
+            """
+
         default:
             return """
             {"error": "Unknown action: \(action)"}

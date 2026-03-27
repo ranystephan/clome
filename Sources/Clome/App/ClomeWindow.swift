@@ -369,11 +369,12 @@ class ClomeWindow: NSWindow {
         }
 
         // Lightweight callback — only active tab selection changed.
-        // Do NOT rebuild the sidebar here — it destroys hover states and eats clicks.
-        // The tab bar handles its own selection highlighting.
+        // Update both the top tab bar and the sidebar highlight.
+        // setNeedsReload is safe here because the click originates from the tab bar, not the sidebar.
         workspace.onActiveTabChanged = { [weak self] in
             guard self?.workspaceManager.activeWorkspace === workspace else { return }
             self?.tabBarView.updateSelection(activeIndex: workspace.activeTabIndex)
+            self?.sidebarView?.setNeedsReload()
             self?.wirePaneDragCallbacks()
             (NSApp.delegate as? ClomeAppDelegate)?.scheduleSave()
         }

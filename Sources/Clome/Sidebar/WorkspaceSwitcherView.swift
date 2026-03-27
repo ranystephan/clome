@@ -4,10 +4,11 @@ import AppKit
 /// Shows sidebar toggle + current workspace name with color dot.
 /// Click workspace name to show picker dropdown.
 @MainActor
-class WorkspaceSwitcherView: NSView {
+class WorkspaceSwitcherView: NSView, NSGestureRecognizerDelegate {
     private let workspaceManager: WorkspaceManager
     private let colorDot = NSView()
     private let nameLabel = NSTextField(labelWithString: "")
+    private var sidebarBtn: NSButton!
 
     var onToggleSidebar: (() -> Void)?
 
@@ -26,7 +27,7 @@ class WorkspaceSwitcherView: NSView {
         heightAnchor.constraint(equalToConstant: 40).isActive = true
 
         // Sidebar toggle
-        let sidebarBtn = NSButton()
+        sidebarBtn = NSButton()
         sidebarBtn.translatesAutoresizingMaskIntoConstraints = false
         sidebarBtn.bezelStyle = .texturedRounded
         sidebarBtn.isBordered = false
@@ -68,7 +69,7 @@ class WorkspaceSwitcherView: NSView {
 
         // Click on workspace name to show picker
         let click = NSClickGestureRecognizer(target: self, action: #selector(switcherClicked))
-        // Attach to the full view minus the sidebar button area
+        click.delegate = self
         addGestureRecognizer(click)
     }
 
@@ -82,10 +83,16 @@ class WorkspaceSwitcherView: NSView {
         onToggleSidebar?()
     }
 
+    // MARK: - NSGestureRecognizerDelegate
+
+    func gestureRecognizer(_ gestureRecognizer: NSGestureRecognizer, shouldAttemptToRecognizeWith event: NSEvent) -> Bool {
+        // Don't let the gesture recognizer intercept clicks on the sidebar button
+        let loc = event.locationInWindow
+        let btnLoc = sidebarBtn.convert(loc, from: nil)
+        return !sidebarBtn.bounds.contains(btnLoc)
+    }
+
     @objc private func switcherClicked(_ gesture: NSGestureRecognizer) {
-        // Don't trigger if the click was on the sidebar button
-        let loc = gesture.location(in: self)
-        if loc.x < 100 { return } // sidebar button area
         showWorkspacePicker()
     }
 

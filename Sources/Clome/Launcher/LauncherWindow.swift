@@ -91,6 +91,7 @@ class LauncherWindow: NSPanel {
 
     private func setupProviders() {
         guard let wm = workspaceManager else { return }
+        panel.workspaceManager = wm
         panel.registerProvider(NavigationProvider(workspaceManager: wm))
         panel.registerProvider(TerminalProvider(workspaceManager: wm))
         panel.registerProvider(SessionProvider(workspaceManager: wm))
@@ -113,6 +114,7 @@ class LauncherWindow: NSPanel {
         shouldActivateClome = false
         panel.searchField.clear()
         panel.refreshResults()
+        panel.startLivePreview()
 
         // Show the panel without activating the app
         orderFrontRegardless()
@@ -131,6 +133,7 @@ class LauncherWindow: NSPanel {
     }
 
     func dismiss() {
+        panel.stopLivePreview()
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.08
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
@@ -197,6 +200,12 @@ class LauncherWindow: NSPanel {
                 }
                 return
             }
+        }
+
+        // Cmd+Enter: Focus terminal input in preview
+        if mods == .command && event.keyCode == 36 {
+            panel.focusTerminalInput()
+            return
         }
 
         // Swallow other unhandled keys

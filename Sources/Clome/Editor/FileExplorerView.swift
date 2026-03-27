@@ -45,6 +45,14 @@ class FileExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     /// Standalone text field overlaid on the outline view for inline rename.
     private var inlineTextField: NSTextField?
 
+    // MARK: - Agent Changes Section
+    private var agentChangesContainer: NSView!
+    private var agentChangesStack: NSStackView!
+    private var agentChangesHeaderLabel: NSTextField!
+    private var agentChangesHeightConstraint: NSLayoutConstraint!
+    private var scrollViewTopToAgent: NSLayoutConstraint!
+    private var scrollViewTopToHeader: NSLayoutConstraint!
+
     private struct PendingCreation {
         let parentPath: String
         let isDirectory: Bool
@@ -227,12 +235,278 @@ class FileExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         }
         addSubview(scrollView)
 
+        // Agent changes section (hidden by default, shown when Claude Code modifies files)
+        setupAgentChangesSection()
+
+        scrollViewTopToHeader = scrollView.topAnchor.constraint(equalTo: headerBar.bottomAnchor)
+        scrollViewTopToAgent = scrollView.topAnchor.constraint(equalTo: agentChangesContainer.bottomAnchor)
+
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: headerBar.bottomAnchor),
+            scrollViewTopToHeader,
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+
+        // Observe agent file changes
+        let nc = NotificationCenter.default
+        nc.addObserver(self, selector: #selector(agentFilesChanged), name: .agentFileChanged, object: nil)
+        nc.addObserver(self, selector: #selector(agentFilesChanged), name: .agentFileReviewStateChanged, object: nil)
+        nc.addObserver(self, selector: #selector(agentTrackingChanged), name: .agentTrackingStateChanged, object: nil)
+    }
+
+    // MARK: - Agent Changes Section
+
+    private func setupAgentChangesSection() {
+        agentChangesContainer = NSView()
+        agentChangesContainer.translatesAutoresizingMaskIntoConstraints = false
+        agentChangesContainer.wantsLayer = true
+        agentChangesContainer.layer?.backgroundColor = NSColor(white: 0.0, alpha: 0.0).cgColor
+        agentChangesContainer.isHidden = true
+        addSubview(agentChangesContainer)
+
+        // Header row
+        let headerRow = NSView()
+        headerRow.translatesAutoresizingMaskIntoConstraints = false
+        agentChangesContainer.addSubview(headerRow)
+
+        let chevron = NSImageView()
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
+        chevron.contentTintColor = NSColor(white: 0.45, alpha: 1.0)
+        chevron.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 8, weight: .bold)
+        headerRow.addSubview(chevron)
+
+        let sparkle = NSImageView()
+        sparkle.translatesAutoresizingMaskIntoConstraints = false
+        sparkle.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: nil)
+        sparkle.contentTintColor = NSColor(red: 0.45, green: 0.65, blue: 0.90, alpha: 1.0)
+        sparkle.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
+        headerRow.addSubview(sparkle)
+
+        agentChangesHeaderLabel = NSTextField(labelWithString: "CLAUDE CHANGES")
+        agentChangesHeaderLabel.translatesAutoresizingMaskIntoConstraints = false
+        agentChangesHeaderLabel.font = .systemFont(ofSize: 10, weight: .semibold)
+        agentChangesHeaderLabel.textColor = NSColor(red: 0.45, green: 0.65, blue: 0.90, alpha: 0.9)
+        headerRow.addSubview(agentChangesHeaderLabel)
+
+        let acceptAllBtn = NSButton()
+        acceptAllBtn.translatesAutoresizingMaskIntoConstraints = false
+        acceptAllBtn.bezelStyle = .texturedRounded
+        acceptAllBtn.isBordered = false
+        acceptAllBtn.image = NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: "Accept All")?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10, weight: .medium))
+        acceptAllBtn.contentTintColor = NSColor(red: 0.4, green: 0.8, blue: 0.5, alpha: 0.8)
+        acceptAllBtn.target = self
+        acceptAllBtn.action = #selector(acceptAllAgentChanges)
+        acceptAllBtn.toolTip = "Accept All"
+        headerRow.addSubview(acceptAllBtn)
+
+        let rejectAllBtn = NSButton()
+        rejectAllBtn.translatesAutoresizingMaskIntoConstraints = false
+        rejectAllBtn.bezelStyle = .texturedRounded
+        rejectAllBtn.isBordered = false
+        rejectAllBtn.image = NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: "Reject All")?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10, weight: .medium))
+        rejectAllBtn.contentTintColor = NSColor(red: 0.8, green: 0.4, blue: 0.4, alpha: 0.8)
+        rejectAllBtn.target = self
+        rejectAllBtn.action = #selector(rejectAllAgentChanges)
+        rejectAllBtn.toolTip = "Reject All"
+        headerRow.addSubview(rejectAllBtn)
+
+        // File list stack
+        let scrollContainer = NSScrollView()
+        scrollContainer.translatesAutoresizingMaskIntoConstraints = false
+        scrollContainer.drawsBackground = false
+        scrollContainer.hasVerticalScroller = false
+        scrollContainer.borderType = .noBorder
+        agentChangesContainer.addSubview(scrollContainer)
+
+        agentChangesStack = NSStackView()
+        agentChangesStack.translatesAutoresizingMaskIntoConstraints = false
+        agentChangesStack.orientation = .vertical
+        agentChangesStack.alignment = .leading
+        agentChangesStack.spacing = 1
+        scrollContainer.documentView = agentChangesStack
+
+        agentChangesHeightConstraint = agentChangesContainer.heightAnchor.constraint(equalToConstant: 28)
+
+        NSLayoutConstraint.activate([
+            agentChangesContainer.topAnchor.constraint(equalTo: headerBar.bottomAnchor),
+            agentChangesContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
+            agentChangesContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
+            agentChangesHeightConstraint,
+
+            headerRow.topAnchor.constraint(equalTo: agentChangesContainer.topAnchor),
+            headerRow.leadingAnchor.constraint(equalTo: agentChangesContainer.leadingAnchor),
+            headerRow.trailingAnchor.constraint(equalTo: agentChangesContainer.trailingAnchor),
+            headerRow.heightAnchor.constraint(equalToConstant: 28),
+
+            chevron.leadingAnchor.constraint(equalTo: headerRow.leadingAnchor, constant: 8),
+            chevron.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor),
+            chevron.widthAnchor.constraint(equalToConstant: 10),
+
+            sparkle.leadingAnchor.constraint(equalTo: chevron.trailingAnchor, constant: 4),
+            sparkle.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor),
+
+            agentChangesHeaderLabel.leadingAnchor.constraint(equalTo: sparkle.trailingAnchor, constant: 4),
+            agentChangesHeaderLabel.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor),
+
+            rejectAllBtn.trailingAnchor.constraint(equalTo: headerRow.trailingAnchor, constant: -8),
+            rejectAllBtn.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor),
+            rejectAllBtn.widthAnchor.constraint(equalToConstant: 20),
+
+            acceptAllBtn.trailingAnchor.constraint(equalTo: rejectAllBtn.leadingAnchor, constant: -2),
+            acceptAllBtn.centerYAnchor.constraint(equalTo: headerRow.centerYAnchor),
+            acceptAllBtn.widthAnchor.constraint(equalToConstant: 20),
+
+            scrollContainer.topAnchor.constraint(equalTo: headerRow.bottomAnchor),
+            scrollContainer.leadingAnchor.constraint(equalTo: agentChangesContainer.leadingAnchor),
+            scrollContainer.trailingAnchor.constraint(equalTo: agentChangesContainer.trailingAnchor),
+            scrollContainer.bottomAnchor.constraint(equalTo: agentChangesContainer.bottomAnchor),
+
+            agentChangesStack.leadingAnchor.constraint(equalTo: scrollContainer.leadingAnchor),
+            agentChangesStack.topAnchor.constraint(equalTo: scrollContainer.contentView.topAnchor),
+            agentChangesStack.widthAnchor.constraint(equalTo: scrollContainer.widthAnchor),
+        ])
+    }
+
+    private func updateAgentChangesSection() {
+        let tracker = AgentFileTracker.shared
+        let pending = tracker.pendingChanges
+
+        if pending.isEmpty && !tracker.isTracking {
+            hideAgentChangesSection()
+            return
+        }
+
+        showAgentChangesSection()
+
+        // Update header
+        let count = pending.count
+        agentChangesHeaderLabel.stringValue = count > 0
+            ? "CLAUDE CHANGES (\(count))"
+            : "CLAUDE CHANGES"
+
+        // Rebuild file list
+        agentChangesStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+        for change in pending {
+            let row = makeAgentChangeRow(change)
+            agentChangesStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: agentChangesStack.widthAnchor).isActive = true
+        }
+
+        // Size the container: header (28) + rows (24 each), capped at 200px
+        let contentHeight = 28 + CGFloat(min(pending.count, 7)) * 24
+        agentChangesHeightConstraint.constant = min(contentHeight, 200)
+    }
+
+    private func makeAgentChangeRow(_ change: AgentFileTracker.FileChange) -> NSView {
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.wantsLayer = true
+        row.heightAnchor.constraint(equalToConstant: 24).isActive = true
+
+        // Change type indicator
+        let indicator = NSTextField(labelWithString: changeTypeSymbol(change.changeType))
+        indicator.translatesAutoresizingMaskIntoConstraints = false
+        indicator.font = .monospacedSystemFont(ofSize: 10, weight: .bold)
+        indicator.textColor = changeTypeColor(change.changeType)
+        row.addSubview(indicator)
+
+        // File name
+        let nameLabel = NSTextField(labelWithString: (change.path as NSString).lastPathComponent)
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = .systemFont(ofSize: 11)
+        nameLabel.textColor = NSColor(white: 0.78, alpha: 1.0)
+        nameLabel.lineBreakMode = .byTruncatingMiddle
+        row.addSubview(nameLabel)
+
+        // Stats
+        let stats = NSTextField(labelWithString: "+\(change.addedLines) -\(change.removedLines)")
+        stats.translatesAutoresizingMaskIntoConstraints = false
+        stats.font = .monospacedSystemFont(ofSize: 9, weight: .regular)
+        stats.textColor = NSColor(white: 0.4, alpha: 1.0)
+        row.addSubview(stats)
+
+        // Click gesture to open diff
+        let click = NSClickGestureRecognizer(target: self, action: #selector(agentChangeRowClicked(_:)))
+        row.addGestureRecognizer(click)
+
+        // Store path for click handler
+        row.toolTip = change.path
+
+        NSLayoutConstraint.activate([
+            indicator.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 14),
+            indicator.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            indicator.widthAnchor.constraint(equalToConstant: 14),
+
+            nameLabel.leadingAnchor.constraint(equalTo: indicator.trailingAnchor, constant: 4),
+            nameLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: stats.leadingAnchor, constant: -4),
+
+            stats.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -8),
+            stats.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+        ])
+
+        return row
+    }
+
+    private func showAgentChangesSection() {
+        guard agentChangesContainer.isHidden else { return }
+        agentChangesContainer.isHidden = false
+        scrollViewTopToHeader.isActive = false
+        scrollViewTopToAgent.isActive = true
+    }
+
+    private func hideAgentChangesSection() {
+        guard !agentChangesContainer.isHidden else { return }
+        agentChangesContainer.isHidden = true
+        scrollViewTopToAgent.isActive = false
+        scrollViewTopToHeader.isActive = true
+    }
+
+    private func changeTypeSymbol(_ type: AgentFileTracker.ChangeType) -> String {
+        switch type {
+        case .created: return "A"
+        case .modified: return "M"
+        case .deleted: return "D"
+        }
+    }
+
+    private func changeTypeColor(_ type: AgentFileTracker.ChangeType) -> NSColor {
+        switch type {
+        case .created: return NSColor(red: 0.4, green: 0.8, blue: 0.5, alpha: 1.0)
+        case .modified: return NSColor(red: 0.85, green: 0.75, blue: 0.3, alpha: 1.0)
+        case .deleted: return NSColor(red: 0.85, green: 0.4, blue: 0.4, alpha: 1.0)
+        }
+    }
+
+    @objc private func agentFilesChanged() {
+        updateAgentChangesSection()
+    }
+
+    @objc private func agentTrackingChanged() {
+        updateAgentChangesSection()
+    }
+
+    @objc private func agentChangeRowClicked(_ gesture: NSClickGestureRecognizer) {
+        guard let row = gesture.view, let path = row.toolTip else { return }
+        guard let change = AgentFileTracker.shared.change(for: path) else { return }
+
+        // Post notification to open diff review
+        NotificationCenter.default.post(
+            name: .openDiffReview,
+            object: self,
+            userInfo: ["path": path, "oldContent": change.oldContent ?? "", "newContent": change.newContent ?? ""]
+        )
+    }
+
+    @objc private func acceptAllAgentChanges() {
+        AgentFileTracker.shared.acceptAll()
+    }
+
+    @objc private func rejectAllAgentChanges() {
+        AgentFileTracker.shared.rejectAll()
     }
 
     func reload() {

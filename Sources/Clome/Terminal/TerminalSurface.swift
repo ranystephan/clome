@@ -64,8 +64,8 @@ class TerminalSurface: NSView {
         wantsLayer = true
         layer?.backgroundColor = AppearanceSettings.shared.backgroundBgColor.cgColor
 
-        // Register for file drag and drop
-        registerForDraggedTypes([.fileURL])
+        // Register for file/text drag and drop
+        registerForDraggedTypes([.fileURL, .URL, .string])
     }
 
     required init?(coder: NSCoder) {
@@ -738,77 +738,330 @@ class TerminalSurface: NSView {
 
     // MARK: - Drag and Drop
 
+    // MARK: - Drop Zone Overlay
+
+    private var dropOverlay: NSView?
+    private var activeToast: NSView?
+
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self],
-                                                       options: [.urlReadingFileURLsOnly: true]) else {
-            return []
-        }
+        let pb = sender.draggingPasteboard
+        guard let types = pb.types else { return [] }
+        let accepted: Set<NSPasteboard.PasteboardType> = [.fileURL, .URL, .string]
+        guard !Set(types).isDisjoint(with: accepted) else { return [] }
+
+        showDropOverlay(sender)
         return .copy
     }
 
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        hideDropOverlay()
+    }
+
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        hideDropOverlay()
         guard let surface else { return false }
 
-        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self],
-                                                                options: [.urlReadingFileURLsOnly: true]) as? [URL],
-              !urls.isEmpty else {
-            return false
+        let pb = sender.draggingPasteboard
+
+        // Resolve what was dropped into text to paste
+        let text: String?
+        if let urls = pb.readObjects(forClasses: [NSURL.self],
+                                     options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           !urls.isEmpty {
+            // File URLs — shell-escape and join
+            let escaped = urls.map { shellEscape($0.path) }
+            text = escaped.joined(separator: " ")
+            showDropToast(for: urls)
+        } else if let urlString = pb.string(forType: .URL) {
+            text = shellEscape(urlString)
+            showDropToast(label: "Pasted URL", detail: urlString)
+        } else if let str = pb.string(forType: .string) {
+            // Plain text — don't shell-escape (might be a command)
+            text = str
+        } else {
+            text = nil
         }
 
-        // Build space-separated, shell-escaped paths
-        let escapedPaths = urls.map { url -> String in
-            shellEscape(url.path)
-        }
-        let text = escapedPaths.joined(separator: " ")
+        guard let text, !text.isEmpty else { return false }
 
-        // Type the paths into the terminal via ghostty key input
-        for scalar in text.unicodeScalars {
-            var input = ghostty_input_key_s()
-            input.action = GHOSTTY_ACTION_PRESS
-            input.mods = ghostty_input_mods_e(rawValue: 0)
-            input.keycode = 0
-            input.composing = false
-
-            let char = String(scalar)
-            char.withCString { ptr in
-                input.text = ptr
-                input.unshifted_codepoint = scalar.value
-                ghostty_surface_key(surface, input)
-            }
-        }
-
+        // Use bulk text insertion — much faster than character-by-character key events
+        pasteText(text, into: surface)
         return true
+    }
+
+    /// Paste text into the terminal using the fast bulk API.
+    private func pasteText(_ text: String, into surface: ghostty_surface_t) {
+        text.withCString { ptr in
+            ghostty_surface_text(surface, ptr, UInt(text.utf8.count))
+        }
     }
 
     /// Shell-escape a file path for safe pasting into a terminal.
     private func shellEscape(_ path: String) -> String {
-        // If path contains no special characters, return as-is
         let safeChars = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "/-_.~"))
         if path.unicodeScalars.allSatisfy({ safeChars.contains($0) }) {
             return path
         }
-        // Wrap in single quotes; escape any existing single quotes
         let escaped = path.replacingOccurrences(of: "'", with: "'\\''")
         return "'\(escaped)'"
     }
 
+    // MARK: - Drop Visual Feedback
+
+    private func showDropOverlay(_ sender: NSDraggingInfo) {
+        guard dropOverlay == nil else { return }
+
+        let overlay = NSView(frame: bounds)
+        overlay.autoresizingMask = [.width, .height]
+        overlay.wantsLayer = true
+        overlay.layer?.backgroundColor = NSColor(red: 0.20, green: 0.30, blue: 0.50, alpha: 0.25).cgColor
+        overlay.layer?.borderColor = NSColor(red: 0.45, green: 0.65, blue: 0.90, alpha: 0.6).cgColor
+        overlay.layer?.borderWidth = 2
+        overlay.layer?.cornerRadius = 8
+
+        // Determine label text from pasteboard
+        let pb = sender.draggingPasteboard
+        let labelText: String
+        if let urls = pb.readObjects(forClasses: [NSURL.self],
+                                     options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           !urls.isEmpty {
+            let fileCount = urls.count
+            let hasImages = urls.contains { isImageFile($0.pathExtension) }
+            if fileCount == 1 {
+                let name = urls[0].lastPathComponent
+                labelText = hasImages ? "Drop image: \(name)" : "Drop file: \(name)"
+            } else {
+                labelText = "Drop \(fileCount) files"
+            }
+        } else {
+            labelText = "Drop to paste"
+        }
+
+        let label = NSTextField(labelWithString: labelText)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.textColor = NSColor(red: 0.65, green: 0.80, blue: 1.0, alpha: 1.0)
+        label.alignment = .center
+        overlay.addSubview(label)
+
+        let icon = NSImageView()
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.image = NSImage(systemSymbolName: "arrow.down.doc", accessibilityDescription: "Drop")
+        icon.contentTintColor = NSColor(red: 0.45, green: 0.65, blue: 0.90, alpha: 0.8)
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 24, weight: .light)
+        overlay.addSubview(icon)
+
+        NSLayoutConstraint.activate([
+            icon.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: overlay.centerYAnchor, constant: -12),
+            label.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            label.topAnchor.constraint(equalTo: icon.bottomAnchor, constant: 6),
+        ])
+
+        addSubview(overlay)
+        dropOverlay = overlay
+
+        // Fade in
+        overlay.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.15
+            overlay.animator().alphaValue = 1
+        }
+    }
+
+    private func hideDropOverlay() {
+        guard let overlay = dropOverlay else { return }
+        dropOverlay = nil
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.1
+            overlay.animator().alphaValue = 0
+        }, completionHandler: {
+            overlay.removeFromSuperview()
+        })
+    }
+
+    // MARK: - Drop Toast
+
+    /// Remove any existing toast before showing a new one.
+    private func dismissActiveToast() {
+        activeToast?.removeFromSuperview()
+        activeToast = nil
+    }
+
+    /// Show a brief toast notification after files are dropped.
+    private func showDropToast(for urls: [URL]) {
+        dismissActiveToast()
+        let toast = NSView()
+        toast.translatesAutoresizingMaskIntoConstraints = false
+        toast.wantsLayer = true
+        toast.layer?.backgroundColor = NSColor(red: 0.12, green: 0.16, blue: 0.22, alpha: 0.95).cgColor
+        toast.layer?.cornerRadius = 8
+        toast.layer?.borderColor = NSColor(red: 0.25, green: 0.35, blue: 0.50, alpha: 0.4).cgColor
+        toast.layer?.borderWidth = 1
+
+        let stack = NSStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 3
+        toast.addSubview(stack)
+
+        // Header
+        let headerStack = NSStackView()
+        headerStack.orientation = .horizontal
+        headerStack.spacing = 6
+
+        let checkIcon = NSImageView()
+        checkIcon.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: nil)
+        checkIcon.contentTintColor = NSColor(red: 0.4, green: 0.8, blue: 0.5, alpha: 1.0)
+        checkIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+        headerStack.addArrangedSubview(checkIcon)
+
+        let headerLabel = NSTextField(labelWithString: urls.count == 1 ? "Pasted into terminal" : "Pasted \(urls.count) paths")
+        headerLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        headerLabel.textColor = NSColor(white: 0.85, alpha: 1.0)
+        headerStack.addArrangedSubview(headerLabel)
+        stack.addArrangedSubview(headerStack)
+
+        // File list (max 4 shown)
+        for url in urls.prefix(4) {
+            let row = NSStackView()
+            row.orientation = .horizontal
+            row.spacing = 4
+
+            let fileIcon = NSImageView()
+            let iconName = isImageFile(url.pathExtension) ? "photo" : "doc"
+            fileIcon.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)
+            fileIcon.contentTintColor = NSColor(white: 0.5, alpha: 1.0)
+            fileIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .regular)
+            row.addArrangedSubview(fileIcon)
+
+            let nameLabel = NSTextField(labelWithString: url.lastPathComponent)
+            nameLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+            nameLabel.textColor = NSColor(white: 0.65, alpha: 1.0)
+            nameLabel.lineBreakMode = .byTruncatingMiddle
+            nameLabel.maximumNumberOfLines = 1
+            row.addArrangedSubview(nameLabel)
+
+            stack.addArrangedSubview(row)
+        }
+        if urls.count > 4 {
+            let moreLabel = NSTextField(labelWithString: "  +\(urls.count - 4) more")
+            moreLabel.font = .systemFont(ofSize: 10, weight: .regular)
+            moreLabel.textColor = NSColor(white: 0.45, alpha: 1.0)
+            stack.addArrangedSubview(moreLabel)
+        }
+
+        addSubview(toast)
+
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: toast.topAnchor, constant: 8),
+            stack.bottomAnchor.constraint(equalTo: toast.bottomAnchor, constant: -8),
+            stack.leadingAnchor.constraint(equalTo: toast.leadingAnchor, constant: 10),
+            stack.trailingAnchor.constraint(equalTo: toast.trailingAnchor, constant: -10),
+
+            toast.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            toast.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            toast.widthAnchor.constraint(lessThanOrEqualToConstant: 260),
+        ])
+
+        animateToast(toast)
+    }
+
+    /// Show a simple label+detail toast (for URL drops, etc.)
+    private func showDropToast(label: String, detail: String) {
+        dismissActiveToast()
+        let toast = NSView()
+        toast.translatesAutoresizingMaskIntoConstraints = false
+        toast.wantsLayer = true
+        toast.layer?.backgroundColor = NSColor(red: 0.12, green: 0.16, blue: 0.22, alpha: 0.95).cgColor
+        toast.layer?.cornerRadius = 8
+        toast.layer?.borderColor = NSColor(red: 0.25, green: 0.35, blue: 0.50, alpha: 0.4).cgColor
+        toast.layer?.borderWidth = 1
+
+        let stack = NSStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 2
+        toast.addSubview(stack)
+
+        let headerStack = NSStackView()
+        headerStack.orientation = .horizontal
+        headerStack.spacing = 6
+
+        let checkIcon = NSImageView()
+        checkIcon.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: nil)
+        checkIcon.contentTintColor = NSColor(red: 0.4, green: 0.8, blue: 0.5, alpha: 1.0)
+        checkIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+        headerStack.addArrangedSubview(checkIcon)
+
+        let headerLabel = NSTextField(labelWithString: label)
+        headerLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        headerLabel.textColor = NSColor(white: 0.85, alpha: 1.0)
+        headerStack.addArrangedSubview(headerLabel)
+        stack.addArrangedSubview(headerStack)
+
+        let detailLabel = NSTextField(labelWithString: detail)
+        detailLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+        detailLabel.textColor = NSColor(white: 0.55, alpha: 1.0)
+        detailLabel.lineBreakMode = .byTruncatingMiddle
+        detailLabel.maximumNumberOfLines = 1
+        stack.addArrangedSubview(detailLabel)
+
+        addSubview(toast)
+
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: toast.topAnchor, constant: 8),
+            stack.bottomAnchor.constraint(equalTo: toast.bottomAnchor, constant: -8),
+            stack.leadingAnchor.constraint(equalTo: toast.leadingAnchor, constant: 10),
+            stack.trailingAnchor.constraint(equalTo: toast.trailingAnchor, constant: -10),
+
+            toast.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            toast.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            toast.widthAnchor.constraint(lessThanOrEqualToConstant: 260),
+        ])
+
+        animateToast(toast)
+    }
+
+    /// Shared toast animation: fade in, hold, fade out.
+    private func animateToast(_ toast: NSView) {
+        activeToast = toast
+        toast.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.2
+            toast.animator().alphaValue = 1
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            // Only auto-dismiss if this is still the active toast
+            guard self?.activeToast === toast else { return }
+            self?.activeToast = nil
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.4
+                toast.animator().alphaValue = 0
+            }, completionHandler: {
+                toast.removeFromSuperview()
+            })
+        }
+    }
+
+    private func isImageFile(_ ext: String) -> Bool {
+        let imageExts: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "tiff", "heic"]
+        return imageExts.contains(ext.lowercased())
+    }
+
     // MARK: - Keystroke Injection
 
-    /// Inject a text string into the terminal as if the user typed it.
+    /// Inject a text string into the terminal using the fast bulk API.
     func injectText(_ text: String) {
         guard let surface else { return }
-        for scalar in text.unicodeScalars {
-            var input = ghostty_input_key_s()
-            input.action = GHOSTTY_ACTION_PRESS
-            input.mods = ghostty_input_mods_e(rawValue: 0)
-            input.keycode = 0
-            input.composing = false
-            let char = String(scalar)
-            char.withCString { ptr in
-                input.text = ptr
-                input.unshifted_codepoint = scalar.value
-                ghostty_surface_key(surface, input)
-            }
+        text.withCString { ptr in
+            ghostty_surface_text(surface, ptr, UInt(text.utf8.count))
         }
     }
 
