@@ -245,6 +245,21 @@ Swift + AppKit for macOS UI, Zig (libghostty) for terminal rendering, Metal for 
 - State machine: disconnected → settingUp → starting → idle → busy → error
 - Output streaming: text, images, error tracebacks
 
+**Agent File Tracking & Diff Review** (`AgentFileTracker.swift`, `DiffReviewPanel.swift`)
+- `AgentFileTracker` singleton tracks file changes made by Claude Code with before/after snapshots
+- Auto-starts tracking when TerminalActivityMonitor detects Claude Code in thinking/doneWithTask state
+- Records changes as `.created`, `.modified`, `.deleted` with review states: `.pending`, `.accepted`, `.rejected`
+- Accept: keeps new content, updates snapshot. Reject: reverts file to pre-agent content on disk
+- `DiffReviewPanel`: tab-compatible panel wrapping DiffView with file header, stats, accept/reject buttons
+- Opens as a tab in ProjectPanel alongside EditorPanel/NotebookPanel/PDFPanel
+- `EditorView` agent banner: "Claude modified this file" with View Diff / Accept / Dismiss buttons
+- Shows instead of silently reloading when `AgentFileTracker.isTracking` is true
+- `FileExplorerView` agent changes section: collapsible "CLAUDE CHANGES (N)" header with file list
+- Per-file rows with change type indicator (A/M/D), filename, +/- stats, click to open diff
+- Accept All / Reject All buttons in section header
+- Socket API commands: `show-diff`, `mark-file-changed`, `agent-status`, `list-agent-changes`
+- Notifications: `.agentFileChanged`, `.agentFileReviewStateChanged`, `.agentTrackingStateChanged`
+
 ### Phase 2 targets (Conversation Graph)
 - [ ] Conversation DAG storage in SQLite
 - [ ] Fork, prune, merge operations
@@ -311,6 +326,8 @@ Sources/
       LSPClient.swift             - Language Server Protocol client
       FileWatcher.swift           - FSEvents/DispatchSource file monitoring
       DiffView.swift              - Unified diff display with accept/reject
+      DiffReviewPanel.swift       - Tab panel wrapping DiffView for agent change review
+      AgentFileTracker.swift      - Tracks agent file modifications with before/after snapshots
       PDFPanel.swift              - PDFKit-based PDF viewer
       NotebookModel.swift         - .ipynb JSON parsing, cell/output structs, NotebookStore
       NotebookCellView.swift      - Individual notebook cell: source editor, outputs, toolbar

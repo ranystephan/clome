@@ -108,6 +108,11 @@ class EditorView: NSView {
     // MARK: - Minimap support
     weak var minimapView: MinimapView?
 
+    // MARK: - Agent modification banner
+    private var agentBanner: NSView?
+    /// Content before an agent modification, for diff/revert.
+    private var preAgentContent: String?
+
     // MARK: - Scrollbar
     private var scrollbarOpacity: CGFloat = 0
     private var scrollbarFadeTimer: Timer?
@@ -207,16 +212,155 @@ class EditorView: NSView {
         fileWatcher?.start()
     }
 
+    var suppressNextExternalChange = false
+
     private func handleExternalChange() {
         guard let path = buffer.filePath else { return }
+
+        // Suppress file watcher events caused by our own reject/revert writes
+        if suppressNextExternalChange {
+            suppressNextExternalChange = false
+            if !buffer.isDirty {
+                try? buffer.reload()
+                minimapView?.invalidateCache()
+                needsDisplay = true
+            }
+            return
+        }
+
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
               let _ = attrs[.modificationDate] as? Date else { return }
+
+        // When Claude Code is actively editing, show a review banner instead of silently reloading
+        if AgentFileTracker.shared.isTracking && !buffer.isDirty {
+            let oldContent = buffer.text
+            try? buffer.reload()
+            let newContent = buffer.text
+            minimapView?.invalidateCache()
+            needsDisplay = true
+
+            // Record the change in the tracker
+            AgentFileTracker.shared.snapshotContent(oldContent, forPath: path)
+            AgentFileTracker.shared.recordExternalChange(path: path, oldContent: oldContent, newContent: newContent)
+
+            // Show the inline banner
+            if oldContent != newContent {
+                preAgentContent = oldContent
+                showAgentBanner()
+            }
+            return
+        }
 
         if !buffer.isDirty {
             try? buffer.reload()
             minimapView?.invalidateCache()
             needsDisplay = true
         }
+    }
+
+    // MARK: - Agent Banner
+
+    private func showAgentBanner() {
+        // Remove existing banner if any
+        agentBanner?.removeFromSuperview()
+
+        let banner = NSView()
+        banner.translatesAutoresizingMaskIntoConstraints = false
+        banner.wantsLayer = true
+        banner.layer?.backgroundColor = NSColor(red: 0.15, green: 0.20, blue: 0.30, alpha: 0.95).cgColor
+        banner.layer?.cornerRadius = 6
+
+        let icon = NSImageView()
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Agent")
+        icon.contentTintColor = NSColor(red: 0.45, green: 0.65, blue: 0.90, alpha: 1.0)
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+        banner.addSubview(icon)
+
+        let label = NSTextField(labelWithString: "Claude modified this file")
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.textColor = NSColor(white: 0.85, alpha: 1.0)
+        banner.addSubview(label)
+
+        let viewDiffBtn = makeAgentBannerButton(title: "View Diff", color: NSColor(red: 0.45, green: 0.65, blue: 0.90, alpha: 1.0))
+        viewDiffBtn.target = self
+        viewDiffBtn.action = #selector(agentBannerViewDiff)
+        banner.addSubview(viewDiffBtn)
+
+        let acceptBtn = makeAgentBannerButton(title: "Accept", color: NSColor(red: 0.4, green: 0.85, blue: 0.5, alpha: 1.0))
+        acceptBtn.target = self
+        acceptBtn.action = #selector(agentBannerAccept)
+        banner.addSubview(acceptBtn)
+
+        let dismissBtn = makeAgentBannerButton(title: "Dismiss", color: NSColor(white: 0.55, alpha: 1.0))
+        dismissBtn.target = self
+        dismissBtn.action = #selector(agentBannerDismiss)
+        banner.addSubview(dismissBtn)
+
+        addSubview(banner)
+
+        NSLayoutConstraint.activate([
+            banner.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            banner.leadingAnchor.constraint(equalTo: leadingAnchor, constant: gutterWidth + 8),
+            banner.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            banner.heightAnchor.constraint(equalToConstant: 32),
+
+            icon.leadingAnchor.constraint(equalTo: banner.leadingAnchor, constant: 10),
+            icon.centerYAnchor.constraint(equalTo: banner.centerYAnchor),
+
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
+            label.centerYAnchor.constraint(equalTo: banner.centerYAnchor),
+
+            viewDiffBtn.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 12),
+            viewDiffBtn.centerYAnchor.constraint(equalTo: banner.centerYAnchor),
+
+            acceptBtn.leadingAnchor.constraint(equalTo: viewDiffBtn.trailingAnchor, constant: 6),
+            acceptBtn.centerYAnchor.constraint(equalTo: banner.centerYAnchor),
+
+            dismissBtn.leadingAnchor.constraint(equalTo: acceptBtn.trailingAnchor, constant: 6),
+            dismissBtn.centerYAnchor.constraint(equalTo: banner.centerYAnchor),
+            dismissBtn.trailingAnchor.constraint(equalTo: banner.trailingAnchor, constant: -10),
+        ])
+
+        agentBanner = banner
+    }
+
+    private func makeAgentBannerButton(title: String, color: NSColor) -> NSButton {
+        let btn = NSButton()
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.title = title
+        btn.bezelStyle = .texturedRounded
+        btn.isBordered = false
+        btn.font = .systemFont(ofSize: 11, weight: .medium)
+        btn.contentTintColor = color
+        return btn
+    }
+
+    @objc private func agentBannerViewDiff() {
+        guard let path = buffer.filePath else { return }
+        // Post notification to open the diff review panel
+        NotificationCenter.default.post(
+            name: .openDiffReview,
+            object: self,
+            userInfo: ["path": path, "oldContent": preAgentContent ?? "", "newContent": buffer.text]
+        )
+    }
+
+    @objc private func agentBannerAccept() {
+        guard let path = buffer.filePath else { return }
+        AgentFileTracker.shared.acceptChange(at: path)
+        dismissAgentBanner()
+    }
+
+    @objc private func agentBannerDismiss() {
+        dismissAgentBanner()
+    }
+
+    func dismissAgentBanner() {
+        agentBanner?.removeFromSuperview()
+        agentBanner = nil
+        preAgentContent = nil
     }
 
     func startLSP() {

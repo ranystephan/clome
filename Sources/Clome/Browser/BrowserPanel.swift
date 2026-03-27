@@ -510,7 +510,9 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         webView?.navigationDelegate = nil
         webView?.uiDelegate = nil
         loadingBar?.stopAnimation(nil)
-        formAutofillManager?.unregister(from: webView.configuration)
+        if let config = webView?.configuration {
+            formAutofillManager?.unregister(from: config)
+        }
         formAutofillManager?.webView = nil
         webView?.removeObserver(self, forKeyPath: "title")
         webView?.removeFromSuperview()
@@ -523,7 +525,9 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
             webView?.navigationDelegate = nil
             webView?.uiDelegate = nil
             loadingBar?.stopAnimation(nil)
-            formAutofillManager?.unregister(from: webView.configuration)
+            if let config = webView?.configuration {
+                formAutofillManager?.unregister(from: config)
+            }
             formAutofillManager?.webView = nil
             webView?.removeObserver(self, forKeyPath: "title")
         }
@@ -1039,16 +1043,25 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         guard webView === self.webView else { return }
         setLoadingState(false)
+        let nsError = error as NSError
+        // Ignore cancellations (user navigated away before load finished)
+        if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled { return }
+        CrashReporter.shared.error("Provisional navigation failed: \(error.localizedDescription) url=\(webView.url?.absoluteString ?? "nil")", category: "browser")
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         guard webView === self.webView else { return }
         setLoadingState(false)
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled { return }
+        CrashReporter.shared.error("Navigation failed: \(error.localizedDescription) url=\(webView.url?.absoluteString ?? "nil")", category: "browser")
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard webView === self.webView else { return }
         setLoadingState(false)
+        CrashReporter.shared.error("WebContent process terminated, reloading. url=\(webView.url?.absoluteString ?? "nil")", category: "browser")
+        webView.reload()
     }
 
     // MARK: - WKNavigationDelegate — Navigation Policy

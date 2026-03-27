@@ -99,6 +99,7 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         ghosttyApp?.shutdown()
+        CrashReporter.shared.logCleanShutdown()
     }
 
     func applicationDidResignActive(_ notification: Notification) {
@@ -173,7 +174,7 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // File menu
         let fileMenuItem = NSMenuItem()
         let fileMenu = NSMenu(title: "File")
-        fileMenu.addItem(withTitle: "New Workspace", action: #selector(newWorkspace(_:)), keyEquivalent: "n")
+        fileMenu.addItem(withTitle: "New Workspace", action: #selector(newWorkspace(_:)), keyEquivalent: "w")
         fileMenu.addItem(withTitle: "New Tab", action: #selector(newTab(_:)), keyEquivalent: "t")
         fileMenu.addItem(NSMenuItem.separator())
         fileMenu.addItem(withTitle: "Open...", action: #selector(openFile(_:)), keyEquivalent: "o")
@@ -189,6 +190,7 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         fileMenu.items.last?.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(NSMenuItem.separator())
         fileMenu.addItem(withTitle: "Close Tab", action: #selector(closeTab(_:)), keyEquivalent: "w")
+        fileMenu.items.last?.keyEquivalentModifierMask = [.command, .shift]
         fileMenuItem.submenu = fileMenu
         mainMenu.addItem(fileMenuItem)
 
@@ -251,7 +253,22 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func newTab(_ sender: Any?) {
-        mainWindow?.workspaceManager.activeWorkspace?.addSurface()
+        guard let workspace = mainWindow?.workspaceManager.activeWorkspace else { return }
+        // Open a new tab matching the type of the currently active tab
+        switch workspace.activeTab?.type {
+        case .browser:
+            workspace.addBrowserSurface()
+        case .editor:
+            try? workspace.addEditorTab()
+        case .project:
+            // Can't duplicate a project tab without a directory — fall back to terminal
+            workspace.addSurface()
+        case .notebook, .pdf, .diff:
+            // These need file paths — fall back to terminal
+            workspace.addSurface()
+        case .terminal, .none:
+            workspace.addSurface()
+        }
     }
 
     @objc private func openFile(_ sender: Any?) {

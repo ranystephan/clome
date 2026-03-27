@@ -22,13 +22,15 @@ class ProjectPanel: NSView {
 
     struct OpenFile {
         let path: String
-        let panel: NSView  // EditorPanel, NotebookPanel, or PDFPanel
+        let panel: NSView  // EditorPanel, NotebookPanel, PDFPanel, or DiffReviewPanel
         var editor: EditorPanel? { panel as? EditorPanel }
         var notebook: NotebookPanel? { panel as? NotebookPanel }
         var pdf: PDFPanel? { panel as? PDFPanel }
+        var diffReview: DiffReviewPanel? { panel as? DiffReviewPanel }
         var name: String { (path as NSString).lastPathComponent }
         var isNotebook: Bool { panel is NotebookPanel }
         var isPDF: Bool { panel is PDFPanel }
+        var isDiffReview: Bool { panel is DiffReviewPanel }
     }
 
     init(rootDirectory: String) {
@@ -44,6 +46,11 @@ class ProjectPanel: NSView {
             self, selector: #selector(handleDirtyStateChanged(_:)),
             name: .bufferDirtyStateChanged, object: nil
         )
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleOpenDiffReview(_:)),
+            name: .openDiffReview, object: nil
+        )
     }
 
     @objc private func handleDirtyStateChanged(_ notification: Notification) {
@@ -58,6 +65,47 @@ class ProjectPanel: NSView {
             tab.updateDirtyState(buffer.isDirty)
             break
         }
+    }
+
+    @objc private func handleOpenDiffReview(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let path = userInfo["path"] as? String,
+              let oldContent = userInfo["oldContent"] as? String,
+              let newContent = userInfo["newContent"] as? String else { return }
+        // Only handle if the editor belongs to our project
+        guard path.hasPrefix(rootDirectory) else { return }
+        openDiffReview(path: path, oldContent: oldContent, newContent: newContent)
+    }
+
+    /// Open a diff review tab for a file changed by an agent.
+    func openDiffReview(path: String, oldContent: String?, newContent: String?) {
+        // If a diff review tab for this path is already open, switch to it
+        if let existingIndex = openFiles.firstIndex(where: { $0.path == path && $0.isDiffReview }) {
+            selectFile(existingIndex)
+            return
+        }
+
+        let diffPanel = DiffReviewPanel(filePath: path, oldContent: oldContent, newContent: newContent)
+        diffPanel.onReviewComplete = { [weak self] reviewedPath, wasAccepted in
+            guard let self else { return }
+            // Close the diff tab
+            if let idx = self.openFiles.firstIndex(where: { $0.path == reviewedPath && $0.isDiffReview }) {
+                self.closeFile(idx)
+            }
+            // Reload the editor tab (suppress file watcher to avoid re-triggering banner)
+            if let editorIdx = self.openFiles.firstIndex(where: { $0.path == reviewedPath && $0.editor != nil }) {
+                let editorView = self.openFiles[editorIdx].editor?.editorView
+                editorView?.suppressNextExternalChange = true
+                try? editorView?.buffer.reload()
+                editorView?.dismissAgentBanner()
+                editorView?.needsDisplay = true
+            }
+        }
+
+        let file = OpenFile(path: path, panel: diffPanel)
+        openFiles.append(file)
+        selectFile(openFiles.count - 1)
+        rebuildTabBar()
     }
 
     required init?(coder: NSCoder) { fatalError() }

@@ -163,6 +163,21 @@ class KeyboardNavigationHandler {
             }
         }
 
+        // ⌘T: new tab (matching current tab type, or terminal)
+        if mods == .command && event.charactersIgnoringModifiers == "t" {
+            if let workspace = window.workspaceManager.activeWorkspace {
+                switch workspace.activeTab?.type {
+                case .browser:
+                    workspace.addBrowserSurface()
+                case .editor:
+                    try? workspace.addEditorTab()
+                default:
+                    workspace.addSurface()
+                }
+            }
+            return true
+        }
+
         // ⌘⇧T: new browser tab
         if mods == [.command, .shift] && event.charactersIgnoringModifiers == "T" {
             window.workspaceManager.activeWorkspace?.addBrowserSurface()
@@ -189,9 +204,16 @@ class KeyboardNavigationHandler {
             return true
         }
 
-        // ⌘⇧W: close split pane (or tab if no splits)
+        // ⌘W: new workspace
+        if mods == .command && event.charactersIgnoringModifiers == "w" {
+            window.workspaceManager.addWorkspace()
+            window.sidebarView?.setNeedsReload()
+            return true
+        }
+
+        // ⌘⇧W: close tab (or close split pane if splits exist)
         if mods == [.command, .shift] && event.charactersIgnoringModifiers == "W" {
-            window.workspaceManager.activeWorkspace?.closeSplitPane()
+            window.workspaceManager.activeWorkspace?.closeActiveSurface()
             window.updateTabBar()
             return true
         }

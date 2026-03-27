@@ -127,6 +127,34 @@ class TerminalActivityMonitor {
         }
         // Post a single notification for sidebar refresh
         NotificationCenter.default.post(name: .terminalActivityChanged, object: nil)
+
+        // Bridge Claude Code state to AgentFileTracker
+        updateAgentTracking()
+    }
+
+    /// Start/stop AgentFileTracker based on whether any terminal is running Claude Code in an editing state.
+    private func updateAgentTracking() {
+        let tracker = AgentFileTracker.shared
+        let claudeSurfaces = surfaces.compactMap { $0.surface }.filter {
+            $0.detectedProgram == "Claude Code"
+        }
+
+        let isClaudeActive = claudeSurfaces.contains { surface in
+            guard let state = surface.claudeCodeState else { return false }
+            // Track when Claude is thinking (about to edit) or done with task (just edited)
+            return state == .thinking || state == .doneWithTask
+        }
+
+        if isClaudeActive && !tracker.isTracking {
+            // Gather project roots from Claude Code working directories
+            let roots = claudeSurfaces.compactMap { $0.workingDirectory }
+            let uniqueRoots = Array(Set(roots))
+            if !uniqueRoots.isEmpty {
+                tracker.startTracking(roots: uniqueRoots)
+            }
+        } else if !isClaudeActive && tracker.isTracking {
+            tracker.stopTracking()
+        }
     }
 
     // MARK: - Helpers

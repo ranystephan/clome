@@ -3,7 +3,8 @@ import AppKit
 let app = NSApplication.shared
 
 let delegate = MainActor.assumeIsolated {
-    ClomeAppDelegate()
+    CrashReporter.shared.install()
+    return ClomeAppDelegate()
 }
 app.delegate = delegate
 app.run()
