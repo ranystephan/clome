@@ -312,6 +312,8 @@ class SessionState {
                 }
             case .diff:
                 break
+            case .flow:
+                break
             }
 
             let surfaceId = UUID().uuidString

@@ -237,7 +237,11 @@ class ClomeWindow: NSWindow {
         // Adjust tab bar leading inset to avoid traffic light buttons
         tabBarView.setSidebarVisible(mode == .pinned, animated: animated)
 
-        NSAnimationContext.runAnimationGroup { ctx in
+        if mode != .hidden {
+            sidebarView.isHidden = false
+        }
+
+        NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = duration
             ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             ctx.allowsImplicitAnimation = true
@@ -259,7 +263,11 @@ class ClomeWindow: NSWindow {
                 sidebarContainer.animator().alphaValue = 0.0
                 dividerHandle.animator().alphaValue = 0.0
             }
-        }
+        }, completionHandler: { [weak self] in
+            if mode == .hidden {
+                self?.sidebarView.isHidden = true
+            }
+        })
     }
 
     // MARK: - Sidebar Hover Reveal (Compact Mode)

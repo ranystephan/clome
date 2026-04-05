@@ -1057,7 +1057,7 @@ class TerminalSurface: NSView {
 
     // MARK: - Keystroke Injection
 
-    /// Inject a text string into the terminal using the fast bulk API.
+    /// Inject a text string into the terminal using the fast bulk API (bracketed paste).
     func injectText(_ text: String) {
         guard let surface else { return }
         text.withCString { ptr in
@@ -1065,18 +1065,46 @@ class TerminalSurface: NSView {
         }
     }
 
+    /// Inject text followed by Enter as a single raw pty write, bypassing
+    /// bracketed paste. This is needed for apps like Claude Code where the
+    /// bracketed paste from `injectText` + separate Enter key event don't
+    /// reliably combine to submit input.
+    func injectTextAndReturn(_ text: String) {
+        guard let surface else { return }
+        // Escape any backslashes in the text so they survive ghostty's
+        // string.parse (which interprets \x sequences).
+        var escaped = text.replacingOccurrences(of: "\\", with: "\\\\")
+        let action = "text:\(escaped)\\x0d"
+        let ok = action.withCString { ptr in
+            ghostty_surface_binding_action(surface, ptr, UInt(action.utf8.count))
+        }
+        if !ok {
+            // Fallback: paste text then key-press Enter
+            print("[TerminalSurface] binding_action failed for text+return, falling back")
+            injectText(text)
+            injectReturn()
+        }
+    }
+
     /// Inject a Return/Enter keystroke into the terminal.
     func injectReturn() {
         guard let surface else { return }
-        var input = ghostty_input_key_s()
-        input.action = GHOSTTY_ACTION_PRESS
-        input.mods = ghostty_input_mods_e(rawValue: 0)
-        input.keycode = 36
-        input.composing = false
-        "\r".withCString { ptr in
-            input.text = ptr
-            input.unshifted_codepoint = 13
-            ghostty_surface_key(surface, input)
+        let action = "text:\\x0d"
+        let ok = action.withCString { ptr in
+            ghostty_surface_binding_action(surface, ptr, UInt(action.utf8.count))
+        }
+        if !ok {
+            // Fallback to key event if binding action isn't supported
+            var input = ghostty_input_key_s()
+            input.action = GHOSTTY_ACTION_PRESS
+            input.mods = ghostty_input_mods_e(rawValue: 0)
+            input.keycode = 36
+            input.composing = false
+            "\r".withCString { ptr in
+                input.text = ptr
+                input.unshifted_codepoint = 13
+                ghostty_surface_key(surface, input)
+            }
         }
     }
 

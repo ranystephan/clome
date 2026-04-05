@@ -1,4 +1,7 @@
 import AppKit
+import Firebase
+import FirebaseAuth
+import GoogleSignIn
 
 @MainActor
 class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -10,16 +13,18 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var autoSaveTimer: Timer?
     private var isSaving = false
     private var debouncedSaveWork: DispatchWorkItem?
+    private var remoteServer: RemoteServer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Disable macOS window restoration — Clome manages its own session state via SQLite.
         // This prevents "Unable to find className=(null)" errors from NSWindowRestoration.
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
 
-        // Pre-warm TCC file access early — triggers a single permission prompt per
-        // protected directory instead of repeated prompts from individual subsystems
-        // (file watchers, git status, directory listings, etc.).
+        // Restore saved security-scoped bookmarks for TCC-protected directories.
+        // This does NOT show any prompts — only resolves previously-saved bookmarks.
         FileAccessManager.shared.prewarmAccess()
+
+        // Firebase is initialized in main.swift before NSApplication.run()
 
         setupMenuBar()
 
@@ -41,6 +46,10 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
         mainWindow = window
 
+        // Access to TCC-protected directories (Desktop, Documents, Downloads) is now
+        // requested lazily — only when the user actually opens a project in one of them.
+        // This avoids bombarding the user with permission prompts on every launch.
+
         // Restore saved window frame (validate it's visible on a connected screen)
         if let frame = SessionState.shared.restoreWindowFrame() {
             if NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) {
@@ -57,6 +66,11 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Keyboard navigation
         keyboardHandler = KeyboardNavigationHandler(window: window)
+
+        // Start remote control server (Bonjour + Multipeer for iOS Clome Flow)
+        remoteServer = RemoteServer.shared
+        remoteServer?.workspaceManager = window.workspaceManager
+        remoteServer?.start()
 
         // Nil out mainWindow when the window closes to avoid dangling references
         window.delegate = self
@@ -81,6 +95,7 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         autoSaveTimer?.invalidate()
         autoSaveTimer = nil
         saveSession()
+        remoteServer?.stop()
         socketServer?.stop()
 
         // Destroy all terminal surfaces BEFORE freeing the ghostty app.
@@ -105,6 +120,13 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidResignActive(_ notification: Notification) {
         // Save immediately when losing focus — critical for Xcode re-run (SIGKILL)
         saveSession()
+    }
+
+    /// Handle Google Sign-In OAuth callback URL
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            GIDSignIn.sharedInstance.handle(url)
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -179,6 +201,8 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         fileMenu.addItem(NSMenuItem.separator())
         fileMenu.addItem(withTitle: "Open...", action: #selector(openFile(_:)), keyEquivalent: "o")
         fileMenu.addItem(withTitle: "New Browser Tab", action: #selector(newBrowserTab(_:)), keyEquivalent: "t")
+        fileMenu.items.last?.keyEquivalentModifierMask = [.command, .shift]
+        fileMenu.addItem(withTitle: "New Flow Tab", action: #selector(newFlowTab(_:)), keyEquivalent: "f")
         fileMenu.items.last?.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(NSMenuItem.separator())
         fileMenu.addItem(withTitle: "Resume Claude Session...", action: #selector(resumeClaudeSession(_:)), keyEquivalent: "r")
@@ -263,8 +287,8 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .project:
             // Can't duplicate a project tab without a directory — fall back to terminal
             workspace.addSurface()
-        case .notebook, .pdf, .diff:
-            // These need file paths — fall back to terminal
+        case .notebook, .pdf, .diff, .flow:
+            // These need file paths or are special — fall back to terminal
             workspace.addSurface()
         case .terminal, .none:
             workspace.addSurface()
@@ -313,6 +337,10 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func newBrowserTab(_ sender: Any?) {
         mainWindow?.workspaceManager.activeWorkspace?.addBrowserSurface()
+    }
+
+    @objc private func newFlowTab(_ sender: Any?) {
+        mainWindow?.workspaceManager.activeWorkspace?.addFlowTab()
     }
 
     @objc private func resumeClaudeSession(_ sender: Any?) {

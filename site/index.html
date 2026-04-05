@@ -510,6 +510,82 @@
     }
     .f-links a:hover { color: var(--text-2); }
 
+
+    /* ═══ FLOW SECTION ═══ */
+    .flow {
+      padding: 0 48px 0;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .flow-header {
+      margin-bottom: 80px;
+    }
+    .flow-header .label {
+      font-size: 13px;
+      color: var(--copper);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-family: var(--mono);
+      margin-bottom: 20px;
+    }
+    .flow-header h2 {
+      font-family: var(--serif);
+      font-size: clamp(32px, 4vw, 52px);
+      font-weight: 400;
+      line-height: 1.15;
+    }
+    .flow-header p {
+      font-size: 16px;
+      color: var(--text-2);
+      font-weight: 300;
+      line-height: 1.7;
+      max-width: 560px;
+      margin-top: 20px;
+    }
+    .flow-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+    }
+    .flow-card {
+      padding: 48px 40px;
+      border: 1px solid var(--border);
+      position: relative;
+      transition: background 0.4s;
+    }
+    .flow-card:nth-child(1) { border-right: none; border-bottom: none; }
+    .flow-card:nth-child(2) { border-bottom: none; }
+    .flow-card:nth-child(3) { border-right: none; }
+    .flow-card:hover { background: var(--bg-2); }
+    .flow-card .flow-icon {
+      font-size: 11px;
+      font-family: var(--mono);
+      color: var(--copper);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .flow-card .flow-icon .flow-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--copper);
+    }
+    .flow-card h3 {
+      font-family: var(--serif);
+      font-size: 22px;
+      font-weight: 400;
+      margin-bottom: 12px;
+    }
+    .flow-card p {
+      font-size: 14px;
+      color: var(--text-2);
+      line-height: 1.65;
+      font-weight: 300;
+    }
+
     /* ═══ SPACER ═══ */
     .spacer { height: 160px; }
 
@@ -546,6 +622,13 @@
       footer { padding: 32px 24px; flex-direction: column; gap: 16px; text-align: center; }
       .f-links { justify-content: center; }
       #helix-canvas { width: 100%; max-width: 600px; bottom: -80px; }
+      .flow { padding: 0 24px; }
+      .flow-grid { grid-template-columns: 1fr; }
+      .flow-card { border-right: 1px solid var(--border) !important; }
+      .flow-card:nth-child(1),
+      .flow-card:nth-child(2),
+      .flow-card:nth-child(3) { border-bottom: none !important; }
+      .flow-card:last-child { border-bottom: 1px solid var(--border) !important; }
     }
     @media (max-width: 520px) {
       nav { padding: 14px 16px; }
@@ -589,6 +672,12 @@
       footer { padding: 28px 20px; }
       .f-links { gap: 20px; flex-wrap: wrap; justify-content: center; }
       .spacer { height: 80px; }
+      .flow { padding: 0 20px; }
+      .flow-header { margin-bottom: 48px; }
+      .flow-header h2 { font-size: clamp(28px, 7vw, 40px); }
+      .flow-card { padding: 32px 24px; }
+      .flow-card h3 { font-size: 20px; }
+      .flow-card p { font-size: 13px; }
     }
     @media (max-width: 380px) {
       .nav-btn.primary { display: none; }
@@ -608,6 +697,8 @@
   </a>
   <div class="nav-center">
     <a href="#features">Features</a>
+    <a href="#flow">Flow</a>
+    <a href="#remote">Remote</a>
     <a href="#architecture">Architecture</a>
     <a href="#source">Get Started</a>
     <span class="nav-gh-group">
@@ -630,13 +721,13 @@
 <section class="hero">
   <p class="hero-label rv">AI-native development environment for macOS</p>
   <h1 class="rv rv-d1">A New Way to Code<br>Without Limits</h1>
-  <p class="hero-sub rv rv-d2">Native Swift app with a GPU-accelerated terminal, built-in editor, and deep AI integration. No Electron. No compromise.</p>
+  <p class="hero-sub rv rv-d2">Native Swift app with a GPU-accelerated terminal, built-in editor, AI productivity suite, and remote device control. No Electron. No compromise.</p>
   <a href="https://github.com/ranystephan/clome/releases" class="hero-cta rv rv-d3">
     <svg width="15" height="15" fill="none" viewBox="0 0 16 16"><path d="M8 12L3 7h3.5V2h3v5H13L8 12z" fill="currentColor"/><path d="M2 13v1h12v-1H2z" fill="currentColor"/></svg>
     Download for macOS
   </a>
   <canvas id="helix-canvas"></canvas>
-  <span class="hero-footnote rv">macOS 14.0+ &middot; Apple Silicon &middot; v0.1.0-alpha</span>
+  <span class="hero-footnote rv">macOS 14.0+ &middot; Apple Silicon + iOS &middot; v0.2.0</span>
 </section>
 
 <!-- STRIP -->
@@ -645,21 +736,35 @@
     <span class="strip-item"><span class="d"></span>Swift + AppKit</span>
     <span class="strip-item"><span class="d"></span>Metal Rendering</span>
     <span class="strip-item"><span class="d"></span>libghostty</span>
+    <span class="strip-item"><span class="d"></span>Clome Flow</span>
     <span class="strip-item"><span class="d"></span>Rope Buffer</span>
     <span class="strip-item"><span class="d"></span>LSP Protocol</span>
+    <span class="strip-item"><span class="d"></span>Remote Pairing</span>
     <span class="strip-item"><span class="d"></span>CoreText</span>
+    <span class="strip-item"><span class="d"></span>Ed25519</span>
     <span class="strip-item"><span class="d"></span>SQLite</span>
+    <span class="strip-item"><span class="d"></span>EventKit</span>
     <span class="strip-item"><span class="d"></span>Zig FFI</span>
+    <span class="strip-item"><span class="d"></span>Firebase Sync</span>
     <span class="strip-item"><span class="d"></span>Tree-sitter</span>
+    <span class="strip-item"><span class="d"></span>WebAuthn</span>
+    <span class="strip-item"><span class="d"></span>TLS + Bonjour</span>
     <span class="strip-item"><span class="d"></span>Swift + AppKit</span>
     <span class="strip-item"><span class="d"></span>Metal Rendering</span>
     <span class="strip-item"><span class="d"></span>libghostty</span>
+    <span class="strip-item"><span class="d"></span>Clome Flow</span>
     <span class="strip-item"><span class="d"></span>Rope Buffer</span>
     <span class="strip-item"><span class="d"></span>LSP Protocol</span>
+    <span class="strip-item"><span class="d"></span>Remote Pairing</span>
     <span class="strip-item"><span class="d"></span>CoreText</span>
+    <span class="strip-item"><span class="d"></span>Ed25519</span>
     <span class="strip-item"><span class="d"></span>SQLite</span>
+    <span class="strip-item"><span class="d"></span>EventKit</span>
     <span class="strip-item"><span class="d"></span>Zig FFI</span>
+    <span class="strip-item"><span class="d"></span>Firebase Sync</span>
     <span class="strip-item"><span class="d"></span>Tree-sitter</span>
+    <span class="strip-item"><span class="d"></span>WebAuthn</span>
+    <span class="strip-item"><span class="d"></span>TLS + Bonjour</span>
   </div>
 </div>
 
@@ -712,6 +817,39 @@
 <!-- SPACER -->
 <div class="spacer"></div>
 
+<!-- CLOME FLOW -->
+<section class="flow rv" id="flow">
+  <div class="flow-header">
+    <div class="label">Flow</div>
+    <h2>Your life, inside<br>your editor</h2>
+    <p>A built-in productivity panel that brings todos, calendar, AI chat, and notes directly into your workspace — all scoped to your project context.</p>
+  </div>
+  <div class="flow-grid">
+    <div class="flow-card">
+      <div class="flow-icon"><span class="flow-dot"></span> AI Chat</div>
+      <h3>Conversational AI with Tool Use</h3>
+      <p>Chat with Gemini AI that can create and edit calendar events, todos, deadlines, and notes through natural language. Function calling makes it actionable, not just conversational.</p>
+    </div>
+    <div class="flow-card">
+      <div class="flow-icon"><span class="flow-dot"></span> Calendar</div>
+      <h3>Full Calendar Integration</h3>
+      <p>Day, week, and month views powered by EventKit. Create events from a popover or type naturally into the chat bar. Your schedule lives where your code does.</p>
+    </div>
+    <div class="flow-card">
+      <div class="flow-icon"><span class="flow-dot"></span> Tasks</div>
+      <h3>Todos &amp; Deadlines</h3>
+      <p>Project-scoped task management with deadlines that sync across Clome on macOS and Clome Flow on iOS via Firebase. Never lose track of what matters.</p>
+    </div>
+    <div class="flow-card">
+      <div class="flow-icon"><span class="flow-dot"></span> Inspector</div>
+      <h3>AI Harness Inspector</h3>
+      <p>Full transparency into AI operations. Four tabs — Context, Tools, Prompt, Status — show exactly what the AI sees, what tools are available, and the system prompt driving it.</p>
+    </div>
+  </div>
+</section>
+
+<div class="spacer"></div>
+
 <!-- ARCHITECTURE -->
 <section class="arch rv" id="architecture">
   <div class="arch-left">
@@ -726,9 +864,91 @@
     <div class="arch-row"><span class="ar-name">Terminal</span><span class="ar-tech">libghostty (Zig)</span></div>
     <div class="arch-row"><span class="ar-name">Rendering</span><span class="ar-tech">Metal</span></div>
     <div class="arch-row"><span class="ar-name">Intelligence</span><span class="ar-tech">LSP + Tree-sitter</span></div>
-    <div class="arch-row"><span class="ar-name">Persistence</span><span class="ar-tech">SQLite</span></div>
+    <div class="arch-row"><span class="ar-name">Flow Engine</span><span class="ar-tech">SwiftUI + Firebase</span></div>
+    <div class="arch-row"><span class="ar-name">Remote</span><span class="ar-tech">Network.framework + TLS</span></div>
+    <div class="arch-row"><span class="ar-name">Security</span><span class="ar-tech">Ed25519 + WebAuthn</span></div>
+    <div class="arch-row"><span class="ar-name">AI Harness</span><span class="ar-tech">Gemini + Tool Registry</span></div>
+    <div class="arch-row"><span class="ar-name">Persistence</span><span class="ar-tech">SQLite + Firestore</span></div>
   </div>
 </section>
+
+<!-- DOT GRID DIVIDER — REMOTE -->
+<section class="dot-section dot-section-sm">
+  <canvas class="dot-grid" id="dots3"></canvas>
+  <h2 class="rv"><span class="dot-text">Desktop meets mobile.</span><span class="accent"></span><span class="dot-text">Seamlessly connected.</span></h2>
+</section>
+
+<!-- REMOTE CONNECTION -->
+<section class="features rv" id="remote">
+  <div class="features-header">
+    <div class="label">Remote</div>
+    <h2>Control your Mac<br>from your phone</h2>
+  </div>
+  <div class="features-grid">
+    <div class="feat">
+      <div class="feat-num">01</div>
+      <h3>Device Pairing</h3>
+      <p>Ed25519 cryptographic pairing with 6-digit codes. Secure mutual authentication via Keychain-stored signing keys with 5-minute TTL.</p>
+    </div>
+    <div class="feat">
+      <div class="feat-num">02</div>
+      <h3>Terminal Streaming</h3>
+      <p>Stream your terminal output to your phone in real-time. Monitor builds, watch logs, and control sessions remotely over TLS.</p>
+    </div>
+    <div class="feat">
+      <div class="feat-num">03</div>
+      <h3>Workspace Sync</h3>
+      <p>Full workspace state pushed to connected devices. See your tabs, splits, and projects from anywhere via JSON-RPC 2.0.</p>
+    </div>
+  </div>
+</section>
+
+<div class="spacer"></div>
+
+<!-- CLOME FLOW iOS -->
+<section class="arch rv" id="clome-flow-ios">
+  <div class="arch-left">
+    <div class="label">Clome Flow</div>
+    <h2>Your schedule, everywhere</h2>
+    <p>The AI-native companion app for iOS. Chat with AI to schedule events, manage todos, and hit deadlines using natural language — all synced in real time with Clome on your Mac.</p>
+    <p style="color: var(--text-3);">SwiftUI. Firebase. EventKit. From your wrist to your home screen.</p>
+  </div>
+  <div class="arch-right">
+    <div class="arch-row"><span class="ar-name">AI Scheduling</span><span class="ar-tech">Natural Language</span></div>
+    <div class="arch-row"><span class="ar-name">Calendar Sync</span><span class="ar-tech">EventKit + Firestore</span></div>
+    <div class="arch-row"><span class="ar-name">Smart Todos</span><span class="ar-tech">AI Prioritization</span></div>
+    <div class="arch-row"><span class="ar-name">Notes &amp; Deadlines</span><span class="ar-tech">Real-time Sync</span></div>
+    <div class="arch-row"><span class="ar-name">Watch App</span><span class="ar-tech">watchOS + WidgetKit</span></div>
+    <div class="arch-row"><span class="ar-name">Gamification</span><span class="ar-tech">XP + Streaks</span></div>
+  </div>
+</section>
+
+<!-- SECURITY -->
+<section class="features rv" id="security">
+  <div class="features-header">
+    <div class="label">Security</div>
+    <h2>Security without<br>compromise</h2>
+  </div>
+  <div class="features-grid">
+    <div class="feat">
+      <div class="feat-num">01</div>
+      <h3>Passkey Support</h3>
+      <p>Native WebAuthn bridge for passkey login in the built-in browser. ASAuthorization handles credentials without extensions or entitlements.</p>
+    </div>
+    <div class="feat">
+      <div class="feat-num">02</div>
+      <h3>Encrypted Remote</h3>
+      <p>TLS connections with Ed25519 mutual authentication for all device-to-device communication. Bonjour discovery, zero config.</p>
+    </div>
+    <div class="feat">
+      <div class="feat-num">03</div>
+      <h3>Credential Manager</h3>
+      <p>Built-in password manager for the browser. Per-host credential storage with Keychain integration for code-signed builds.</p>
+    </div>
+  </div>
+</section>
+
+<div class="spacer"></div>
 
 <!-- OPEN SOURCE -->
 <section class="oss rv" id="source">
@@ -928,6 +1148,7 @@ function drawDots(canvasId) {
 
 drawDots('dots1');
 drawDots('dots2');
+drawDots('dots3');
 </script>
 </body>
 </html>

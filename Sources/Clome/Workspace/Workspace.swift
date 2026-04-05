@@ -37,6 +37,7 @@ class WorkspaceTab: Identifiable {
             else if v is EditorPanel { label = "Editor" }
             else if v is PDFPanel { label = "PDF" }
             else if v is NotebookPanel { label = "Notebook" }
+            else if v is FlowPanel { label = "Flow" }
             else { label = "Pane" }
             counts[label, default: 0] += 1
         }
@@ -59,6 +60,8 @@ class WorkspaceTab: Identifiable {
             return ("doc.richtext", pdf.title.isEmpty ? "PDF" : pdf.title)
         } else if let notebook = view as? NotebookPanel {
             return ("book", notebook.title.isEmpty ? "Notebook" : notebook.title)
+        } else if view is FlowPanel {
+            return ("calendar.badge.clock", "Flow")
         } else if let slot = view as? EditorSlot {
             return slot.headerInfo
         }
@@ -73,6 +76,7 @@ class WorkspaceTab: Identifiable {
         case diff
         case project
         case notebook
+        case flow
 
         var icon: String {
             switch self {
@@ -83,6 +87,7 @@ class WorkspaceTab: Identifiable {
             case .diff: return "arrow.left.arrow.right"
             case .project: return "folder"
             case .notebook: return "book"
+            case .flow: return "calendar.badge.clock"
             }
         }
     }
@@ -364,6 +369,21 @@ class Workspace: Identifiable {
 
     func openNotebook(_ path: String) throws {
         try addNotebookTab(path: path)
+    }
+
+    @discardableResult
+    func addFlowTab() -> WorkspaceTab? {
+        // Only allow one Flow tab per workspace
+        if let existingIndex = tabs.firstIndex(where: { $0.type == .flow }) {
+            selectTab(existingIndex)
+            return tabs[existingIndex]
+        }
+        let panel = FlowPanel()
+        panel.projectContext = projectRoots.first?.path
+        panel.workspaceID = self.id
+        let tab = WorkspaceTab(type: .flow, view: panel, title: "Flow")
+        addTab(tab)
+        return tab
     }
 
     private func addTab(_ tab: WorkspaceTab) {
@@ -684,6 +704,9 @@ class Workspace: Identifiable {
         } else if let notebook = paneView as? NotebookPanel {
             tabType = .notebook
             title = notebook.title.isEmpty ? "Notebook" : notebook.title
+        } else if paneView is FlowPanel {
+            tabType = .flow
+            title = "Flow"
         } else {
             tabType = .terminal
             title = "Pane"

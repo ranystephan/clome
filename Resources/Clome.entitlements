@@ -41,5 +41,22 @@
     <!-- Camera capture — needed for WebRTC camera access in browser panel -->
     <key>com.apple.security.device.camera</key>
     <true/>
+
+    <!-- Calendar access — needed for Flow panel calendar view -->
+    <key>com.apple.security.personal-information.calendars</key>
+    <true/>
+
+    <!-- Reminders access — needed for Flow calendar reminders display -->
+    <key>com.apple.security.personal-information.reminders</key>
+    <true/>
+
+    <!-- Keychain access — Firebase Auth uses useUserAccessGroup(nil) for private
+         keychain access. The explicit access group is kept for forward-compatibility
+         with keychain sharing (e.g. Clome ↔ Clome Flow iOS), but Firebase does not
+         require it when using the nil/private group. -->
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    </array>
 </dict>
 </plist>

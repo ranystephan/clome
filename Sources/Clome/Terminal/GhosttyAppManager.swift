@@ -85,6 +85,9 @@ class GhosttyAppManager {
         }
         runtimeConfig.confirm_read_clipboard_cb = nil
         runtimeConfig.write_clipboard_cb = { surfaceUD, clipboard, contents, contentsLen, confirm in
+            // Only write to the system clipboard for standard clipboard requests.
+            // Selection clipboard (copy-on-select) should be ignored.
+            guard clipboard == GHOSTTY_CLIPBOARD_STANDARD else { return }
             guard let contents, contentsLen > 0 else { return }
             if let data = contents.pointee.data {
                 let string = String(cString: data)

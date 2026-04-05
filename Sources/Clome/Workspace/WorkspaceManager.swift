@@ -228,6 +228,9 @@ class WorkspaceManager {
 
         case .diff:
             break  // Transient, skip
+
+        case .flow:
+            workspace.addFlowTab()
         }
     }
 }

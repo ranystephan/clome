@@ -344,7 +344,13 @@ class FileShelfView: NSView, NSTextFieldDelegate {
     }
 
     func loadDownloads() {
-        let downloadsURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads")
+        let downloadsPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads").path
+        // Only access Downloads if we already have permission — avoid triggering TCC prompts
+        guard FileAccessManager.shared.accessDirectory(downloadsPath) else {
+            downloadsFiles = []
+            return
+        }
+        let downloadsURL = URL(fileURLWithPath: downloadsPath)
         guard let contents = try? FileManager.default.contentsOfDirectory(
             at: downloadsURL,
             includingPropertiesForKeys: [.contentModificationDateKey],
@@ -371,6 +377,8 @@ class FileShelfView: NSView, NSTextFieldDelegate {
 
     private func watchDownloads() {
         let downloadsPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads").path
+        // Only watch if we already have access — avoid triggering TCC
+        guard FileAccessManager.shared.accessDirectory(downloadsPath) else { return }
         let fd = open(downloadsPath, O_EVTONLY)
         guard fd >= 0 else { return }
         let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: .write, queue: .main)

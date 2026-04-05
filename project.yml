@@ -6,8 +6,16 @@ options:
   xcodeVersion: "16.0"
   generateEmptyDirectories: true
 
+packages:
+  Firebase:
+    url: https://github.com/firebase/firebase-ios-sdk
+    from: "10.19.0"
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS
+    from: "7.0.0"
+  ClomeEcosystemKit:
+    path: ../ClomeEcosystemKit
 # SwiftTreeSitter SPM package — uncomment when grammars are ready to bundle:
-# packages:
 #   SwiftTreeSitter:
 #     url: https://github.com/ChimeHQ/SwiftTreeSitter
 #     from: "0.8.0"
@@ -22,8 +30,8 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.developer-tools"
     INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Clome. All rights reserved."
-    CODE_SIGN_IDENTITY: "-"
-    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: 5TKZ4779W9
     ENABLE_HARDENED_RUNTIME: YES
     # Disable library validation so WKWebView XPC services (WebContent, GPU,
     # Networking) can load their dylibs without code-signing team conflicts.
@@ -82,7 +90,23 @@ targets:
           - -framework CoreVideo
           - -framework IOSurface
           - -framework AuthenticationServices
+          - -framework MultipeerConnectivity
+          - -framework Network
         INFOPLIST_FILE: Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Clome.entitlements
-    # dependencies:
-    #   - package: SwiftTreeSitter
+    dependencies:
+      - package: Firebase
+        product: FirebaseAuth
+      - package: Firebase
+        product: FirebaseFirestore
+      - package: Firebase
+        product: FirebaseFirestoreSwift
+      - package: GoogleSignIn
+        product: GoogleSignIn
+      - package: ClomeEcosystemKit
+        product: ClomeModels
+      - package: ClomeEcosystemKit
+        product: ClomeServices
+      - package: ClomeEcosystemKit
+        product: ClomeDesign
+    # - package: SwiftTreeSitter

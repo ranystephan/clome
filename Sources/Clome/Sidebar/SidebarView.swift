@@ -22,6 +22,12 @@ class SidebarView: NSView {
     private var sessionsBtnIcon: NSImageView?
     private var sessionsBtnLabel: NSTextField?
 
+    /// Remote connection indicator
+    private var remoteBtn: NSButton!
+    private var isRemoteConnected = false
+    private var connectedDeviceName: String?
+    private var remotePopover: NSPopover?
+
     /// Which workspaces are expanded
     private var expandedWorkspaces: Set<UUID> = []
 
@@ -208,6 +214,19 @@ class SidebarView: NSView {
         ])
         bottomBar.addSubview(sessionsBtn)
 
+        // Remote connection indicator button
+        remoteBtn = NSButton()
+        remoteBtn.translatesAutoresizingMaskIntoConstraints = false
+        remoteBtn.bezelStyle = .texturedRounded
+        remoteBtn.isBordered = false
+        remoteBtn.title = ""
+        remoteBtn.target = self
+        remoteBtn.action = #selector(remoteBtnTapped)
+        remoteBtn.image = NSImage(systemSymbolName: "iphone", accessibilityDescription: "Remote Connection")?.withSymbolConfiguration(smallCfg)
+        remoteBtn.contentTintColor = NSColor(white: 1.0, alpha: 0.35) // dimmed when disconnected
+        remoteBtn.toolTip = "No device connected"
+        bottomBar.addSubview(remoteBtn)
+
         // ──── Layout ────
         explorerHeightConstraint = explorer.heightAnchor.constraint(equalToConstant: explorerHeight)
         scrollViewBottomConstraint = scSection.bottomAnchor.constraint(lessThanOrEqualTo: bottomBar.topAnchor)
@@ -267,6 +286,12 @@ class SidebarView: NSView {
             sessionsBtn.leadingAnchor.constraint(equalTo: shelfBtn.trailingAnchor, constant: 4),
             sessionsBtn.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
             sessionsBtn.heightAnchor.constraint(equalToConstant: 28),
+
+            // Remote connection indicator on the right side of bottom bar
+            remoteBtn.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -8),
+            remoteBtn.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
+            remoteBtn.widthAnchor.constraint(equalToConstant: 28),
+            remoteBtn.heightAnchor.constraint(equalToConstant: 28),
         ])
     }
 
@@ -291,6 +316,8 @@ class SidebarView: NSView {
         NotificationCenter.default.addObserver(self, selector: #selector(onNotificationChange(_:)), name: .appearanceSettingsChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(onNotificationChange(_:)), name: .terminalActivityChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(onTerminalFocused(_:)), name: .terminalSurfaceFocused, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(onRemoteClientConnected(_:)), name: .remoteClientConnected, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(onRemoteClientDisconnected(_:)), name: .remoteClientDisconnected, object: nil)
     }
 
     @objc private func onNotificationChange(_ n: Notification) {
@@ -326,6 +353,79 @@ class SidebarView: NSView {
 
     @objc private func sessionsToggleTapped() {
         toggleSessionsPopover()
+    }
+
+    // MARK: - Remote Connection
+
+    @objc private func onRemoteClientConnected(_ n: Notification) {
+        isRemoteConnected = true
+        connectedDeviceName = n.userInfo?["deviceName"] as? String
+        updateRemoteButtonAppearance()
+    }
+
+    @objc private func onRemoteClientDisconnected(_ n: Notification) {
+        // Check if there are still other connected devices
+        let remaining = RemoteServer.shared.connectedDeviceCount
+        if remaining == 0 {
+            isRemoteConnected = false
+            connectedDeviceName = nil
+        } else {
+            connectedDeviceName = RemoteServer.shared.connectedDeviceNames.first
+        }
+        updateRemoteButtonAppearance()
+    }
+
+    private func updateRemoteButtonAppearance() {
+        if isRemoteConnected {
+            remoteBtn.contentTintColor = NSColor(red: 0.3, green: 0.85, blue: 0.6, alpha: 1.0) // green accent
+            remoteBtn.toolTip = connectedDeviceName ?? "Device connected"
+        } else {
+            remoteBtn.contentTintColor = NSColor(white: 1.0, alpha: 0.35)
+            remoteBtn.toolTip = "No device connected"
+        }
+    }
+
+    @objc private func remoteBtnTapped() {
+        if let popover = remotePopover, popover.isShown {
+            popover.performClose(nil)
+            remotePopover = nil
+            return
+        }
+
+        let statusText: String
+        if isRemoteConnected {
+            let names = RemoteServer.shared.connectedDeviceNames
+            let deviceList = names.isEmpty ? "Unknown device" : names.joined(separator: ", ")
+            statusText = "Connected: \(deviceList)"
+        } else {
+            statusText = "No device connected"
+        }
+
+        let label = NSTextField(labelWithString: statusText)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.textColor = NSColor(white: 1.0, alpha: 0.85)
+        label.alignment = .center
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 40))
+        container.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            label.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -12),
+        ])
+
+        let vc = NSViewController()
+        vc.view = container
+
+        let popover = NSPopover()
+        popover.contentViewController = vc
+        popover.contentSize = NSSize(width: 200, height: 40)
+        popover.behavior = .transient
+        popover.appearance = NSAppearance(named: .darkAqua)
+        popover.show(relativeTo: remoteBtn.bounds, of: remoteBtn, preferredEdge: .maxY)
+        remotePopover = popover
     }
 
     /// Toggle the Claude sessions popover anchored to the sessions button.
@@ -648,8 +748,12 @@ class SidebarView: NSView {
             }
 
             wsStack.addArrangedSubview(header)
-            header.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 4).isActive = true
-            header.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -4).isActive = true
+            let hLead = header.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 4)
+            hLead.priority = .defaultHigh
+            hLead.isActive = true
+            let hTrail = header.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -4)
+            hTrail.priority = .defaultHigh
+            hTrail.isActive = true
 
             // ── Tab rows (indented with vertical guide line) ──
             if isExpanded {
@@ -1919,17 +2023,33 @@ class SidebarRow: NSView {
     func addSub(_ view: NSView, leading: CGFloat? = nil, trailing: CGFloat? = nil, centerY: Bool = false, width: CGFloat? = nil, height: CGFloat? = nil, trailingOffset: CGFloat? = nil) {
         view.translatesAutoresizingMaskIntoConstraints = false
         addSubview(view)
-        if let l = leading { view.leadingAnchor.constraint(equalTo: leadingAnchor, constant: l).isActive = true }
-        if let t = trailing { view.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -t).isActive = true }
+        if let l = leading {
+            let c = view.leadingAnchor.constraint(equalTo: leadingAnchor, constant: l)
+            c.priority = .defaultHigh
+            c.isActive = true
+        }
+        if let t = trailing {
+            let c = view.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -t)
+            c.priority = .defaultHigh
+            c.isActive = true
+        }
         if centerY { view.centerYAnchor.constraint(equalTo: centerYAnchor).isActive = true }
         if let w = width { view.widthAnchor.constraint(equalToConstant: w).isActive = true }
         if let h = height { view.heightAnchor.constraint(equalToConstant: h).isActive = true }
-        if let to = trailingOffset { view.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -to).isActive = true }
+        if let to = trailingOffset {
+            let c = view.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -to)
+            c.priority = .defaultHigh
+            c.isActive = true
+        }
     }
 
     func pinToStack(_ stack: NSStackView) {
-        leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: 6).isActive = true
-        trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: -6).isActive = true
+        let lead = leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: 6)
+        lead.priority = .defaultHigh
+        lead.isActive = true
+        let trail = trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: -6)
+        trail.priority = .defaultHigh
+        trail.isActive = true
     }
 
     override func mouseDown(with event: NSEvent) {

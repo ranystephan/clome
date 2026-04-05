@@ -41,7 +41,38 @@
     <key>NSDownloadsFolderUsageDescription</key>
     <string>Clome needs access to Downloads to save files from the browser.</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>Clome needs local network access to connect to local development servers.</string>
+    <string>Clome needs local network access to connect to local development servers and allow remote control from Clome Flow on iOS.</string>
+
+    <!-- Bonjour service types for remote control discovery -->
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_clome._tcp</string>
+    </array>
+
+    <!-- Google Sign-In URL scheme for OAuth callback -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>com.googleusercontent.apps.1004240363696-vocto1lqvl6sc0p1pqu9hl7cd6hbrir5</string>
+            </array>
+            <key>CFBundleURLName</key>
+            <string>Google Sign-In</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+        </dict>
+    </array>
+
+    <!-- Calendar access for Flow panel -->
+    <key>NSCalendarsUsageDescription</key>
+    <string>Clome Flow needs calendar access to show your schedule in the Flow panel.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Clome Flow needs calendar access to show your schedule in the Flow panel.</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>Clome Flow needs reminders access to display your reminders in the calendar.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>Clome Flow needs reminders access to display your reminders in the calendar.</string>
 
     <!-- WKWebView: allow loading HTTP content (for local dev servers etc.) -->
     <key>NSAppTransportSecurity</key>

@@ -191,8 +191,13 @@ class FileTreeNode {
     }
 
     /// Lazily loads children for a directory node.
+    @MainActor
     func loadChildren() {
         guard isDirectory, children == nil else { return }
+
+        // Ensure TCC access is granted before listing — prevents repeated system prompts
+        FileAccessManager.shared.ensureAccess(to: path)
+
         let fm = FileManager.default
         do {
             let items = try fm.contentsOfDirectory(atPath: path)
@@ -210,6 +215,7 @@ class FileTreeNode {
     }
 
     /// Reloads children from disk.
+    @MainActor
     func reload() {
         children = nil
         loadChildren()
