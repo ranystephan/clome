@@ -64,6 +64,9 @@ jobs:
             -configuration Release \
             -derivedDataPath build/DerivedData \
             SWIFT_VERSION=5 \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
             build
 
       - name: Package DMG and ZIP
