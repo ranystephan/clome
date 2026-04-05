@@ -1,3 +1,6 @@
 [submodule "vendor/ghostty"]
 	path = vendor/ghostty
 	url = https://github.com/ghostty-org/ghostty.git
+[submodule "vendor/ClomeEcosystemKit"]
+	path = vendor/ClomeEcosystemKit
+	url = https://github.com/ranystephan/ClomeEcosystemKit.git

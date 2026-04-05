@@ -14,7 +14,7 @@ packages:
     url: https://github.com/google/GoogleSignIn-iOS
     from: "7.0.0"
   ClomeEcosystemKit:
-    path: ../ClomeEcosystemKit
+    path: vendor/ClomeEcosystemKit
 # SwiftTreeSitter SPM package — uncomment when grammars are ready to bundle:
 #   SwiftTreeSitter:
 #     url: https://github.com/ChimeHQ/SwiftTreeSitter
