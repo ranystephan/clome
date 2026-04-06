@@ -66,8 +66,11 @@ jobs:
             SWIFT_VERSION=5 \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
             build
+
+      - name: Ad-hoc codesign
+        run: |
+          codesign --force --deep --sign - build/DerivedData/Build/Products/Release/Clome.app
 
       - name: Package DMG and ZIP
         id: package
