@@ -37,3 +37,4 @@ dist/
 .history/
 claude_session.log
 *.backup
+Resources/GoogleService-Info.plist

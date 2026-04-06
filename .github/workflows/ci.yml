@@ -50,6 +50,17 @@ jobs:
             ln -s libghostty-fat.a "$XC/macos-arm64_x86_64/libghostty.a"
           fi
 
+      - name: Inject Firebase config
+        env:
+          GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
+        run: |
+          if [ -n "$GOOGLE_SERVICE_INFO_PLIST" ]; then
+            echo "$GOOGLE_SERVICE_INFO_PLIST" | base64 --decode > Resources/GoogleService-Info.plist
+            echo "Firebase config injected"
+          else
+            echo "No Firebase config secret — app will skip Firebase init"
+          fi
+
       - name: Generate Xcode project
         run: xcodegen generate
 
