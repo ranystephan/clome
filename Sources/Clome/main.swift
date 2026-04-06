@@ -6,7 +6,11 @@ import GTMAppAuth
 import Security
 
 // Configure Firebase before anything else can access Auth.auth().
-FirebaseApp.configure()
+if Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist") != nil {
+    FirebaseApp.configure()
+} else {
+    print("[Clome] GoogleService-Info.plist not found — skipping Firebase configuration")
+}
 
 // One-time cleanup of stale keychain items and Firebase access group preferences
 // from previous builds. Bump version suffix when keychain strategy changes.
