@@ -4,7 +4,7 @@ import SwiftUI
 /// overflow into a `+N` chip that expands inline when tapped.
 struct CalendarAllDayStrip: View {
     let days: [Date]
-    let items: [any CalendarItemProtocol]
+    let blocks: [Block]
     @State private var expanded = false
 
     private let cal = Calendar.current
@@ -28,7 +28,7 @@ struct CalendarAllDayStrip: View {
                 ZStack(alignment: .topLeading) {
                     ForEach(Array(rows.prefix(visibleRows).enumerated()), id: \.offset) { rowIndex, row in
                         ForEach(row, id: \.id) { entry in
-                            chip(for: entry.item)
+                            chip(for: entry.block)
                                 .frame(
                                     width: colW * CGFloat(entry.span) - 4,
                                     height: CalendarGridGeometry.allDayRowHeight - 4
@@ -60,11 +60,11 @@ struct CalendarAllDayStrip: View {
 
     // MARK: - Chip
 
-    private func chip(for item: any CalendarItemProtocol) -> some View {
-        let tint = item.displayColor
+    private func chip(for block: Block) -> some View {
+        let tint = block.color
         return HStack(spacing: 0) {
             Rectangle().fill(tint.opacity(0.9)).frame(width: 2)
-            Text(item.title)
+            Text(block.title)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(tint.opacity(0.95))
                 .lineLimit(1)
@@ -82,27 +82,26 @@ struct CalendarAllDayStrip: View {
 
     private struct Entry {
         let id: String
-        let item: any CalendarItemProtocol
+        let block: Block
         let startCol: Int
         let span: Int
     }
 
     private func layoutRows() -> [[Entry]] {
-        let allDay = items.filter { $0.isAllDay }
-        guard !allDay.isEmpty, !days.isEmpty else { return [] }
+        guard !blocks.isEmpty, !days.isEmpty else { return [] }
 
         let weekStart = cal.startOfDay(for: days.first!)
-        let entries: [Entry] = allDay.compactMap { item in
-            let startDay = cal.startOfDay(for: item.startDate)
-            let endDay = cal.startOfDay(for: item.endDate)
+        let entries: [Entry] = blocks.compactMap { b in
+            let startDay = cal.startOfDay(for: b.start)
+            let endDay = cal.startOfDay(for: b.end)
             let startCol = cal.dateComponents([.day], from: weekStart, to: startDay).day ?? 0
             let endCol = cal.dateComponents([.day], from: weekStart, to: endDay).day ?? startCol
             let clampedStart = max(0, startCol)
             let clampedEnd = min(6, endCol)
             guard clampedEnd >= clampedStart else { return nil }
             return Entry(
-                id: item.calendarItemID,
-                item: item,
+                id: b.id,
+                block: b,
                 startCol: clampedStart,
                 span: clampedEnd - clampedStart + 1
             )

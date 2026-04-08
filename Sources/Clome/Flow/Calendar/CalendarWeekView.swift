@@ -1,9 +1,19 @@
 import SwiftUI
 
-/// Week view — Wave 1: pure layout and rendering. No interactions yet
-/// (create / edit / drag land in Waves 2–4).
+/// Week view — M1 rewrite. Renders Blocks from `BlockStore` (which merges
+/// native blocks with EventKit events, todos, deadlines, and reminders).
+///
+/// Interactions so far:
+///   • Tap empty timeline → inline create (native block)
+///   • Tap card → select (hairline ring + × delete)
+///   • Double-tap card → inline title edit
+///   • Background tap commits/dismisses create or edit
+///
+/// Drag, resize, pinned-card strip, and drop targets land in M2.
 struct CalendarWeekView: View {
     @ObservedObject var dataManager: CalendarDataManager
+    @ObservedObject private var store = BlockStore.shared
+
     @State private var now = Date()
     @State private var createDraft: CreateDraft?
     @State private var createTitle: String = ""
@@ -20,11 +30,10 @@ struct CalendarWeekView: View {
     }
 
     private var days: [Date] {
-        let ref = dataManager.viewMode == .day ? dataManager.selectedDate : dataManager.selectedDate
         if dataManager.viewMode == .day {
-            return [Calendar.current.startOfDay(for: ref)]
+            return [Calendar.current.startOfDay(for: dataManager.selectedDate)]
         }
-        return CalendarGridGeometry.weekDays(containing: ref)
+        return CalendarGridGeometry.weekDays(containing: dataManager.selectedDate)
     }
 
     private var isDay: Bool { dataManager.viewMode == .day }
@@ -37,8 +46,7 @@ struct CalendarWeekView: View {
                 onSelect: { dataManager.selectedDate = $0 }
             )
 
-            CalendarAllDayStrip(days: days, items: dataManager.items)
-                .padding(.horizontal, 0)
+            CalendarAllDayStrip(days: days, blocks: store.blocks.filter { $0.isAllDay })
                 .overlay(alignment: .bottom) {
                     Rectangle().fill(FlowTokens.border).frame(height: FlowTokens.hairline)
                 }
@@ -52,7 +60,6 @@ struct CalendarWeekView: View {
                     .id("timeline")
                 }
                 .onAppear {
-                    // Anchor scroll near the current time.
                     DispatchQueue.main.async {
                         proxy.scrollTo("timeline", anchor: .top)
                     }
@@ -122,20 +129,18 @@ struct CalendarWeekView: View {
 
     private func dayColumn(day: Date, index: Int, width: CGFloat) -> some View {
         let cal = Calendar.current
-        let timed = dataManager.items.filter { item in
-            !item.isAllDay && cal.isDate(item.startDate, inSameDayAs: day)
+        let timed = store.blocks.filter { b in
+            !b.isAllDay && !b.isPinned && cal.isDate(b.start, inSameDayAs: day)
         }
-        let slots = CalendarOverlapLayout.layout(timedArray(timed))
+        let slots = CalendarOverlapLayout.layout(timed.map(BlockLayoutItem.init))
 
         return ZStack(alignment: .topLeading) {
-            // Transparent tap target for inline create.
             Color.clear
                 .contentShape(Rectangle())
                 .onTapGesture(coordinateSpace: .local) { location in
                     handleBackgroundTap(day: day, y: location.y)
                 }
 
-            // Vertical divider on the right edge (skip last column).
             if !isDay && index < 6 {
                 Rectangle()
                     .fill(FlowTokens.border.opacity(0.5))
@@ -144,29 +149,29 @@ struct CalendarWeekView: View {
                     .offset(x: width - FlowTokens.hairline)
             }
 
-            ForEach(timed, id: \.calendarItemID) { item in
-                let slot = slots[item.calendarItemID] ?? CalendarOverlapLayout.Slot(column: 0, columnCount: 1)
+            ForEach(timed) { block in
+                let slot = slots[block.id] ?? CalendarOverlapLayout.Slot(column: 0, columnCount: 1)
                 let slotW = max(20, (width - 4) / CGFloat(slot.columnCount))
                 let x = 2 + slotW * CGFloat(slot.column)
-                let y = CalendarGridGeometry.y(for: item.startDate)
-                let h = CalendarGridGeometry.height(from: item.startDate, to: item.endDate)
-                let past = item.endDate < now
-                let id = item.calendarItemID
+                let y = CalendarGridGeometry.y(for: block.start)
+                let h = CalendarGridGeometry.height(from: block.start, to: block.end)
+                let past = block.end < now
+                let id = block.id
 
-                CalendarEventCard(
-                    item: item,
+                BlockCard(
+                    block: block,
                     isPast: past,
                     isHovered: hoveredID == id,
                     isSelected: selectedID == id && editingID != id,
                     isEditing: editingID == id,
                     editingTitle: editingID == id ? $editingTitle : nil,
-                    onCommit: { commitEdit(item) },
-                    onDelete: { deleteItem(item) }
+                    onCommit: { commitEdit(block) },
+                    onDelete: { deleteBlock(block) }
                 )
                 .frame(width: slotW - 2, height: max(18, h - 1))
                 .offset(x: x, y: y)
                 .onHover { hoveredID = $0 ? id : (hoveredID == id ? nil : hoveredID) }
-                .onTapGesture(count: 2) { beginEdit(item) }
+                .onTapGesture(count: 2) { beginEdit(block) }
                 .onTapGesture { selectedID = id }
             }
 
@@ -191,7 +196,6 @@ struct CalendarWeekView: View {
     // MARK: - Interactions
 
     private func handleBackgroundTap(day: Date, y: CGFloat) {
-        // If we're creating or editing, a background tap commits / dismisses.
         if createDraft != nil { commitCreate(); return }
         if editingID != nil { commitEditCurrent(); return }
         if selectedID != nil { selectedID = nil; return }
@@ -199,64 +203,56 @@ struct CalendarWeekView: View {
         let start = CalendarGridGeometry.time(forY: y, onDay: day)
         let end = start.addingTimeInterval(60 * 60)
         createTitle = ""
-        createDraft = CreateDraft(day: Calendar.current.startOfDay(for: day), start: start, end: end)
+        withAnimation(.flowSpring) {
+            createDraft = CreateDraft(day: Calendar.current.startOfDay(for: day), start: start, end: end)
+        }
     }
 
     private func commitCreate() {
         guard let draft = createDraft else { return }
         let title = createTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         if !title.isEmpty {
-            dataManager.createSystemEvent(title: title, start: draft.start, end: draft.end)
+            store.create(title: title, start: draft.start, end: draft.end)
         }
         createDraft = nil
         createTitle = ""
     }
 
     private func cancelCreate() {
-        createDraft = nil
-        createTitle = ""
-    }
-
-    private func beginEdit(_ item: any CalendarItemProtocol) {
-        guard item.kind == .systemEvent else { return }
-        selectedID = item.calendarItemID
-        editingID = item.calendarItemID
-        editingTitle = item.title
-    }
-
-    private func commitEdit(_ item: any CalendarItemProtocol) {
-        guard let sys = item as? SystemEventItem else {
-            editingID = nil
-            return
+        withAnimation(.flowQuick) {
+            createDraft = nil
+            createTitle = ""
         }
+    }
+
+    private func beginEdit(_ block: Block) {
+        guard block.isEditable else { return }
+        selectedID = block.id
+        editingID = block.id
+        editingTitle = block.title
+    }
+
+    private func commitEdit(_ block: Block) {
         let trimmed = editingTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty && trimmed != sys.title {
-            dataManager.updateSystemEvent(identifier: sys.eventIdentifier, title: trimmed)
+        if !trimmed.isEmpty && trimmed != block.title {
+            store.updateAny(id: block.id, title: trimmed)
         }
         editingID = nil
     }
 
     private func commitEditCurrent() {
         guard let id = editingID,
-              let item = dataManager.items.first(where: { $0.calendarItemID == id }) else {
+              let block = store.block(withID: id) else {
             editingID = nil
             return
         }
-        commitEdit(item)
+        commitEdit(block)
     }
 
-    private func deleteItem(_ item: any CalendarItemProtocol) {
-        if let sys = item as? SystemEventItem {
-            dataManager.deleteSystemEvent(identifier: sys.eventIdentifier)
-        }
+    private func deleteBlock(_ block: Block) {
+        store.deleteAny(id: block.id)
         selectedID = nil
         editingID = nil
-    }
-
-    /// Type-erase to a concrete array so `CalendarOverlapLayout.layout` (generic)
-    /// can infer its element type.
-    private func timedArray(_ items: [any CalendarItemProtocol]) -> [AnyCalendarItem] {
-        items.map(AnyCalendarItem.init)
     }
 
     // MARK: - Now line
@@ -293,28 +289,19 @@ struct CalendarWeekView: View {
     }
 }
 
-// MARK: - Type erasure for overlap layout
+// MARK: - Overlap layout adapter
 
-/// A concrete type-erased wrapper so `CalendarOverlapLayout.layout` can
-/// infer a single `Item` generic across heterogeneous items.
-struct AnyCalendarItem: CalendarItemProtocol {
-    let calendarItemID: String
-    let title: String
-    let startDate: Date
-    let endDate: Date
-    let isAllDay: Bool
-    let kind: CalendarItemKind
-    let displayColor: Color
-    let isCompleted: Bool
-
-    init(_ base: any CalendarItemProtocol) {
-        self.calendarItemID = base.calendarItemID
-        self.title = base.title
-        self.startDate = base.startDate
-        self.endDate = base.endDate
-        self.isAllDay = base.isAllDay
-        self.kind = base.kind
-        self.displayColor = base.displayColor
-        self.isCompleted = base.isCompleted
-    }
+/// Thin wrapper so the existing CalendarOverlapLayout (which takes a
+/// `CalendarItemProtocol`) can sort Blocks without knowing the type.
+private struct BlockLayoutItem: CalendarItemProtocol {
+    let block: Block
+    init(_ b: Block) { self.block = b }
+    var calendarItemID: String { block.id }
+    var title: String { block.title }
+    var startDate: Date { block.start }
+    var endDate: Date { block.end }
+    var isAllDay: Bool { block.isAllDay }
+    var kind: CalendarItemKind { .systemEvent }  // irrelevant for layout
+    var displayColor: Color { block.color }
+    var isCompleted: Bool { block.isCompleted }
 }
