@@ -7,6 +7,7 @@ struct BlockCard: View {
     var isPast: Bool = false
     var isHovered: Bool = false
     var isSelected: Bool = false
+    var isRunning: Bool = false
     var isEditing: Bool = false
     var editingTitle: Binding<String>? = nil
     var onCommit: (() -> Void)? = nil
@@ -58,7 +59,10 @@ struct BlockCard: View {
                 .fill(tint.opacity(fillAlpha))
         )
         .overlay {
-            if isSelected || isEditing {
+            if isRunning {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(tint.opacity(0.9), lineWidth: 1.5)
+            } else if isSelected || isEditing {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .strokeBorder(tint.opacity(0.55), lineWidth: 1)
             }

@@ -4,7 +4,10 @@ import SwiftUI
 /// Right: day/week segmented + sidebar toggle.
 struct CalendarToolbar: View {
     @ObservedObject var dataManager: CalendarDataManager
+    @ObservedObject private var store = BlockStore.shared
     @Binding var showSidebar: Bool
+    @State private var now = Date()
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: FlowTokens.spacingMD) {
@@ -27,9 +30,14 @@ struct CalendarToolbar: View {
 
             Spacer()
 
-            Text(rangeLabel)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(FlowTokens.textPrimary)
+            if let runningID = store.runningBlockID,
+               let running = store.block(withID: runningID) {
+                runningPill(running)
+            } else {
+                Text(rangeLabel)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(FlowTokens.textPrimary)
+            }
 
             Spacer()
 
@@ -49,6 +57,50 @@ struct CalendarToolbar: View {
         .padding(.horizontal, FlowTokens.spacingLG)
         .padding(.vertical, 10)
         .background(FlowTokens.bg0)
+        .onReceive(ticker) { now = $0 }
+    }
+
+    // MARK: - Running pill
+
+    private func runningPill(_ block: Block) -> some View {
+        let tint = block.color
+        return Button {
+            store.selectedBlockID = block.id
+        } label: {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(tint)
+                    .frame(width: 6, height: 6)
+                    .opacity(0.9)
+                Text(block.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(FlowTokens.textPrimary)
+                    .lineLimit(1)
+                    .frame(maxWidth: 200)
+                Text(elapsedLabel)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(FlowTokens.textTertiary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule(style: .continuous).fill(tint.opacity(0.12))
+            )
+            .overlay(
+                Capsule(style: .continuous).strokeBorder(tint.opacity(0.38), lineWidth: 0.5)
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var elapsedLabel: String {
+        guard let started = store.runningStartedAt else { return "" }
+        let total = Int(now.timeIntervalSince(started))
+        let m = total / 60, s = total % 60
+        if m < 60 { return String(format: "%d:%02d", m, s) }
+        let h = m / 60, mm = m % 60
+        return String(format: "%d:%02d:%02d", h, mm, s)
     }
 
     private func navButton(_ icon: String, _ action: @escaping () -> Void) -> some View {

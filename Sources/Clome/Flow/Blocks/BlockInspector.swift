@@ -19,8 +19,10 @@ struct BlockInspector: View {
 
     @State private var title: String = ""
     @State private var notes: String = ""
+    @State private var now = Date()
     @FocusState private var titleFocused: Bool
     @FocusState private var notesFocused: Bool
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var tint: Color { block.color }
     private var isNative: Bool {
@@ -33,6 +35,7 @@ struct BlockInspector: View {
             VStack(alignment: .leading, spacing: 28) {
                 titleSection
                 timeSection
+                runControl
                 kindSection
                 attachmentsSection
                 notesSection
@@ -45,6 +48,100 @@ struct BlockInspector: View {
         .background(FlowTokens.bg0)
         .onAppear(perform: sync)
         .onChange(of: block.id) { _, _ in sync() }
+        .onReceive(ticker) { now = $0 }
+    }
+
+    // MARK: - Run control
+
+    private var isRunning: Bool { store.runningBlockID == block.id }
+
+    @ViewBuilder
+    private var runControl: some View {
+        if isRunning {
+            Button(action: { store.endBlock(id: block.id) }) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        Circle().fill(FlowTokens.editorialRed.opacity(0.18)).frame(width: 24, height: 24)
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(FlowTokens.editorialRed)
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("End block")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(FlowTokens.textPrimary)
+                        Text(elapsedLabel)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundColor(FlowTokens.textTertiary)
+                    }
+                    Spacer()
+                    Image(systemName: "return")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(FlowTokens.textTertiary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule(style: .continuous).stroke(FlowTokens.border, lineWidth: 0.5)
+                        )
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(FlowTokens.editorialRed.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(FlowTokens.editorialRed.opacity(0.35), lineWidth: 0.5)
+                )
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.return, modifiers: [.command, .shift])
+        } else {
+            Button(action: { store.startBlock(id: block.id) }) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        Circle().fill(tint.opacity(0.18)).frame(width: 24, height: 24)
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(tint)
+                    }
+                    Text("Start block")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(FlowTokens.textPrimary)
+                    Spacer()
+                    Image(systemName: "return")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(FlowTokens.textTertiary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule(style: .continuous).stroke(FlowTokens.border, lineWidth: 0.5)
+                        )
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(tint.opacity(0.10))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(tint.opacity(0.32), lineWidth: 0.5)
+                )
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.return, modifiers: .command)
+        }
+    }
+
+    private var elapsedLabel: String {
+        guard let started = store.runningStartedAt else { return "" }
+        let total = Int(now.timeIntervalSince(started))
+        let m = total / 60, s = total % 60
+        if m < 60 { return String(format: "%d:%02d elapsed", m, s) }
+        let h = m / 60, mm = m % 60
+        return String(format: "%d:%02d:%02d elapsed", h, mm, s)
     }
 
     private func sync() {

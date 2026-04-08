@@ -196,6 +196,7 @@ struct CalendarWeekView: View {
                     isPast: past,
                     isHovered: hoveredID == id,
                     isSelected: store.selectedBlockID == id && editingID != id,
+                    isRunning: store.runningBlockID == id,
                     isEditing: editingID == id,
                     editingTitle: editingID == id ? $editingTitle : nil,
                     onCommit: { commitEdit(block) },

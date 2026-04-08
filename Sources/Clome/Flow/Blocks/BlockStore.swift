@@ -22,6 +22,11 @@ final class BlockStore: ObservableObject {
     /// Currently selected block id, if any. Drives the Block Inspector.
     @Published var selectedBlockID: String?
 
+    /// The id of the currently running block (if any).
+    @Published private(set) var runningBlockID: String?
+    /// When the running block was started (persistent across app launches).
+    @Published private(set) var runningStartedAt: Date?
+
     // MARK: - Private state
 
     private var db: OpaquePointer?
@@ -44,6 +49,7 @@ final class BlockStore: ObservableObject {
         openDatabase()
         createTables()
         loadNative()
+        loadRunningState()
         observeSources()
         recompute()
     }
@@ -487,6 +493,115 @@ final class BlockStore: ObservableObject {
         if id.hasPrefix("ek-") {
             let ek = String(id.dropFirst("ek-".count))
             calendar.deleteSystemEvent(identifier: ek)
+        }
+    }
+
+    // MARK: - Start / End block flow
+
+    /// Starts a block: marks it running, ends any other running block,
+    /// and fires side effects for its attachments (open files, URLs,
+    /// switch workspace).
+    func startBlock(id: String) {
+        if let current = runningBlockID, current != id {
+            endBlock(id: current, generateJournal: true)
+        }
+        guard let block = block(withID: id) else { return }
+
+        runningBlockID = id
+        runningStartedAt = Date()
+        saveMeta("running_block_id", id)
+        saveMeta("running_started_at", String(runningStartedAt!.timeIntervalSince1970))
+
+        if let nid = nativeID(for: id) {
+            update(nid, status: .running)
+        }
+
+        BlockRunner.fireStartSideEffects(for: block)
+    }
+
+    /// Ends a block: clears running state, marks status done, appends a
+    /// short elapsed-time stub to the notes (real AI journal in a later
+    /// milestone).
+    func endBlock(id: String, generateJournal: Bool = true) {
+        guard let block = block(withID: id) else {
+            clearRunning()
+            return
+        }
+        let started = runningStartedAt ?? Date()
+        let minutes = Int(Date().timeIntervalSince(started) / 60)
+
+        if let nid = nativeID(for: id) {
+            var notes = block.notes
+            if generateJournal {
+                let stamp = Self.journalStamp(started: started, minutes: minutes)
+                notes = notes.isEmpty ? stamp : "\(notes)\n\n\(stamp)"
+            }
+            update(nid, notes: notes, status: .done)
+        }
+
+        clearRunning()
+    }
+
+    private func clearRunning() {
+        runningBlockID = nil
+        runningStartedAt = nil
+        deleteMeta("running_block_id")
+        deleteMeta("running_started_at")
+    }
+
+    private static func journalStamp(started: Date, minutes: Int) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, h:mm a"
+        let left = f.string(from: started)
+        f.dateFormat = "h:mm a"
+        let right = f.string(from: Date())
+        return "— ran \(left) – \(right) (\(minutes) min)"
+    }
+
+    // MARK: - blocks_meta helpers
+
+    private func saveMeta(_ key: String, _ value: String) {
+        guard db != nil else { return }
+        let sql = "INSERT INTO blocks_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (key as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, (value as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_step(stmt)
+            sqlite3_finalize(stmt)
+        }
+    }
+
+    private func readMeta(_ key: String) -> String? {
+        guard db != nil else { return nil }
+        var stmt: OpaquePointer?
+        var out: String?
+        if sqlite3_prepare_v2(db, "SELECT value FROM blocks_meta WHERE key = ?", -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (key as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            if sqlite3_step(stmt) == SQLITE_ROW, let ptr = sqlite3_column_text(stmt, 0) {
+                out = String(cString: ptr)
+            }
+            sqlite3_finalize(stmt)
+        }
+        return out
+    }
+
+    private func deleteMeta(_ key: String) {
+        guard db != nil else { return }
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "DELETE FROM blocks_meta WHERE key = ?", -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (key as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_step(stmt)
+            sqlite3_finalize(stmt)
+        }
+    }
+
+    private func loadRunningState() {
+        if let id = readMeta("running_block_id") {
+            runningBlockID = id
+        }
+        if let ts = readMeta("running_started_at"), let v = Double(ts) {
+            runningStartedAt = Date(timeIntervalSince1970: v)
         }
     }
 
