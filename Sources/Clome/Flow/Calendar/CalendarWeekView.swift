@@ -3,27 +3,29 @@ import ClomeModels
 
 /// Week view — Apple Calendar convention with Things 3 restraint.
 ///
-/// Header:    3-letter weekday above big day number; today gets the accent.
-/// All-day:   hair-thin strip with small tinted pills.
-/// Grid:      hour rows with a whisper half-hour subdivision; selected-day
-///            column gets a faint bg1 tint.
-/// Events:    translucent fill + solid left bar, NO border; title + time.
-/// Now line:  1pt red hairline spanning ALL columns + filled dot on today.
+/// Interactions:
+///   - Tap empty grid  → create event popover (parent binding)
+///   - Tap event card  → open detail/edit popover
+///   - Drag event card → reschedule (snaps to 15 min, column-aware)
 struct CalendarWeekView: View {
     @ObservedObject var dataManager: CalendarDataManager
     @Binding var showCreationPopover: Bool
     @Binding var creationTime: Date?
 
     @State private var currentTime = Date()
-    @State private var selectedItemID: String?
+    @State private var hoveredItemID: String?
+    @State private var detailItem: AnyCalendarItem?
+    @State private var draggingItemID: String?
+    @State private var dragOffset: CGSize = .zero
+    @State private var dragColumnDelta: Int = 0
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
-    // Layout
+    // Layout — tightened for information density.
     private let startHour = 6
     private let endHour = 24
-    private let hourHeight: CGFloat = 52
-    private let gutterWidth: CGFloat = 56
-    private let headerHeight: CGFloat = 60
+    private let hourHeight: CGFloat = 42
+    private let gutterWidth: CGFloat = 52
+    private let headerHeight: CGFloat = 58
     private let allDayLaneHeight: CGFloat = 24
 
     private var timelineHeight: CGFloat {
@@ -53,11 +55,7 @@ struct CalendarWeekView: View {
                         .frame(width: geo.size.width, height: timelineHeight)
                         .contentShape(Rectangle())
                         .onTapGesture { location in
-                            if selectedItemID != nil {
-                                selectedItemID = nil
-                            } else {
-                                handleTimelineTap(at: location, columnWidth: columnWidth)
-                            }
+                            handleTimelineTap(at: location, columnWidth: columnWidth)
                         }
                     }
                     .frame(height: timelineHeight)
@@ -68,6 +66,11 @@ struct CalendarWeekView: View {
         }
         .background(FlowTokens.bg0)
         .onReceive(ticker) { currentTime = $0 }
+        .popover(item: $detailItem, arrowEdge: .leading) { wrapper in
+            CalendarEventDetailPopover(item: wrapper.item) {
+                detailItem = nil
+            }
+        }
     }
 
     // MARK: - Header
@@ -75,7 +78,6 @@ struct CalendarWeekView: View {
     private var dayHeader: some View {
         HStack(spacing: 0) {
             Color.clear.frame(width: gutterWidth)
-
             ForEach(weekDays, id: \.self) { day in
                 dayHeaderCell(day)
                     .frame(maxWidth: .infinity)
@@ -95,9 +97,9 @@ struct CalendarWeekView: View {
         return Button {
             withAnimation(.flowQuick) { dataManager.selectedDate = day }
         } label: {
-            VStack(spacing: 6) {
+            VStack(spacing: 4) {
                 Text(weekday)
-                    .font(.system(size: 10, weight: .semibold, design: .default))
+                    .font(.system(size: 10, weight: .semibold))
                     .tracking(1.0)
                     .foregroundColor(isToday ? FlowTokens.accent : FlowTokens.textTertiary)
 
@@ -105,17 +107,16 @@ struct CalendarWeekView: View {
                     if isToday {
                         Circle()
                             .fill(FlowTokens.accent)
-                            .frame(width: 30, height: 30)
+                            .frame(width: 28, height: 28)
                     } else if isSelected {
                         Circle()
                             .strokeBorder(FlowTokens.borderStrong, lineWidth: FlowTokens.hairlineStrong)
-                            .frame(width: 30, height: 30)
+                            .frame(width: 28, height: 28)
                     }
                     Text("\(dayNumber)")
-                        .font(.system(size: 18,
-                                      weight: isToday ? .semibold : .regular))
+                        .font(.system(size: 16, weight: isToday ? .semibold : .regular))
                         .foregroundColor(isToday ? .white : FlowTokens.textPrimary)
-                        .tracking(-0.4)
+                        .tracking(-0.3)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -140,6 +141,7 @@ struct CalendarWeekView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         ForEach(items.prefix(2), id: \.calendarItemID) { item in
                             allDayPill(item)
+                                .onTapGesture { openDetail(item) }
                         }
                         if items.count > 2 {
                             Text("+\(items.count - 2)")
@@ -175,6 +177,10 @@ struct CalendarWeekView: View {
             RoundedRectangle(cornerRadius: FlowTokens.radiusControl - 2, style: .continuous)
                 .fill(item.displayColor.opacity(FlowTokens.eventFillActive))
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: FlowTokens.radiusControl - 2, style: .continuous)
+                .strokeBorder(item.displayColor.opacity(0.38), lineWidth: FlowTokens.hairline)
+        )
         .clipShape(RoundedRectangle(cornerRadius: FlowTokens.radiusControl - 2, style: .continuous))
     }
 
@@ -182,12 +188,11 @@ struct CalendarWeekView: View {
 
     private func hourGrid(width: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
-            // Hour labels
             VStack(spacing: 0) {
                 ForEach(startHour..<endHour, id: \.self) { hour in
                     HStack {
                         Text(hourLabel(hour))
-                            .font(.system(size: 10, weight: .regular, design: .default))
+                            .font(.system(size: 10, weight: .regular))
                             .monospacedDigit()
                             .foregroundColor(FlowTokens.textMuted)
                             .frame(width: gutterWidth - FlowTokens.spacingSM, alignment: .trailing)
@@ -199,7 +204,6 @@ struct CalendarWeekView: View {
                 }
             }
 
-            // Hour hairlines (full width, starting from gutter)
             VStack(spacing: 0) {
                 ForEach(startHour..<endHour, id: \.self) { _ in
                     ZStack(alignment: .top) {
@@ -237,7 +241,7 @@ struct CalendarWeekView: View {
         ZStack(alignment: .topLeading) {
             if let col = selectedColumnIndex {
                 Rectangle()
-                    .fill(FlowTokens.bg1.opacity(0.55))
+                    .fill(FlowTokens.bg1.opacity(0.5))
                     .frame(width: columnWidth, height: timelineHeight)
                     .offset(x: gutterWidth + CGFloat(col) * columnWidth)
             }
@@ -265,88 +269,186 @@ struct CalendarWeekView: View {
                             for: slot,
                             hourHeight: hourHeight,
                             startHour: startHour,
-                            availableWidth: columnWidth - 4,
+                            availableWidth: columnWidth - 6,
                             gutterWidth: 0
                         )
-                        eventCard(item: item, isSelected: selectedItemID == item.calendarItemID)
+                        let isDragging = draggingItemID == item.calendarItemID
+                        let dragX = isDragging ? CGFloat(dragColumnDelta) * columnWidth : 0
+                        let dragY = isDragging ? dragOffset.height : 0
+
+                        eventCard(item: item, columnWidth: columnWidth)
                             .frame(width: rect.width, height: rect.height)
-                            .offset(x: columnX + 2 + rect.origin.x, y: rect.origin.y)
-                            .onTapGesture {
-                                selectedItemID = (selectedItemID == item.calendarItemID) ? nil : item.calendarItemID
-                            }
+                            .offset(x: columnX + 3 + rect.origin.x + dragX,
+                                    y: rect.origin.y + dragY)
+                            .zIndex(isDragging ? 10 : 0)
+                            .onTapGesture { openDetail(item) }
+                            .gesture(dragGesture(for: item, columnWidth: columnWidth))
                     }
                 }
             }
         }
     }
 
-    // MARK: - Event card (borderless, Things 3 / Apple Calendar style)
+    // MARK: - Event card (polished)
+    //
+    // Apple Calendar / Things 3 hybrid:
+    //   - Translucent tint fill + inner hairline (tint @ 0.38)
+    //   - Solid left accent bar (3pt, rounded)
+    //   - Subtle top-to-bottom highlight gradient adds depth
+    //   - Tiny drop shadow for elevation
+    //   - Hover: slight brightening
+    //   - Drag: scaled up + shadow intensifies
 
-    private func eventCard(item: any CalendarItemProtocol, isSelected: Bool) -> some View {
+    private func eventCard(item: any CalendarItemProtocol, columnWidth: CGFloat) -> some View {
         let status = blockStatus(for: item)
         let tint = item.displayColor
+        let isHovered = hoveredItemID == item.calendarItemID
+        let isDragging = draggingItemID == item.calendarItemID
         let fillAlpha: Double = {
             switch status {
             case .past:     return FlowTokens.eventFillPast
-            case .now:      return FlowTokens.eventFillActive
-            case .upcoming: return FlowTokens.eventFillActive
+            case .now:      return FlowTokens.eventFillActive + (isHovered ? 0.04 : 0)
+            case .upcoming: return FlowTokens.eventFillActive + (isHovered ? 0.04 : 0)
             }
         }()
-        let textColor: Color = status == .past
-            ? FlowTokens.textTertiary
-            : FlowTokens.textPrimary
+        let strokeAlpha: Double = status == .past ? 0.28 : 0.42
+        let textColor: Color = status == .past ? FlowTokens.textTertiary : FlowTokens.textPrimary
+        let secondaryColor: Color = status == .past ? FlowTokens.textDisabled : FlowTokens.textTertiary
         let barColor: Color = status == .past ? tint.opacity(0.55) : tint
 
         return GeometryReader { geo in
             let h = geo.size.height
-            let veryCompact = h < 26
-            let compact = h < 44
+            let veryCompact = h < 24
+            let compact = h < 40
 
-            HStack(spacing: 0) {
-                Rectangle()
-                    .fill(barColor)
-                    .frame(width: FlowTokens.accentBarWidth + 1)
-
-                VStack(alignment: .leading, spacing: veryCompact ? 0 : 2) {
-                    Text(item.title)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(textColor)
-                        .strikethrough(item.isCompleted)
-                        .lineLimit(veryCompact ? 1 : 2)
-
-                    if !compact {
-                        Text(timeRangeString(item))
-                            .font(.system(size: 10, weight: .regular))
-                            .monospacedDigit()
-                            .foregroundColor(FlowTokens.textTertiary)
-                            .lineLimit(1)
-                    }
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, veryCompact ? 1 : 4)
-
-                Spacer(minLength: 0)
-            }
-            .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
-            .background(
+            ZStack(alignment: .topLeading) {
+                // Base translucent fill
                 RoundedRectangle(cornerRadius: FlowTokens.radiusControl, style: .continuous)
                     .fill(tint.opacity(fillAlpha))
-            )
-            .overlay {
-                if isSelected {
-                    RoundedRectangle(cornerRadius: FlowTokens.radiusControl, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.6), lineWidth: FlowTokens.hairlineStrong)
+
+                // Inner highlight gradient for subtle depth
+                RoundedRectangle(cornerRadius: FlowTokens.radiusControl, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.06), Color.white.opacity(0.0)],
+                            startPoint: .top,
+                            endPoint: .center
+                        )
+                    )
+
+                // Inner tint hairline
+                RoundedRectangle(cornerRadius: FlowTokens.radiusControl, style: .continuous)
+                    .strokeBorder(tint.opacity(strokeAlpha), lineWidth: FlowTokens.hairline)
+
+                // Content
+                HStack(alignment: .top, spacing: 0) {
+                    RoundedRectangle(cornerRadius: 1, style: .continuous)
+                        .fill(barColor)
+                        .frame(width: 3)
+                        .padding(.vertical, 3)
+
+                    VStack(alignment: .leading, spacing: veryCompact ? 0 : 1) {
+                        Text(item.title)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(textColor)
+                            .strikethrough(item.isCompleted)
+                            .lineLimit(veryCompact ? 1 : 2)
+                            .tracking(-0.1)
+
+                        if !compact {
+                            Text(timeRangeString(item))
+                                .font(.system(size: 9, weight: .medium))
+                                .monospacedDigit()
+                                .foregroundColor(secondaryColor)
+                                .lineLimit(1)
+                        }
+                    }
+                    .padding(.leading, 5)
+                    .padding(.trailing, 6)
+                    .padding(.vertical, veryCompact ? 1 : 4)
+
+                    Spacer(minLength: 0)
                 }
             }
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
             .clipShape(RoundedRectangle(cornerRadius: FlowTokens.radiusControl, style: .continuous))
+            .shadow(
+                color: Color.black.opacity(isDragging ? 0.35 : (status == .past ? 0 : 0.18)),
+                radius: isDragging ? 6 : 0.8,
+                x: 0,
+                y: isDragging ? 4 : 0.5
+            )
+            .scaleEffect(isDragging ? 1.02 : 1.0)
+            .animation(.flowQuick, value: isHovered)
+            .animation(.flowQuick, value: isDragging)
+            .onHover { hoveredItemID = $0 ? item.calendarItemID : nil }
         }
     }
 
-    // MARK: - Now line (full width)
+    // MARK: - Drag gesture
+
+    private func dragGesture(for item: any CalendarItemProtocol,
+                             columnWidth: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 4)
+            .onChanged { value in
+                draggingItemID = item.calendarItemID
+                dragOffset = value.translation
+                dragColumnDelta = Int((value.translation.width / columnWidth).rounded())
+            }
+            .onEnded { value in
+                defer {
+                    draggingItemID = nil
+                    dragOffset = .zero
+                    dragColumnDelta = 0
+                }
+
+                // Snap Y translation to 15-min increments
+                let minutesPerPixel = 60.0 / Double(hourHeight)
+                let rawMinutes = Double(value.translation.height) * minutesPerPixel
+                let snappedMinutes = (rawMinutes / 15.0).rounded() * 15.0
+
+                // Column shift → day delta
+                let columnDelta = Int((value.translation.width / columnWidth).rounded())
+
+                // No-op if nothing changed
+                if abs(snappedMinutes) < 1 && columnDelta == 0 { return }
+
+                let cal = Calendar.current
+                var newStart = item.startDate.addingTimeInterval(snappedMinutes * 60)
+                if columnDelta != 0 {
+                    newStart = cal.date(byAdding: .day, value: columnDelta, to: newStart) ?? newStart
+                }
+                let duration = item.endDate.timeIntervalSince(item.startDate)
+                let newEnd = newStart.addingTimeInterval(duration)
+
+                // Route to the correct data store
+                if let sysEvent = item as? SystemEventItem {
+                    dataManager.moveSystemEvent(
+                        identifier: sysEvent.eventIdentifier,
+                        newStart: newStart,
+                        newEnd: newEnd
+                    )
+                } else if let todoItem = item as? ScheduledTodoItem {
+                    FlowSyncService.shared.updateTodoSchedule(
+                        id: todoItem.todo.id,
+                        scheduledDate: newStart,
+                        scheduledEndDate: newEnd
+                    )
+                }
+            }
+    }
+
+    // MARK: - Detail popover
+
+    private func openDetail(_ item: any CalendarItemProtocol) {
+        detailItem = AnyCalendarItem(item)
+    }
+
+    // MARK: - Now line
 
     @ViewBuilder
     private func nowLineIfVisible(columnWidth: CGFloat) -> some View {
-        if let _ = todayColumnIndex {
+        if todayColumnIndex != nil {
             nowLine(columnWidth: columnWidth)
                 .allowsHitTesting(false)
         }
@@ -362,7 +464,6 @@ struct CalendarWeekView: View {
         let todayCol = todayColumnIndex ?? 0
 
         return ZStack(alignment: .leading) {
-            // Time chip in the gutter
             Text(formatted(currentTime, "h:mm"))
                 .font(.system(size: 9, weight: .bold))
                 .monospacedDigit()
@@ -371,16 +472,15 @@ struct CalendarWeekView: View {
                 .background(FlowTokens.bg0)
                 .offset(x: FlowTokens.spacingSM, y: -8)
 
-            // Full-width hairline across ALL columns
             Rectangle()
-                .fill(red.opacity(0.7))
+                .fill(red.opacity(0.75))
                 .frame(height: FlowTokens.hairlineStrong)
                 .padding(.leading, gutterWidth)
 
-            // Solid dot on today's column
             Circle()
                 .fill(red)
                 .frame(width: 8, height: 8)
+                .overlay(Circle().strokeBorder(FlowTokens.bg0, lineWidth: 1))
                 .offset(x: gutterWidth + CGFloat(todayCol) * columnWidth - 4)
         }
         .offset(y: yPos)
@@ -391,7 +491,7 @@ struct CalendarWeekView: View {
     private var weekDays: [Date] {
         let cal = Calendar.current
         var components = cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: dataManager.selectedDate)
-        components.weekday = 1 // Sunday
+        components.weekday = 1
         let start = cal.date(from: components) ?? cal.startOfDay(for: dataManager.selectedDate)
         return (0..<7).map { cal.date(byAdding: .day, value: $0, to: start)! }
     }
@@ -491,4 +591,15 @@ struct CalendarWeekView: View {
         f.dateFormat = "h:mm"
         return "\(f.string(from: item.startDate))–\(f.string(from: item.endDate))"
     }
+}
+
+// MARK: - Identifiable wrapper for popover(item:)
+//
+// SwiftUI's `popover(item:)` needs an Identifiable value. The calendar items
+// are existential (`any CalendarItemProtocol`) which can't conform directly,
+// so we wrap.
+private struct AnyCalendarItem: Identifiable {
+    let item: any CalendarItemProtocol
+    var id: String { item.calendarItemID }
+    init(_ item: any CalendarItemProtocol) { self.item = item }
 }

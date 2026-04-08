@@ -1,21 +1,21 @@
 import SwiftUI
 import ClomeModels
 
-/// Agenda sidebar — restrained list of the selected day's schedule.
+/// Agenda sidebar — restrained list of the selected day's schedule
+/// plus a live Tasks section with inline add-todo.
 ///
 /// Sections:
-///   - Today  (selected day's timed events, sorted chronologically)
-///   - Tasks  (scheduled todos for the day)
-///   - Due    (deadlines for the day, if any)
-///
-/// No hero card. No editorial "NOW MEETING" block. Just a clean agenda
-/// list with time labels in the left column and titles on the right,
-/// Apple Reminders / Fantastical style.
+///   - Schedule  (timed events)
+///   - Tasks     (active todos; add-todo inline at top)
+///   - Due       (deadlines for the day, if any)
 struct CalendarAgendaSidebar: View {
     @ObservedObject var dataManager: CalendarDataManager
     @ObservedObject private var syncService = FlowSyncService.shared
 
     @State private var currentTime = Date()
+    @State private var newTodoTitle: String = ""
+    @State private var detailItem: AnyAgendaItem?
+    @FocusState private var addTodoFocused: Bool
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -36,6 +36,9 @@ struct CalendarAgendaSidebar: View {
         }
         .background(FlowTokens.bg0)
         .onReceive(ticker) { currentTime = $0 }
+        .popover(item: $detailItem, arrowEdge: .leading) { wrapper in
+            CalendarEventDetailPopover(item: wrapper.item) { detailItem = nil }
+        }
     }
 
     // MARK: - Header
@@ -86,6 +89,7 @@ struct CalendarAgendaSidebar: View {
                 VStack(spacing: 2) {
                     ForEach(items, id: \.calendarItemID) { item in
                         agendaRow(item)
+                            .onTapGesture { detailItem = AnyAgendaItem(item) }
                     }
                 }
             }
@@ -102,27 +106,109 @@ struct CalendarAgendaSidebar: View {
     // MARK: - Tasks
 
     private var tasksSection: some View {
-        let items = taskItems
-        return VStack(alignment: .leading, spacing: FlowTokens.spacingSM) {
-            sectionHeader("Tasks", count: items.count)
-
-            if items.isEmpty {
-                emptyHint("No tasks scheduled")
+        VStack(alignment: .leading, spacing: FlowTokens.spacingSM) {
+            sectionHeader("Tasks", count: activeTodos.count)
+            addTodoRow
+            if activeTodos.isEmpty {
+                emptyHint("Nothing on your plate")
             } else {
                 VStack(spacing: 2) {
-                    ForEach(items, id: \.calendarItemID) { item in
-                        agendaRow(item)
+                    ForEach(activeTodos) { todo in
+                        todoRow(todo)
                     }
                 }
             }
         }
     }
 
-    private var taskItems: [any CalendarItemProtocol] {
-        let cal = Calendar.current
-        return dataManager.items
-            .filter { $0.kind == .todo && cal.isDate($0.startDate, inSameDayAs: dataManager.selectedDate) }
-            .sorted { $0.startDate < $1.startDate }
+    private var addTodoRow: some View {
+        HStack(spacing: FlowTokens.spacingSM) {
+            Image(systemName: "plus")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(FlowTokens.textHint)
+                .frame(width: 14)
+            TextField("Add a task…", text: $newTodoTitle)
+                .textFieldStyle(.plain)
+                .flowFont(.body)
+                .foregroundColor(FlowTokens.textPrimary)
+                .focused($addTodoFocused)
+                .onSubmit(commitNewTodo)
+        }
+        .flowInput(isFocused: addTodoFocused)
+    }
+
+    private func commitNewTodo() {
+        let trimmed = newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        syncService.addTodo(TodoItem(title: trimmed))
+        newTodoTitle = ""
+        addTodoFocused = true
+    }
+
+    private var activeTodos: [TodoItem] {
+        syncService.todos
+            .filter { !$0.isCompleted }
+            .sorted { a, b in
+                // Scheduled first (by time), then unscheduled
+                switch (a.scheduledDate, b.scheduledDate) {
+                case let (la?, lb?): return la < lb
+                case (_?, nil):      return true
+                case (nil, _?):      return false
+                default:             return a.priority.sortOrder < b.priority.sortOrder
+                }
+            }
+    }
+
+    private func todoRow(_ todo: TodoItem) -> some View {
+        HStack(alignment: .center, spacing: FlowTokens.spacingMD) {
+            Button {
+                syncService.toggleTodoComplete(id: todo.id)
+            } label: {
+                Image(systemName: todo.isCompleted ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundColor(todo.isCompleted ? FlowTokens.success.opacity(0.75) : FlowTokens.textTertiary)
+            }
+            .buttonStyle(.plain)
+
+            Rectangle()
+                .fill(todoAccentColor(todo))
+                .frame(width: FlowTokens.accentBarWidth)
+                .padding(.vertical, 2)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(todo.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(todo.isCompleted ? FlowTokens.textTertiary : FlowTokens.textPrimary)
+                    .strikethrough(todo.isCompleted, color: FlowTokens.textTertiary)
+                    .lineLimit(2)
+                if let sub = todoSubtitle(todo) {
+                    Text(sub)
+                        .flowFont(.timestamp)
+                        .foregroundColor(FlowTokens.textMuted)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, FlowTokens.spacingSM - 2)
+        .padding(.horizontal, FlowTokens.spacingSM)
+    }
+
+    private func todoAccentColor(_ todo: TodoItem) -> Color {
+        if todo.isCompleted { return FlowTokens.textMuted }
+        switch todo.priority {
+        case .high:   return FlowTokens.priorityHigh
+        case .medium: return FlowTokens.priorityMedium
+        case .low:    return FlowTokens.priorityLow
+        }
+    }
+
+    private func todoSubtitle(_ todo: TodoItem) -> String? {
+        if let date = todo.scheduledDate {
+            let f = DateFormatter(); f.dateFormat = "h:mm a"
+            return f.string(from: date).lowercased()
+        }
+        return nil
     }
 
     // MARK: - Deadlines
@@ -136,6 +222,7 @@ struct CalendarAgendaSidebar: View {
                 VStack(spacing: 2) {
                     ForEach(items, id: \.calendarItemID) { item in
                         agendaRow(item)
+                            .onTapGesture { detailItem = AnyAgendaItem(item) }
                     }
                 }
             }
@@ -174,7 +261,6 @@ struct CalendarAgendaSidebar: View {
         let tint = item.displayColor
 
         return HStack(alignment: .top, spacing: FlowTokens.spacingMD) {
-            // Time column
             VStack(alignment: .trailing, spacing: 1) {
                 Text(formatted(item.startDate, "h:mm"))
                     .font(.system(size: 11, weight: .semibold))
@@ -187,13 +273,11 @@ struct CalendarAgendaSidebar: View {
             }
             .frame(width: 38, alignment: .trailing)
 
-            // Accent bar
             Rectangle()
                 .fill(isPast ? tint.opacity(0.45) : tint)
                 .frame(width: FlowTokens.accentBarWidth)
                 .padding(.vertical, 1)
 
-            // Title + meta
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.title)
                     .font(.system(size: 12, weight: isNow ? .semibold : .medium))
@@ -221,6 +305,7 @@ struct CalendarAgendaSidebar: View {
             RoundedRectangle(cornerRadius: FlowTokens.radiusControl, style: .continuous)
                 .fill(isNow ? FlowTokens.bg2.opacity(0.5) : Color.clear)
         )
+        .contentShape(Rectangle())
     }
 
     private func metaLabel(for item: any CalendarItemProtocol) -> String {
@@ -263,4 +348,11 @@ struct CalendarAgendaSidebar: View {
         let f = DateFormatter(); f.dateFormat = format
         return f.string(from: date)
     }
+}
+
+// MARK: - Identifiable wrapper for popover(item:)
+private struct AnyAgendaItem: Identifiable {
+    let item: any CalendarItemProtocol
+    var id: String { item.calendarItemID }
+    init(_ item: any CalendarItemProtocol) { self.item = item }
 }
