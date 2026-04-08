@@ -7,6 +7,7 @@ struct CalendarToolbar: View {
     @ObservedObject private var store = BlockStore.shared
     @Binding var showSidebar: Bool
     @State private var now = Date()
+    @State private var showDatePicker = false
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -34,9 +35,32 @@ struct CalendarToolbar: View {
                let running = store.block(withID: runningID) {
                 runningPill(running)
             } else {
-                Text(rangeLabel)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(FlowTokens.textPrimary)
+                Button { showDatePicker.toggle() } label: {
+                    HStack(spacing: 6) {
+                        Text(rangeLabel)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(FlowTokens.textPrimary)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(FlowTokens.textTertiary)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showDatePicker, arrowEdge: .top) {
+                    DatePicker(
+                        "",
+                        selection: $dataManager.selectedDate,
+                        displayedComponents: .date
+                    )
+                    .datePickerStyle(.graphical)
+                    .labelsHidden()
+                    .padding(14)
+                    .frame(width: 280)
+                    .background(FlowTokens.bg1)
+                }
             }
 
             Spacer()

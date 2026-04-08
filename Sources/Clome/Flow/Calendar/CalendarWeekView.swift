@@ -112,11 +112,37 @@ struct CalendarWeekView: View {
                     .keyboardShortcut(.delete, modifiers: [])
                 Button("") { store.selectedBlockID = nil }
                     .keyboardShortcut(.escape, modifiers: [])
+                Button("") { nudgeSelected(days: -1, minutes: 0) }
+                    .keyboardShortcut(.leftArrow, modifiers: .option)
+                Button("") { nudgeSelected(days: 1, minutes: 0) }
+                    .keyboardShortcut(.rightArrow, modifiers: .option)
+                Button("") { nudgeSelected(days: 0, minutes: -15) }
+                    .keyboardShortcut(.upArrow, modifiers: .option)
+                Button("") { nudgeSelected(days: 0, minutes: 15) }
+                    .keyboardShortcut(.downArrow, modifiers: .option)
             }
             .opacity(0)
             .allowsHitTesting(false)
             .frame(width: 0, height: 0)
         }
+    }
+
+    private func nudgeSelected(days: Int, minutes: Int) {
+        guard editingID == nil,
+              let id = store.selectedBlockID,
+              let block = store.block(withID: id) else { return }
+        let cal = Calendar.current
+        var newStart = block.start
+        var newEnd = block.end
+        if days != 0 {
+            newStart = cal.date(byAdding: .day, value: days, to: newStart) ?? newStart
+            newEnd = cal.date(byAdding: .day, value: days, to: newEnd) ?? newEnd
+        }
+        if minutes != 0 {
+            newStart = cal.date(byAdding: .minute, value: minutes, to: newStart) ?? newStart
+            newEnd = cal.date(byAdding: .minute, value: minutes, to: newEnd) ?? newEnd
+        }
+        store.moveBlock(id: id, newStart: newStart, newEnd: newEnd)
     }
 
     private func deleteSelected() {

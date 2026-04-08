@@ -40,6 +40,7 @@ struct BlockInspector: View {
                 kindSection
                 attachmentsSection
                 notesSection
+                if isNative { calendarMirrorSection }
                 Spacer(minLength: 40)
             }
             .padding(.horizontal, 22)
@@ -487,6 +488,63 @@ struct BlockInspector: View {
                     }
             }
         }
+    }
+
+    // MARK: - Calendar mirror (push to EventKit)
+
+    private var mirroredEKID: String? {
+        guard let nid = store.nativeID(for: block.id) else { return nil }
+        return store.mirroredEKID(for: nid)
+    }
+
+    private var calendarMirrorSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("SYSTEM CALENDAR")
+            HStack(spacing: 8) {
+                Image(systemName: mirroredEKID == nil ? "calendar.badge.plus" : "calendar.badge.checkmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(mirroredEKID == nil ? FlowTokens.textTertiary : FlowTokens.success)
+                Text(mirroredEKID == nil ? "Not on system calendar" : "Mirrored to calendar")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(FlowTokens.textSecondary)
+                Spacer()
+                if mirroredEKID == nil {
+                    Button("Push") { pushToCalendar() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundColor(FlowTokens.accent)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(FlowTokens.accent.opacity(0.12)))
+                        .overlay(Capsule().strokeBorder(FlowTokens.accent.opacity(0.36), lineWidth: 0.5))
+                } else {
+                    Button("Update") { pushToCalendar() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundColor(FlowTokens.textSecondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(FlowTokens.bg2.opacity(0.6)))
+                    Button("Remove") { removeFromCalendar() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundColor(FlowTokens.error)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(FlowTokens.error.opacity(0.10)))
+                }
+            }
+        }
+    }
+
+    private func pushToCalendar() {
+        guard let nid = store.nativeID(for: block.id) else { return }
+        _ = store.pushNativeToCalendar(nid)
+    }
+
+    private func removeFromCalendar() {
+        guard let nid = store.nativeID(for: block.id) else { return }
+        store.removeFromCalendar(nid)
     }
 
     // MARK: - Section header

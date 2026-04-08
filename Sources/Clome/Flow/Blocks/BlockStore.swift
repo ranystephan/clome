@@ -1,6 +1,7 @@
 import SwiftUI
 import SQLite3
 import Combine
+import EventKit
 import ClomeModels
 
 // MARK: - BlockStore
@@ -508,6 +509,72 @@ final class BlockStore: ObservableObject {
             let ek = String(id.dropFirst("ek-".count))
             calendar.deleteSystemEvent(identifier: ek)
         }
+    }
+
+    // MARK: - Push to system calendar
+    //
+    // One-way mirror: a native block can be "pushed" to the system
+    // calendar (EventKit). The EK event identifier is stored in
+    // blocks_meta keyed by ek_mirror:<native-uuid>. Subsequent pushes
+    // update the same event; remove deletes it from EK.
+
+    /// Returns the EK event identifier mirroring the given native block, if any.
+    func mirroredEKID(for nativeID: UUID) -> String? {
+        readMeta("ek_mirror:\(nativeID.uuidString)")
+    }
+
+    /// Pushes a native block to EventKit. Creates if no mirror exists,
+    /// updates in place otherwise. Returns true on success.
+    @discardableResult
+    func pushNativeToCalendar(_ id: UUID) -> Bool {
+        guard let block = nativeBlocks[id],
+              calendar.hasCalendarAccess else { return false }
+
+        let ek = EKEventStore()
+        if let mirrorID = mirroredEKID(for: id),
+           let existing = ek.event(withIdentifier: mirrorID) {
+            existing.title = block.title
+            existing.startDate = block.start
+            existing.endDate = block.end
+            existing.notes = block.notes + "\n\n[clome:block:\(id.uuidString)]"
+            do {
+                try ek.save(existing, span: .thisEvent)
+                calendar.refresh()
+                return true
+            } catch {
+                NSLog("[BlockStore] update EK mirror failed: \(error.localizedDescription)")
+                return false
+            }
+        } else {
+            let event = EKEvent(eventStore: ek)
+            event.title = block.title
+            event.startDate = block.start
+            event.endDate = block.end
+            event.notes = (block.notes.isEmpty ? "" : block.notes + "\n\n") + "[clome:block:\(id.uuidString)]"
+            event.calendar = ek.defaultCalendarForNewEvents
+            do {
+                try ek.save(event, span: .thisEvent)
+                if let ekid = event.eventIdentifier {
+                    saveMeta("ek_mirror:\(id.uuidString)", ekid)
+                }
+                calendar.refresh()
+                return true
+            } catch {
+                NSLog("[BlockStore] create EK mirror failed: \(error.localizedDescription)")
+                return false
+            }
+        }
+    }
+
+    /// Removes the EK mirror for a native block, if any.
+    func removeFromCalendar(_ id: UUID) {
+        guard let mirrorID = mirroredEKID(for: id) else { return }
+        let ek = EKEventStore()
+        if let existing = ek.event(withIdentifier: mirrorID) {
+            try? ek.remove(existing, span: .thisEvent)
+        }
+        deleteMeta("ek_mirror:\(id.uuidString)")
+        calendar.refresh()
     }
 
     // MARK: - Start / End block flow
