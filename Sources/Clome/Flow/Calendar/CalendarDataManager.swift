@@ -7,7 +7,7 @@ import ClomeModels
 
 enum CalendarViewMode: String, CaseIterable {
     case week
-    case month
+    case day
 }
 
 // MARK: - Calendar Data Manager
@@ -135,19 +135,10 @@ final class CalendarDataManager: ObservableObject {
             let end = calendar.date(byAdding: .day, value: 7, to: start)!.addingTimeInterval(-1)
             return (start, end)
 
-        case .month:
-            // First day of month
-            let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: date))!
-            // First visible day in month grid (could be previous month's Sunday)
-            let weekdayOfFirst = calendar.component(.weekday, from: monthStart)
-            let gridStart = calendar.date(byAdding: .day, value: -(weekdayOfFirst - 1), to: monthStart)!
-            // Last day of month
-            let monthEnd = calendar.date(byAdding: DateComponents(month: 1, day: -1), to: monthStart)!
-            // Last visible day in month grid (fill out to Saturday)
-            let weekdayOfLast = calendar.component(.weekday, from: monthEnd)
-            let gridEnd = calendar.date(byAdding: .day, value: (7 - weekdayOfLast), to: monthEnd)!
-            let end = calendar.date(byAdding: .day, value: 1, to: gridEnd)!.addingTimeInterval(-1)
-            return (gridStart, end)
+        case .day:
+            let start = calendar.startOfDay(for: date)
+            let end = calendar.date(byAdding: .day, value: 1, to: start)!.addingTimeInterval(-1)
+            return (start, end)
         }
     }
 

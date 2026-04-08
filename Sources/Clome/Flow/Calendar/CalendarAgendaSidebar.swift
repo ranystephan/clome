@@ -36,9 +36,8 @@ struct CalendarAgendaSidebar: View {
         }
         .background(FlowTokens.bg0)
         .onReceive(ticker) { currentTime = $0 }
-        .popover(item: $detailItem, arrowEdge: .leading) { wrapper in
-            CalendarEventDetailPopover(item: wrapper.item) { detailItem = nil }
-        }
+        // Detail popover temporarily removed — will be replaced by inline expand in Wave 2.
+        .onChange(of: detailItem?.id) { _, _ in detailItem = nil }
     }
 
     // MARK: - Header
