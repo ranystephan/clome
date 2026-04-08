@@ -19,27 +19,29 @@ class SidebarSectionHeader: NSView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
+        layer?.cornerRadius = ClomeMacMetric.compactRadius
+        layer?.cornerCurve = .continuous
 
         // Disclosure triangle
         disclosureIcon.translatesAutoresizingMaskIntoConstraints = false
         let cfg = NSImage.SymbolConfiguration(pointSize: 8, weight: .bold)
         disclosureIcon.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
-        disclosureIcon.contentTintColor = NSColor(white: 0.40, alpha: 1.0)
+        disclosureIcon.contentTintColor = ClomeMacColor.textTertiary
         addSubview(disclosureIcon)
 
         // Title
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.attributedStringValue = NSAttributedString(string: title.uppercased(), attributes: [
-            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
-            .foregroundColor: NSColor(white: 1.0, alpha: 0.45),
-            .kern: 1.2,
+            .font: ClomeMacFont.sectionLabel,
+            .foregroundColor: ClomeMacColor.textTertiary,
+            .kern: 1.8,
         ])
         addSubview(titleLabel)
 
         // Badge
         badgeLabel.translatesAutoresizingMaskIntoConstraints = false
         badgeLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
-        badgeLabel.textColor = NSColor(white: 0.55, alpha: 1.0)
+        badgeLabel.textColor = ClomeMacColor.textSecondary
         badgeLabel.isHidden = badge == nil
         if let badge { badgeLabel.stringValue = "(\(badge))" }
         addSubview(badgeLabel)
@@ -51,9 +53,9 @@ class SidebarSectionHeader: NSView {
         addSubview(actionStack)
 
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 32),
+            heightAnchor.constraint(equalToConstant: 34),
 
-            disclosureIcon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            disclosureIcon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             disclosureIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
             disclosureIcon.widthAnchor.constraint(equalToConstant: 12),
             disclosureIcon.heightAnchor.constraint(equalToConstant: 12),
@@ -96,7 +98,7 @@ class SidebarSectionHeader: NSView {
         btn.isBordered = false
         let cfg = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
         btn.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)?.withSymbolConfiguration(cfg)
-        btn.contentTintColor = NSColor(white: 0.50, alpha: 1.0)
+        btn.contentTintColor = ClomeMacColor.textTertiary
         btn.target = target
         btn.action = action
         btn.toolTip = tooltip
@@ -117,6 +119,10 @@ class SidebarSectionHeader: NSView {
 
     @objc private func headerClicked() {
         isExpanded.toggle()
+        layer?.backgroundColor = ClomeMacColor.chromeSurfaceAlt.cgColor
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+            self?.layer?.backgroundColor = NSColor.clear.cgColor
+        }
         onToggle?(isExpanded)
     }
 }

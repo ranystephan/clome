@@ -23,6 +23,7 @@ class SourceControlSection: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     private func setupUI() {
+        wantsLayer = true
         addSubview(headerView)
 
         headerView.onToggle = { [weak self] expanded in
@@ -32,7 +33,7 @@ class SourceControlSection: NSView {
         // List container
         listStack.orientation = .vertical
         listStack.alignment = .leading
-        listStack.spacing = 0
+        listStack.spacing = 4
         listStack.translatesAutoresizingMaskIntoConstraints = false
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -54,9 +55,11 @@ class SourceControlSection: NSView {
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            listStack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
-            listStack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
-            listStack.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            listStack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            listStack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            listStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            listStack.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor),
+            listStack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
 
             listHeightConstraint!,
         ])
@@ -114,7 +117,37 @@ class SourceControlSection: NSView {
     private func rebuildList() {
         listStack.arrangedSubviews.forEach { listStack.removeArrangedSubview($0); $0.removeFromSuperview() }
 
-        for (i, file) in changedFiles.prefix(50).enumerated() {
+        guard !changedFiles.isEmpty else {
+            let emptyLabel = NSTextField(labelWithString: "Working tree is clean")
+            emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+            emptyLabel.font = ClomeMacFont.caption
+            emptyLabel.textColor = ClomeMacColor.textTertiary
+            emptyLabel.alignment = .center
+
+            let card = NSView()
+            card.translatesAutoresizingMaskIntoConstraints = false
+            card.wantsLayer = true
+            card.layer?.cornerRadius = ClomeMacMetric.panelRadius
+            card.layer?.cornerCurve = .continuous
+            card.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
+            card.layer?.borderWidth = 1
+            card.layer?.borderColor = ClomeMacColor.border.cgColor
+            card.addSubview(emptyLabel)
+
+            listStack.addArrangedSubview(card)
+
+            NSLayoutConstraint.activate([
+                emptyLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
+                emptyLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
+                emptyLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
+                emptyLabel.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12),
+                card.widthAnchor.constraint(equalTo: listStack.widthAnchor),
+            ])
+            listHeightConstraint?.constant = isExpanded ? 48 : 0
+            return
+        }
+
+        for file in changedFiles.prefix(50) {
             let row = SourceControlRow(
                 filename: (file.path as NSString).lastPathComponent,
                 relativePath: file.relativePath,
@@ -127,7 +160,7 @@ class SourceControlSection: NSView {
             row.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
         }
 
-        let rowHeight: CGFloat = 26
+        let rowHeight: CGFloat = 36
         let totalHeight = CGFloat(min(changedFiles.count, 50)) * rowHeight
         listHeightConstraint?.constant = isExpanded ? min(totalHeight, 200) : 0
     }
@@ -137,7 +170,7 @@ class SourceControlSection: NSView {
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.2
             ctx.allowsImplicitAnimation = true
-            let rowHeight: CGFloat = 26
+            let rowHeight: CGFloat = 36
             let totalHeight = CGFloat(min(changedFiles.count, 50)) * rowHeight
             listHeightConstraint?.constant = expanded ? min(totalHeight, 200) : 0
             layoutSubtreeIfNeeded()
@@ -155,7 +188,11 @@ private class SourceControlRow: NSView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.cornerRadius = 4
+        layer?.cornerRadius = ClomeMacMetric.compactRadius
+        layer?.cornerCurve = .continuous
+        layer?.borderWidth = 1
+        layer?.borderColor = ClomeMacColor.border.cgColor
+        layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
 
         // Status letter
         let statusLabel = NSTextField(labelWithString: statusLetter(status))
@@ -168,21 +205,21 @@ private class SourceControlRow: NSView {
         // Filename
         let nameLabel = NSTextField(labelWithString: filename)
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.font = .systemFont(ofSize: 12)
-        nameLabel.textColor = NSColor(white: 0.80, alpha: 1.0)
+        nameLabel.font = ClomeMacFont.bodyMedium
+        nameLabel.textColor = ClomeMacColor.textPrimary
         nameLabel.lineBreakMode = .byTruncatingTail
         addSubview(nameLabel)
 
         // Relative path
         let pathLabel = NSTextField(labelWithString: relativePath)
         pathLabel.translatesAutoresizingMaskIntoConstraints = false
-        pathLabel.font = .systemFont(ofSize: 11)
-        pathLabel.textColor = NSColor(white: 0.40, alpha: 1.0)
+        pathLabel.font = ClomeMacFont.caption
+        pathLabel.textColor = ClomeMacColor.textTertiary
         pathLabel.lineBreakMode = .byTruncatingMiddle
         addSubview(pathLabel)
 
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 26),
+            heightAnchor.constraint(equalToConstant: 32),
 
             statusLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             statusLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -228,20 +265,20 @@ private class SourceControlRow: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         isHovered = true
-        layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.04).cgColor
+        layer?.backgroundColor = ClomeMacColor.chromeSurfaceAlt.cgColor
     }
 
     override func mouseExited(with event: NSEvent) {
         isHovered = false
-        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
     }
 
     override func mouseDown(with event: NSEvent) {
-        layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.08).cgColor
+        layer?.backgroundColor = ClomeMacColor.elevatedSurface.cgColor
     }
 
     override func mouseUp(with event: NSEvent) {
-        layer?.backgroundColor = isHovered ? NSColor(white: 1.0, alpha: 0.04).cgColor : NSColor.clear.cgColor
+        layer?.backgroundColor = isHovered ? ClomeMacColor.chromeSurfaceAlt.cgColor : ClomeMacColor.chromeSurface.cgColor
         onClick?()
     }
 }

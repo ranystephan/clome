@@ -63,6 +63,9 @@ class ProjectRoot: Identifiable, Equatable {
         let tracker = gitTracker
         DispatchQueue.global(qos: .utility).async {
             tracker.refresh(for: rootPath)
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .projectRootGitStatusChanged, object: rootPath)
+            }
         }
     }
 
@@ -87,4 +90,5 @@ class ProjectRoot: Identifiable, Equatable {
 
 extension Notification.Name {
     static let projectRootFilesChanged = Notification.Name("projectRootFilesChanged")
+    static let projectRootGitStatusChanged = Notification.Name("projectRootGitStatusChanged")
 }

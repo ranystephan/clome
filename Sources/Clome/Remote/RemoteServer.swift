@@ -7,6 +7,8 @@ import Network
 import MultipeerConnectivity
 import Security
 import UserNotifications
+import FirebaseAuth
+import FirebaseFirestore
 
 // MARK: - Notifications
 
@@ -14,6 +16,8 @@ extension Notification.Name {
     static let remoteClientConnected = Notification.Name("clomeRemoteClientConnected")
     static let remoteClientDisconnected = Notification.Name("clomeRemoteClientDisconnected")
     static let remotePairingStarted = Notification.Name("clomeRemotePairingStarted")
+    static let remotePairingStopped = Notification.Name("clomeRemotePairingStopped")
+    static let remoteCloudStateChanged = Notification.Name("clomeRemoteCloudStateChanged")
 }
 
 // MARK: - RemoteSessionHandler
@@ -28,12 +32,14 @@ final class RemoteSessionHandler: @unchecked Sendable {
     private var nwConnection: NWConnection?
     private var mcSession: MCSession?
     private var mcPeerID: MCPeerID?
+    private var cloudSender: ((RemoteEnvelope) -> Void)?
     private var receiveBuffer = Data()
     private var isActive = true
 
     enum Transport {
         case network(NWConnection)
         case multipeer(MCSession, MCPeerID)
+        case cloud((RemoteEnvelope) -> Void)
     }
 
     init(id: String, deviceId: String, deviceName: String, transport: Transport) {
@@ -46,6 +52,8 @@ final class RemoteSessionHandler: @unchecked Sendable {
         case .multipeer(let session, let peer):
             self.mcSession = session
             self.mcPeerID = peer
+        case .cloud(let sender):
+            self.cloudSender = sender
         }
     }
 
@@ -65,6 +73,8 @@ final class RemoteSessionHandler: @unchecked Sendable {
                 })
             } else if let session = mcSession, let peer = mcPeerID {
                 try session.send(frameData, toPeers: [peer], with: .reliable)
+            } else if let cloudSender {
+                cloudSender(envelope)
             }
         } catch {
             handleTransportError(error)
@@ -122,12 +132,12 @@ final class RemoteSessionHandler: @unchecked Sendable {
         guard isActive else { return }
         isActive = false
         print("[RemoteSession] Disconnecting session \(id.prefix(8)) for device '\(deviceName)'")
-        nwConnection?.cancel()
-        nwConnection = nil
-        if let session = mcSession, let peer = mcPeerID {
-            session.disconnect()
-            _ = peer // silence unused warning
+        if nwConnection != nil {
+            nwConnection?.cancel()
         }
+        nwConnection = nil
+        // The multipeer session is owned by RemoteServer and shared across peers.
+        // Do not disconnect it here or one logical session teardown will drop every peer.
         mcSession = nil
         mcPeerID = nil
         RemoteServer.shared.sessionDisconnected(self)
@@ -142,9 +152,10 @@ final class RemoteSessionHandler: @unchecked Sendable {
         guard isActive else { return }
         isActive = false
         print("[RemoteSession] Session \(id.prefix(8)) quietly replaced for device '\(deviceName)'")
-        nwConnection?.cancel()
+        if nwConnection != nil {
+            nwConnection?.cancel()
+        }
         nwConnection = nil
-        mcSession?.disconnect()
         mcSession = nil
         mcPeerID = nil
         // Intentionally NOT calling RemoteServer.shared.sessionDisconnected(self)
@@ -168,6 +179,7 @@ final class RemoteServer: NSObject, @unchecked Sendable {
     private static let mcServiceType = "clome-remote"
     private static let defaultPort: UInt16 = 9847
     private static let keychainLabel = "com.clome.remote-tls"
+    private static let pairingPresentationDelayNanoseconds: UInt64 = 1_500_000_000
 
     // MARK: - State
 
@@ -189,6 +201,17 @@ final class RemoteServer: NSObject, @unchecked Sendable {
     /// Messages received on pending connections before promotion completes.
     /// Keyed by connectionId, value is an ordered list of envelopes to replay.
     private var pendingMessageBuffers: [String: [RemoteEnvelope]] = [:]
+    private var pendingMultipeerPeers: [String: MCPeerID] = [:]
+    private var pendingMultipeerReceiveBuffers: [String: Data] = [:]
+    private var pendingPairingPresentationTasks: [String: Task<Void, Never>] = [:]
+    private var cloudAuthHandle: AuthStateDidChangeListenerHandle?
+    private var cloudHostsHeartbeatTimer: Timer?
+    private var cloudSessionsListener: ListenerRegistration?
+    private var cloudClientMessageListeners: [String: ListenerRegistration] = [:]
+    private var processedCloudClientMessageIds: [String: Set<String>] = [:]
+    private var cloudRegisteredUserId: String?
+    private var cloudSessionIds = Set<String>()
+    private let cloudHostingEnabledKey = "com.clome.remote.cloud.enabled"
 
     private let pairingManager = PairingManager()
     private let stateProvider = WorkspaceStateProvider()
@@ -257,6 +280,7 @@ final class RemoteServer: NSObject, @unchecked Sendable {
         }
 
         startMultipeerAdvertiser()
+        configureCloudRemoteHosting()
         isRunning = true
 
         // Wire up workspace state broadcasting
@@ -317,30 +341,416 @@ final class RemoteServer: NSObject, @unchecked Sendable {
         mcAdvertiser = nil
         mcSession?.disconnect()
         mcSession = nil
+        stopCloudRemoteHosting(markOffline: true)
 
         let allSessions = Array(sessions.values)
-        sessions.removeAll()
         pendingConnections.values.forEach { $0.cancel() }
         pendingConnections.removeAll()
         promotedConnectionIds.removeAll()
+        pendingMultipeerPeers.removeAll()
+        pendingMultipeerReceiveBuffers.removeAll()
+        pendingPairingPresentationTasks.values.forEach { $0.cancel() }
+        pendingPairingPresentationTasks.removeAll()
         pendingMessageBuffers.removeAll()
         for session in allSessions {
             session.disconnect()
         }
     }
 
+    // MARK: - Remote Anywhere
+
+    private func configureCloudRemoteHosting() {
+        if cloudAuthHandle == nil {
+            cloudAuthHandle = Auth.auth().addStateDidChangeListener { [weak self] _, _ in
+                Task { @MainActor in
+                    self?.refreshCloudRemoteHosting()
+                }
+            }
+        }
+        refreshCloudRemoteHosting()
+    }
+
+    private func refreshCloudRemoteHosting() {
+        guard isRunning else { return }
+
+        guard isCloudHostingEnabled, let user = Auth.auth().currentUser else {
+            stopCloudRemoteHosting(markOffline: true)
+            return
+        }
+
+        if cloudRegisteredUserId != user.uid {
+            stopCloudRemoteHosting(markOffline: false)
+            cloudRegisteredUserId = user.uid
+        }
+
+        updateCloudPresenceDocument()
+
+        if cloudHostsHeartbeatTimer == nil {
+            cloudHostsHeartbeatTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.updateCloudPresenceDocument()
+                }
+            }
+        }
+
+        if cloudSessionsListener == nil {
+            cloudSessionsListener = Firestore.firestore()
+                .collection("users")
+                .document(user.uid)
+                .collection("remoteSessions")
+                .addSnapshotListener { [weak self] snapshot, error in
+                    Task { @MainActor [weak self] in
+                        self?.handleCloudSessionsSnapshot(snapshot: snapshot, error: error)
+                    }
+                }
+        }
+
+        NotificationCenter.default.post(name: .remoteCloudStateChanged, object: nil)
+    }
+
+    private func stopCloudRemoteHosting(markOffline: Bool) {
+        let previousUserId = cloudRegisteredUserId ?? Auth.auth().currentUser?.uid
+
+        let activeCloudSessionIds = Array(cloudSessionIds)
+        for sessionId in activeCloudSessionIds {
+            sessions[sessionId]?.disconnect()
+        }
+
+        cloudHostsHeartbeatTimer?.invalidate()
+        cloudHostsHeartbeatTimer = nil
+        cloudSessionsListener?.remove()
+        cloudSessionsListener = nil
+        for listener in cloudClientMessageListeners.values {
+            listener.remove()
+        }
+        cloudClientMessageListeners.removeAll()
+        processedCloudClientMessageIds.removeAll()
+        cloudSessionIds.removeAll()
+
+        if markOffline, let previousUserId {
+            Firestore.firestore()
+                .collection("users")
+                .document(previousUserId)
+                .collection("remoteHosts")
+                .document(getOrCreateDeviceId())
+                .setData([
+                    "deviceId": getOrCreateDeviceId(),
+                    "deviceName": Host.current().localizedName ?? "Clome",
+                    "platform": "macOS",
+                    "status": isCloudHostingEnabled ? "offline" : "disabled",
+                    "updatedAt": Date(),
+                    "activeSessionCount": 0,
+                    "pairedDeviceCount": pairingManager.pairedDevices.count
+                ], merge: true)
+        }
+
+        cloudRegisteredUserId = nil
+        NotificationCenter.default.post(name: .remoteCloudStateChanged, object: nil)
+    }
+
+    private func updateCloudPresenceDocument() {
+        guard isRunning,
+              isCloudHostingEnabled,
+              let userId = cloudRegisteredUserId ?? Auth.auth().currentUser?.uid else {
+            return
+        }
+
+        cloudRegisteredUserId = userId
+
+        Firestore.firestore()
+            .collection("users")
+            .document(userId)
+            .collection("remoteHosts")
+            .document(getOrCreateDeviceId())
+            .setData([
+                "deviceId": getOrCreateDeviceId(),
+                "deviceName": Host.current().localizedName ?? "Clome",
+                "platform": "macOS",
+                "status": "online",
+                "updatedAt": Date(),
+                "activeSessionCount": cloudSessionIds.count,
+                "pairedDeviceCount": pairingManager.pairedDevices.count
+            ], merge: true)
+    }
+
+    private func handleCloudSessionsSnapshot(snapshot: QuerySnapshot?, error: Error?) {
+        if let error {
+            print("[RemoteServer] Cloud session listener error: \(error.localizedDescription)")
+            return
+        }
+        guard let snapshot, let userId = cloudRegisteredUserId else { return }
+
+        for document in snapshot.documents {
+            let data = document.data()
+            guard let hostDeviceId = data["hostDeviceId"] as? String,
+                  hostDeviceId == getOrCreateDeviceId() else {
+                continue
+            }
+
+            let sessionId = document.documentID
+            let status = data["status"] as? String ?? "requested"
+
+            switch status {
+            case "requested", "connecting", "connected":
+                if !cloudSessionIds.contains(sessionId) {
+                    acceptCloudSession(sessionId: sessionId, userId: userId, data: data)
+                }
+            case "ended", "cancelled", "rejected":
+                if cloudSessionIds.contains(sessionId) {
+                    if let handler = sessions[sessionId] {
+                        handler.disconnect()
+                    } else {
+                        // Handler is gone (e.g. host was restarted) but the
+                        // sessionId is still tracked — clean it up directly so
+                        // the presence count doesn't stay inflated.
+                        endCloudSession(sessionId, reason: "remote_ended")
+                    }
+                }
+            default:
+                break
+            }
+        }
+    }
+
+    private func acceptCloudSession(sessionId: String, userId: String, data: [String: Any]) {
+        let clientDeviceId = data["clientDeviceId"] as? String ?? "unknown-client"
+        let clientDeviceName = data["clientDeviceName"] as? String ?? "Remote iPhone"
+
+        // Enforce one active cloud session per client device. When a phone
+        // reconnects it generates a new sessionId — if the prior one was never
+        // cleanly ended (backgrounded, killed, lost network), it would linger
+        // here and inflate `activeSessionCount`. End any prior sessions from
+        // the same device before accepting the new one.
+        let stalePriorSessionIds = cloudSessionIds.filter { priorId in
+            guard priorId != sessionId else { return false }
+            if let prior = sessions[priorId] {
+                return prior.deviceId == clientDeviceId
+            }
+            // No local handler — treat any tracked session as stale so the
+            // count doesn't drift after host restarts.
+            return true
+        }
+        for priorId in stalePriorSessionIds {
+            if let prior = sessions[priorId] {
+                prior.disconnect()
+            } else {
+                endCloudSession(priorId, reason: "superseded_by_new_session")
+            }
+        }
+
+        let handler = RemoteSessionHandler(
+            id: sessionId,
+            deviceId: clientDeviceId,
+            deviceName: clientDeviceName,
+            transport: .cloud({ [weak self] envelope in
+                self?.sendCloudEnvelope(envelope, userId: userId, sessionId: sessionId)
+            })
+        )
+
+        cloudSessionIds.insert(sessionId)
+        sessions[sessionId] = handler
+        processedCloudClientMessageIds[sessionId] = []
+        startCloudClientMessageListener(userId: userId, sessionId: sessionId)
+
+        Firestore.firestore()
+            .collection("users")
+            .document(userId)
+            .collection("remoteSessions")
+            .document(sessionId)
+            .setData([
+                "status": "connected",
+                "updatedAt": Date(),
+                "hostAcceptedAt": Date()
+            ], merge: true)
+
+        updateCloudPresenceDocument()
+        NotificationCenter.default.post(
+            name: .remoteClientConnected,
+            object: nil,
+            userInfo: ["deviceId": clientDeviceId, "deviceName": clientDeviceName, "sessionId": sessionId]
+        )
+        sendWorkspaceSnapshot(to: handler)
+        NotificationCenter.default.post(name: .remoteCloudStateChanged, object: nil)
+    }
+
+    private func startCloudClientMessageListener(userId: String, sessionId: String) {
+        cloudClientMessageListeners[sessionId]?.remove()
+        cloudClientMessageListeners[sessionId] = Firestore.firestore()
+            .collection("users")
+            .document(userId)
+            .collection("remoteSessions")
+            .document(sessionId)
+            .collection("clientMessages")
+            .order(by: "createdAt")
+            .addSnapshotListener { [weak self] snapshot, error in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if let error {
+                        print("[RemoteServer] Cloud client listener error: \(error.localizedDescription)")
+                        return
+                    }
+                    guard let snapshot, let handler = self.sessions[sessionId] else { return }
+
+                    for change in snapshot.documentChanges where change.type == .added || change.type == .modified {
+                        let document = change.document
+                        guard !(self.processedCloudClientMessageIds[sessionId] ?? []).contains(document.documentID),
+                              let payloadBase64 = document.data()["payloadBase64"] as? String,
+                              let payload = Data(base64Encoded: payloadBase64),
+                              let envelope = try? JSONDecoder().decode(RemoteEnvelope.self, from: payload) else {
+                            continue
+                        }
+
+                        self.processedCloudClientMessageIds[sessionId, default: []].insert(document.documentID)
+                        self.handleMessage(envelope, from: handler)
+                        document.reference.delete()
+                    }
+                }
+            }
+    }
+
+    private func sendCloudEnvelope(_ envelope: RemoteEnvelope, userId: String, sessionId: String) {
+        guard cloudSessionIds.contains(sessionId) else { return }
+        do {
+            let payload = try JSONEncoder().encode(envelope)
+            let messageId = UUID().uuidString
+            Firestore.firestore()
+                .collection("users")
+                .document(userId)
+                .collection("remoteSessions")
+                .document(sessionId)
+                .collection("hostMessages")
+                .document(messageId)
+                .setData([
+                    "id": messageId,
+                    "createdAt": Date(),
+                    "senderDeviceId": getOrCreateDeviceId(),
+                    "payloadBase64": payload.base64EncodedString()
+                ])
+
+            Firestore.firestore()
+                .collection("users")
+                .document(userId)
+                .collection("remoteSessions")
+                .document(sessionId)
+                .setData([
+                    "status": "connected",
+                    "updatedAt": Date()
+                ], merge: true)
+        } catch {
+            print("[RemoteServer] Cloud send encode error: \(error)")
+        }
+    }
+
+    private func endCloudSession(_ sessionId: String, reason: String) {
+        cloudClientMessageListeners[sessionId]?.remove()
+        cloudClientMessageListeners.removeValue(forKey: sessionId)
+        processedCloudClientMessageIds.removeValue(forKey: sessionId)
+        cloudSessionIds.remove(sessionId)
+
+        if let userId = cloudRegisteredUserId ?? Auth.auth().currentUser?.uid {
+            Firestore.firestore()
+                .collection("users")
+                .document(userId)
+                .collection("remoteSessions")
+                .document(sessionId)
+                .setData([
+                    "status": "ended",
+                    "endedBy": "host",
+                    "endedReason": reason,
+                    "updatedAt": Date()
+                ], merge: true)
+        }
+
+        updateCloudPresenceDocument()
+        NotificationCenter.default.post(name: .remoteCloudStateChanged, object: nil)
+    }
+
     // MARK: - Pairing
 
     func startPairing() -> String {
+        if isPairingMode, let activePairingCode {
+            showPairingNotification(code: activePairingCode)
+            return activePairingCode
+        }
         let code = pairingManager.generatePairingCode()
         activePairingCode = code
         isPairingMode = true
+        showPairingNotification(code: code)
+        NotificationCenter.default.post(
+            name: .remotePairingStarted,
+            object: nil,
+            userInfo: ["pairingCode": code]
+        )
         return code
     }
 
     func stopPairing() {
+        guard isPairingMode || activePairingCode != nil else { return }
         isPairingMode = false
         activePairingCode = nil
+        PairingOverlayController.shared.dismiss()
+        NotificationCenter.default.post(name: .remotePairingStopped, object: nil)
+    }
+
+    func disconnectAllClients() {
+        pendingPairingPresentationTasks.values.forEach { $0.cancel() }
+        pendingPairingPresentationTasks.removeAll()
+
+        pendingConnections.values.forEach { $0.cancel() }
+        pendingConnections.removeAll()
+        promotedConnectionIds.removeAll()
+        pendingMessageBuffers.removeAll()
+        pendingMultipeerPeers.removeAll()
+        pendingMultipeerReceiveBuffers.removeAll()
+
+        let allSessions = Array(sessions.values)
+        for session in allSessions {
+            session.disconnect()
+        }
+
+        mcAdvertiser?.stopAdvertisingPeer()
+        mcAdvertiser = nil
+        mcSession?.disconnect()
+        mcSession = nil
+        mcLocalPeerID = nil
+
+        if isRunning {
+            startMultipeerAdvertiser()
+        }
+    }
+
+    func resetTrustedDevices() {
+        disconnectAllClients()
+        stopPairing()
+        pairingManager.removeAllPairedDevices()
+        updateCloudPresenceDocument()
+    }
+
+    var isCloudHostingEnabled: Bool {
+        UserDefaults.standard.object(forKey: cloudHostingEnabledKey) as? Bool ?? true
+    }
+
+    var cloudStatusSummary: String {
+        if !isCloudHostingEnabled {
+            return "Remote Anywhere paused"
+        }
+        guard let user = Auth.auth().currentUser else {
+            return "Sign in to enable Remote Anywhere"
+        }
+        if cloudSessionIds.isEmpty {
+            return "Ready anywhere as \(user.email ?? "signed-in user")"
+        }
+        return "\(cloudSessionIds.count) remote session(s) active"
+    }
+
+    func setCloudHostingEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: cloudHostingEnabledKey)
+        if enabled {
+            configureCloudRemoteHosting()
+        } else {
+            stopCloudRemoteHosting(markOffline: true)
+        }
+        NotificationCenter.default.post(name: .remoteCloudStateChanged, object: nil)
     }
 
     // MARK: - Broadcasting
@@ -393,37 +803,47 @@ final class RemoteServer: NSObject, @unchecked Sendable {
 
     /// Handle an incoming message on a pending (unauthenticated) connection.
     private func handlePendingMessage(_ envelope: RemoteEnvelope, connectionId: String, connection: NWConnection) {
+        let transport = PendingTransport.network(connectionId: connectionId, connection: connection)
+        handlePendingMessage(envelope, pendingId: connectionId, transport: transport)
+    }
+
+    private enum PendingTransport {
+        case network(connectionId: String, connection: NWConnection)
+        case multipeer(pendingId: String, peer: MCPeerID)
+    }
+
+    private func handlePendingMessage(_ envelope: RemoteEnvelope, pendingId: String, transport: PendingTransport) {
         switch envelope.type {
         case MessageType.hello:
             // Send auth challenge
             let nonce = generateRandomBytes(32)
             if let challenge = try? RemoteEnvelope(type: MessageType.authChallenge, payload: AuthChallenge(nonce: nonce)) {
-                let frame = try? RemoteFrame.encode(challenge)
-                if let frame {
-                    connection.send(content: frame, completion: .contentProcessed { _ in })
-                }
+                sendPendingEnvelope(challenge, via: transport)
             }
 
         case MessageType.pairingRequest:
+            cancelPairingPresentation(for: pendingId)
             guard let request = try? envelope.decode(PairingRequest.self) else { return }
             guard let code = activePairingCode else {
-                sendPairingFailure(to: connection, error: "Pairing mode is not active")
+                sendPairingFailure(via: transport, error: "Pairing mode is not active")
                 return
             }
             let response = pairingManager.validatePairing(request: request, code: code)
             if let respEnvelope = try? RemoteEnvelope(type: MessageType.pairingResponse, id: envelope.id, payload: response) {
-                let frame = try? RemoteFrame.encode(respEnvelope)
-                if let frame {
-                    connection.send(content: frame, completion: .contentProcessed { _ in })
-                }
+                sendPendingEnvelope(respEnvelope, via: transport)
             }
             if response.success {
                 stopPairing()
-                promoteConnection(connectionId: connectionId, connection: connection,
-                                  deviceId: request.deviceId, deviceName: request.deviceName)
+                promotePendingTransport(
+                    pendingId: pendingId,
+                    transport: transport,
+                    deviceId: request.deviceId,
+                    deviceName: request.deviceName
+                )
             }
 
         case MessageType.authRequest:
+            cancelPairingPresentation(for: pendingId)
             print("[RemoteServer] Received auth request")
             guard let request = try? envelope.decode(AuthRequest.self) else {
                 print("[RemoteServer] Failed to decode auth request")
@@ -434,29 +854,26 @@ final class RemoteServer: NSObject, @unchecked Sendable {
             let result = pairingManager.authenticateDevice(request: request, challenge: challenge)
             print("[RemoteServer] Auth result: success=\(result.success) error=\(result.error ?? "none")")
             if let respEnvelope = try? RemoteEnvelope(type: MessageType.authResult, id: envelope.id, payload: result) {
-                let frame = try? RemoteFrame.encode(respEnvelope)
-                if let frame {
-                    connection.send(content: frame, completion: .contentProcessed { error in
-                        if let error {
-                            print("[RemoteServer] Failed to send auth result: \(error)")
-                        } else {
-                            print("[RemoteServer] Sent auth result to client")
-                        }
-                    })
-                }
+                sendPendingEnvelope(respEnvelope, via: transport)
             }
             if result.success {
                 let deviceName = pairingManager.pairedDevices.first { $0.deviceId == request.deviceId }?.deviceName ?? "Unknown"
-                promoteConnection(connectionId: connectionId, connection: connection,
-                                  deviceId: request.deviceId, deviceName: deviceName)
+                promotePendingTransport(
+                    pendingId: pendingId,
+                    transport: transport,
+                    deviceId: request.deviceId,
+                    deviceName: deviceName
+                )
+            } else {
+                _ = startPairing()
             }
 
         default:
             // Buffer the message for replay after the connection is promoted.
-            print("[RemoteServer] Buffering message type '\(envelope.type)' on pending connection \(connectionId)")
-            var buffer = pendingMessageBuffers[connectionId] ?? []
+            print("[RemoteServer] Buffering message type '\(envelope.type)' on pending client \(pendingId)")
+            var buffer = pendingMessageBuffers[pendingId] ?? []
             buffer.append(envelope)
-            pendingMessageBuffers[connectionId] = buffer
+            pendingMessageBuffers[pendingId] = buffer
         }
     }
 
@@ -474,22 +891,15 @@ final class RemoteServer: NSObject, @unchecked Sendable {
                     print("[RemoteServer] Pending connection ready: \(connectionId)")
                     // Send Hello so the client knows our identity
                     self?.sendHello(to: connection)
-                    // Auto-start pairing mode for new connections
-                    if !(self?.isPairingMode ?? false) {
-                        let code = self?.startPairing() ?? "000000"
-                        print("[RemoteServer] ========================================")
-                        print("[RemoteServer] PAIRING CODE: \(code)")
-                        print("[RemoteServer] Enter this code on your iOS device")
-                        print("[RemoteServer] ========================================")
-                        // Show macOS notification with pairing code
-                        self?.showPairingNotification(code: code)
-                    }
+                    self?.schedulePairingPresentation(for: connectionId)
                     self?.startPendingReceive(connectionId: connectionId, connection: connection)
                 case .failed(let error):
                     print("[RemoteServer] Pending connection failed: \(error)")
+                    self?.cancelPairingPresentation(for: connectionId)
                     self?.pendingConnections.removeValue(forKey: connectionId)
                     self?.pendingMessageBuffers.removeValue(forKey: connectionId)
                 case .cancelled:
+                    self?.cancelPairingPresentation(for: connectionId)
                     self?.pendingConnections.removeValue(forKey: connectionId)
                     self?.pendingMessageBuffers.removeValue(forKey: connectionId)
                 default:
@@ -558,11 +968,13 @@ final class RemoteServer: NSObject, @unchecked Sendable {
                 }
                 if isComplete {
                     print("[RemoteServer] Pending connection \(connectionId) completed")
+                    self.cancelPairingPresentation(for: connectionId)
                     self.pendingConnections.removeValue(forKey: connectionId)
                     self.pendingMessageBuffers.removeValue(forKey: connectionId)
                     self.pendingReceiveBuffers.removeValue(forKey: connectionId)
                 } else if let error {
                     print("[RemoteServer] Pending connection \(connectionId) error: \(error)")
+                    self.cancelPairingPresentation(for: connectionId)
                     self.pendingConnections.removeValue(forKey: connectionId)
                     self.pendingMessageBuffers.removeValue(forKey: connectionId)
                     self.pendingReceiveBuffers.removeValue(forKey: connectionId)
@@ -574,6 +986,7 @@ final class RemoteServer: NSObject, @unchecked Sendable {
     }
 
     private func promoteConnection(connectionId: String, connection: NWConnection, deviceId: String, deviceName: String) {
+        cancelPairingPresentation(for: connectionId)
         pendingConnections.removeValue(forKey: connectionId)
         // Signal the pending receive loop to stop so it doesn't compete with the session handler
         promotedConnectionIds.insert(connectionId)
@@ -619,8 +1032,61 @@ final class RemoteServer: NSObject, @unchecked Sendable {
         )
     }
 
+    private func promotePendingTransport(pendingId: String, transport: PendingTransport, deviceId: String, deviceName: String) {
+        switch transport {
+        case .network(let connectionId, let connection):
+            promoteConnection(connectionId: connectionId, connection: connection, deviceId: deviceId, deviceName: deviceName)
+        case .multipeer(_, let peer):
+            promoteMultipeerPeer(pendingId: pendingId, peer: peer, deviceId: deviceId, deviceName: deviceName)
+        }
+    }
+
+    private func promoteMultipeerPeer(pendingId: String, peer: MCPeerID, deviceId: String, deviceName: String) {
+        cancelPairingPresentation(for: pendingId)
+        pendingMultipeerPeers.removeValue(forKey: pendingId)
+        pendingMultipeerReceiveBuffers.removeValue(forKey: pendingId)
+
+        let staleSessionIds = sessions.filter { $0.value.deviceId == deviceId }.map(\.key)
+        for staleId in staleSessionIds {
+            print("[RemoteServer] Replacing stale session \(staleId) for device \(deviceId)")
+            sessions.removeValue(forKey: staleId)?.replaceQuietly()
+        }
+
+        guard let session = mcSession else { return }
+        let sessionId = UUID().uuidString
+        let handler = RemoteSessionHandler(
+            id: sessionId,
+            deviceId: deviceId,
+            deviceName: deviceName,
+            transport: .multipeer(session, peer)
+        )
+        sessions[sessionId] = handler
+
+        print("[RemoteServer] Multipeer peer promoted to session \(sessionId) for device '\(deviceName)'")
+
+        sendWorkspaceSnapshot(to: handler)
+
+        if let buffered = pendingMessageBuffers.removeValue(forKey: pendingId) {
+            print("[RemoteServer] Replaying \(buffered.count) buffered message(s) for multipeer session \(sessionId)")
+            for envelope in buffered {
+                handleMessage(envelope, from: handler)
+            }
+        }
+
+        NotificationCenter.default.post(
+            name: .remoteClientConnected,
+            object: nil,
+            userInfo: ["deviceId": deviceId, "deviceName": deviceName, "sessionId": sessionId]
+        )
+    }
+
     func sessionDisconnected(_ session: RemoteSessionHandler) {
         sessions.removeValue(forKey: session.id)
+        if cloudSessionIds.contains(session.id) {
+            endCloudSession(session.id, reason: "session_disconnected")
+        } else {
+            updateCloudPresenceDocument()
+        }
         print("[RemoteServer] Session \(session.id.prefix(8)) disconnected for device '\(session.deviceName)' (\(session.deviceId.prefix(8))). Active sessions: \(sessions.count)")
         NotificationCenter.default.post(
             name: .remoteClientDisconnected,
@@ -1146,21 +1612,54 @@ final class RemoteServer: NSObject, @unchecked Sendable {
 
         // In-app overlay
         PairingOverlayController.shared.show(code: code)
-
-        // Notify observers that pairing has started
-        NotificationCenter.default.post(
-            name: .remotePairingStarted,
-            object: nil,
-            userInfo: ["pairingCode": code]
-        )
     }
 
-    private func sendPairingFailure(to connection: NWConnection, error: String) {
+    private func sendPairingFailure(via transport: PendingTransport, error: String) {
         let response = PairingResponse(success: false, error: error, serverPublicKey: nil, authToken: nil)
-        if let envelope = try? RemoteEnvelope(type: MessageType.pairingResponse, payload: response),
-           let frame = try? RemoteFrame.encode(envelope) {
-            connection.send(content: frame, completion: .contentProcessed { _ in })
+        if let envelope = try? RemoteEnvelope(type: MessageType.pairingResponse, payload: response) {
+            sendPendingEnvelope(envelope, via: transport)
         }
+    }
+
+    private func sendPendingEnvelope(_ envelope: RemoteEnvelope, via transport: PendingTransport) {
+        guard let frame = try? RemoteFrame.encode(envelope) else { return }
+        switch transport {
+        case .network(_, let connection):
+            connection.send(content: frame, completion: .contentProcessed { error in
+                if let error {
+                    print("[RemoteServer] Failed to send pending network message: \(error)")
+                }
+            })
+        case .multipeer(_, let peer):
+            guard let session = mcSession else { return }
+            do {
+                try session.send(frame, toPeers: [peer], with: .reliable)
+            } catch {
+                print("[RemoteServer] Failed to send pending multipeer message: \(error)")
+            }
+        }
+    }
+
+    private func schedulePairingPresentation(for pendingId: String) {
+        cancelPairingPresentation(for: pendingId)
+        pendingPairingPresentationTasks[pendingId] = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.pairingPresentationDelayNanoseconds)
+            guard let self, !Task.isCancelled else { return }
+            guard self.pendingConnections[pendingId] != nil || self.pendingMultipeerPeers[pendingId] != nil else { return }
+            let code = self.startPairing()
+            print("[RemoteServer] ========================================")
+            print("[RemoteServer] PAIRING CODE: \(code)")
+            print("[RemoteServer] Enter this code on your iOS device")
+            print("[RemoteServer] ========================================")
+        }
+    }
+
+    private func cancelPairingPresentation(for pendingId: String) {
+        pendingPairingPresentationTasks.removeValue(forKey: pendingId)?.cancel()
+    }
+
+    private func pendingMultipeerId(for peerName: String) -> String {
+        "mc:\(peerName)"
     }
 
     /// Connected session count.
@@ -1168,6 +1667,10 @@ final class RemoteServer: NSObject, @unchecked Sendable {
 
     /// All connected device names.
     var connectedDeviceNames: [String] { sessions.values.map(\.deviceName) }
+
+    var currentPairingCode: String? { activePairingCode }
+
+    var pairedDeviceCount: Int { pairingManager.pairedDevices.count }
 }
 
 // MARK: - MCNearbyServiceAdvertiserDelegate
@@ -1180,18 +1683,12 @@ extension RemoteServer: MCNearbyServiceAdvertiserDelegate {
         // MCNearbyServiceAdvertiserDelegate predates Swift Concurrency; its invitationHandler
         // is not Sendable. We wrap it in nonisolated(unsafe) to cross the isolation boundary.
         nonisolated(unsafe) let handler = invitationHandler
-        let ctx = context
         Task { @MainActor [weak self] in
-            guard let self else { handler(false, nil); return }
-            if self.isPairingMode {
-                handler(true, self.mcSession)
-            } else if let ctx,
-                      let deviceId = String(data: ctx, encoding: .utf8),
-                      self.pairingManager.isPaired(deviceId: deviceId) {
-                handler(true, self.mcSession)
-            } else {
-                handler(false, nil)
-            }
+            guard let self, self.mcSession != nil else { handler(false, nil); return }
+            // Accept the transport first, then enforce pairing/auth at the app layer.
+            // This keeps initial Bluetooth/USB pairing possible and lets paired devices reconnect
+            // without the advertiser having to predict intent up front.
+            handler(true, self.mcSession)
         }
     }
 
@@ -1226,8 +1723,14 @@ extension RemoteServer: MCSessionDelegate {
         let receivedData = data
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let handler = self.sessions.values.first { $0.deviceName == peerName }
-            handler?.receivedMultipeerData(receivedData)
+            if let handler = self.sessions.values.first(where: { $0.deviceName == peerName }) {
+                handler.receivedMultipeerData(receivedData)
+                return
+            }
+
+            let pendingId = self.pendingMultipeerId(for: peerName)
+            guard let pendingPeer = self.pendingMultipeerPeers[pendingId] else { return }
+            self.handlePendingMultipeerData(receivedData, pendingId: pendingId, peer: pendingPeer)
         }
     }
 
@@ -1237,44 +1740,56 @@ extension RemoteServer: MCSessionDelegate {
 
     @MainActor
     private func handleMultipeerConnected(peerName: String) {
-        let sessionId = UUID().uuidString
-
-        // For Multipeer, we use a lightweight session handler without a direct transport reference.
-        // Messages are routed via the MCSession delegate's didReceive callback.
         guard let session = mcSession else { return }
-        // Find the MCPeerID matching this name
         guard let peer = session.connectedPeers.first(where: { $0.displayName == peerName }) else { return }
+        let pendingId = pendingMultipeerId(for: peerName)
+        pendingMultipeerPeers[pendingId] = peer
+        pendingMultipeerReceiveBuffers[pendingId] = Data()
+        schedulePairingPresentation(for: pendingId)
+        sendHello(to: peer, session: session)
+    }
 
-        let handler = RemoteSessionHandler(
-            id: sessionId,
-            deviceId: peerName,
-            deviceName: peerName,
-            transport: .multipeer(session, peer)
-        )
-        sessions[sessionId] = handler
+    @MainActor
+    private func handleMultipeerDisconnected(peerName: String) {
+        let pendingId = pendingMultipeerId(for: peerName)
+        if pendingMultipeerPeers.removeValue(forKey: pendingId) != nil {
+            cancelPairingPresentation(for: pendingId)
+            pendingMessageBuffers.removeValue(forKey: pendingId)
+            pendingMultipeerReceiveBuffers.removeValue(forKey: pendingId)
+        }
+        if let session = sessions.values.first(where: { $0.deviceName == peerName }) {
+            session.disconnect()
+        }
+    }
 
-        // Send hello so the client knows we accepted
+    private func handlePendingMultipeerData(_ data: Data, pendingId: String, peer: MCPeerID) {
+        pendingMultipeerReceiveBuffers[pendingId, default: Data()].append(data)
+
+        while let extracted = RemoteFrame.extract(from: pendingMultipeerReceiveBuffers[pendingId] ?? Data()) {
+            pendingMultipeerReceiveBuffers[pendingId] = Data((pendingMultipeerReceiveBuffers[pendingId] ?? Data()).dropFirst(extracted.consumed))
+            guard let envelope = try? JSONDecoder().decode(RemoteEnvelope.self, from: extracted.payload) else {
+                print("[RemoteServer] Failed to decode envelope from pending multipeer peer \(peer.displayName)")
+                continue
+            }
+
+            let transport = PendingTransport.multipeer(pendingId: pendingId, peer: peer)
+            handlePendingMessage(envelope, pendingId: pendingId, transport: transport)
+        }
+    }
+
+    private func sendHello(to peer: MCPeerID, session: MCSession) {
         let hello = HelloMessage(
             protocolVersion: 1,
             deviceName: Host.current().localizedName ?? "Clome",
             deviceId: getOrCreateDeviceId(),
             capabilities: ["terminal", "workspace", "editor"]
         )
-        if let envelope = try? RemoteEnvelope(type: MessageType.hello, payload: hello) {
-            handler.send(envelope)
-        }
-
-        NotificationCenter.default.post(
-            name: .remoteClientConnected,
-            object: nil,
-            userInfo: ["deviceId": peerName, "deviceName": peerName, "sessionId": sessionId]
-        )
-    }
-
-    @MainActor
-    private func handleMultipeerDisconnected(peerName: String) {
-        if let session = sessions.values.first(where: { $0.deviceName == peerName }) {
-            session.disconnect()
+        guard let envelope = try? RemoteEnvelope(type: MessageType.hello, payload: hello),
+              let frame = try? RemoteFrame.encode(envelope) else { return }
+        do {
+            try session.send(frame, toPeers: [peer], with: .reliable)
+        } catch {
+            print("[RemoteServer] Failed to send multipeer hello: \(error)")
         }
     }
 

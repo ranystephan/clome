@@ -309,7 +309,13 @@ class Workspace: Identifiable {
     func addTerminalTab(workingDirectory: String? = nil, restoreCommand: String? = nil) -> WorkspaceTab? {
         guard let app = ghosttyApp else { return nil }
         let terminal = TerminalSurface(ghosttyApp: app)
-        terminal.restoreWorkingDirectory = workingDirectory
+        if let workingDirectory {
+            if FileAccessManager.shared.requestPersistentAccess(for: workingDirectory) {
+                terminal.restoreWorkingDirectory = workingDirectory
+            } else {
+                print("[Workspace] Falling back to default terminal directory because access to \(workingDirectory) was declined")
+            }
+        }
         terminal.restoreCommand = restoreCommand
         let tab = WorkspaceTab(type: .terminal, view: terminal, title: "Terminal")
         addTab(tab)

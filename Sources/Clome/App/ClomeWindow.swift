@@ -22,7 +22,7 @@ class ClomeWindow: NSWindow {
     private var sidebarDragTabIndex: Int?
     private var paneDragView: NSView?
     private(set) var launcherWindow: LauncherWindow?
-    private let tabBarBgColor = NSColor(red: 0.13, green: 0.13, blue: 0.145, alpha: 0.6)
+    private let tabBarBgColor = ClomeMacColor.chromeSurface
     private let outerEdgeMargin: CGFloat = 40
     /// Throttle drop zone updates during drag (limit to ~60fps)
     private var lastDropZoneUpdate: CFTimeInterval = 0
@@ -31,7 +31,7 @@ class ClomeWindow: NSWindow {
     // Sidebar state
     enum SidebarMode { case pinned, compact, hidden }
     private(set) var sidebarMode: SidebarMode = .pinned
-    private var sidebarWidth: CGFloat = 230
+    private var sidebarWidth: CGFloat = ClomeMacMetric.sidebarWidth
     private let sidebarMinWidth: CGFloat = 180
     private let sidebarMaxWidth: CGFloat = 360
     private var hoverTrackingArea: NSTrackingArea?
@@ -66,35 +66,51 @@ class ClomeWindow: NSWindow {
         workspaceManager.delegate = self
 
         NotificationCenter.default.addObserver(self, selector: #selector(appearanceDidChange), name: .appearanceSettingsChanged, object: nil)
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleBlockRunnerSwitchWorkspace(_:)),
+            name: .blockRunnerSwitchWorkspace,
+            object: nil
+        )
+    }
+
+    @objc private func handleBlockRunnerSwitchWorkspace(_ note: Notification) {
+        guard let idString = note.userInfo?["workspaceID"] as? String,
+              let idx = workspaceManager.workspaces.firstIndex(where: { $0.id.uuidString == idString })
+        else { return }
+        workspaceManager.switchTo(index: idx)
     }
 
     @objc private func appearanceDidChange() {
-        bgTintLayer?.layer?.backgroundColor = AppearanceSettings.shared.backgroundBgColor.cgColor
+        bgTintLayer?.layer?.backgroundColor = ClomeMacColor.windowBackground.cgColor
     }
 
     // MARK: - Layout
 
     private let borderWidth: CGFloat = 0
-    private let cornerRadius: CGFloat = 14
+    private let cornerRadius: CGFloat = ClomeMacMetric.windowRadius
 
     private func setupLayout() {
         // Root — unified background with rounded corners
         let root = NSVisualEffectView()
         root.translatesAutoresizingMaskIntoConstraints = false
-        root.material = .hudWindow
+        root.material = .windowBackground
         root.blendingMode = .behindWindow
         root.state = .active
         root.wantsLayer = true
         root.layer?.cornerRadius = cornerRadius
         root.layer?.cornerCurve = .continuous
         root.layer?.masksToBounds = true
+        root.layer?.borderWidth = 1
+        root.layer?.borderColor = ClomeMacColor.border.cgColor
         contentView = root
 
         // Background tint overlay — unified color for the entire window
         let tint = NSView()
         tint.translatesAutoresizingMaskIntoConstraints = false
         tint.wantsLayer = true
-        tint.layer?.backgroundColor = AppearanceSettings.shared.backgroundBgColor.cgColor
+        tint.layer?.backgroundColor = ClomeMacColor.windowBackground.cgColor
         root.addSubview(tint)
         bgTintLayer = tint
         NSLayoutConstraint.activate([
@@ -118,7 +134,9 @@ class ClomeWindow: NSWindow {
         let sidebarBox = NSView()
         sidebarBox.translatesAutoresizingMaskIntoConstraints = false
         sidebarBox.wantsLayer = true
-        sidebarBox.layer?.backgroundColor = NSColor.clear.cgColor
+        sidebarBox.layer?.backgroundColor = ClomeMacColor.sidebarSurface.cgColor
+        // No border — the outer window border already frames the whole app and
+        // we want the sidebar to flow seamlessly into the main panel.
         sidebarContainer = sidebarBox
         inner.addSubview(sidebarContainer)
 
@@ -143,10 +161,12 @@ class ClomeWindow: NSWindow {
         mainPanel = NonDraggableView()
         mainPanel.translatesAutoresizingMaskIntoConstraints = false
         mainPanel.wantsLayer = true
-        mainPanel.layer?.backgroundColor = NSColor.clear.cgColor
-        mainPanel.layer?.cornerRadius = 10
+        mainPanel.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
+        mainPanel.layer?.cornerRadius = ClomeMacMetric.panelRadius
         mainPanel.layer?.cornerCurve = .continuous
         mainPanel.layer?.masksToBounds = true
+        // No border — removes the visible seam against the sidebar. The outer
+        // window border still frames the whole app.
         inner.addSubview(mainPanel)
 
         // Sidebar resize drag handle — invisible, on top for mouse events
@@ -165,6 +185,7 @@ class ClomeWindow: NSWindow {
         contentArea = NSView()
         contentArea.translatesAutoresizingMaskIntoConstraints = false
         contentArea.wantsLayer = true
+        contentArea.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
         mainPanel.addSubview(contentArea)
 
         // Split drop zone overlay (for drag-to-split) — frame-based, not constrained

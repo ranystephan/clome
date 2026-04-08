@@ -23,6 +23,7 @@ struct CalendarWeekView: View {
     @State private var hoveredID: String?
     @State private var dropTargetedDay: Date?
     @State private var pendingDropY: CGFloat = 0
+    @State private var attachmentDropTargetID: String?
 
     // Drag / resize state
     @State private var dragID: String?
@@ -48,6 +49,15 @@ struct CalendarWeekView: View {
     }
 
     private var isDay: Bool { dataManager.viewMode == .day }
+
+    /// Stable id for the currently visible week — drives the slide
+    /// transition when navigating with prev/next.
+    private var weekKey: String {
+        guard let first = days.first else { return "" }
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-DDD"
+        return f.string(from: first)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -81,6 +91,12 @@ struct CalendarWeekView: View {
                     }
                 }
             }
+            .id(weekKey)
+            .transition(.asymmetric(
+                insertion: .move(edge: .trailing).combined(with: .opacity),
+                removal:   .move(edge: .leading).combined(with: .opacity)
+            ))
+            .animation(.flowSpring, value: weekKey)
         }
         .background(FlowTokens.bg0)
         .onReceive(ticker) { now = $0 }
@@ -253,6 +269,8 @@ struct CalendarWeekView: View {
         let frame = liveFrame(baseX: baseX, baseY: baseY, baseH: baseH, isDragging: isDragging)
         let x = frame.0, y = frame.1, h = frame.2
 
+        let isAttachmentTarget = attachmentDropTargetID == id
+
         return BlockCard(
             block: block,
             isPast: past,
@@ -265,10 +283,25 @@ struct CalendarWeekView: View {
             onDelete: { deleteBlock(block) }
         )
         .frame(width: slotW - 2, height: h)
+        .overlay {
+            if isAttachmentTarget {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(FlowTokens.accent.opacity(0.85),
+                                  style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
+            }
+        }
         .scaleEffect(isDragging && dragMode == .move ? 1.02 : 1.0)
         .opacity(isDragging ? 0.92 : 1.0)
         .offset(x: x, y: y)
-        .zIndex(isDragging ? 10 : 0)
+        .zIndex(isDragging || isAttachmentTarget ? 10 : 0)
+        .onDrop(
+            of: [.fileURL, .url, .text],
+            isTargeted: Binding(
+                get: { isAttachmentTarget },
+                set: { attachmentDropTargetID = $0 ? id : (attachmentDropTargetID == id ? nil : attachmentDropTargetID) }
+            ),
+            perform: { providers in handleAttachmentDrop(providers: providers, block: block) }
+        )
         .overlay(alignment: .top) {
             resizeHandle(edge: .resizeTop, block: block, width: slotW - 2)
                 .offset(x: x, y: y)
@@ -460,6 +493,42 @@ struct CalendarWeekView: View {
         store.deleteAny(id: block.id)
         store.selectedBlockID = nil
         editingID = nil
+    }
+
+    // MARK: - Attachment drop (drop onto a card)
+
+    private func handleAttachmentDrop(providers: [NSItemProvider], block: Block) -> Bool {
+        // Only native blocks can receive attachments in this milestone.
+        guard let nid = store.nativeID(for: block.id) else {
+            attachmentDropTargetID = nil
+            return false
+        }
+        var handled = false
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                handled = true
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
+                    guard let data = data as? Data,
+                          let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+                    Task { @MainActor in
+                        store.addAttachment(.file(path: url.path), toNativeID: nid)
+                    }
+                }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
+                handled = true
+                provider.loadItem(forTypeIdentifier: UTType.url.identifier) { data, _ in
+                    var url: URL?
+                    if let d = data as? Data { url = URL(dataRepresentation: d, relativeTo: nil) }
+                    else if let u = data as? URL { url = u }
+                    guard let u = url else { return }
+                    Task { @MainActor in
+                        store.addAttachment(.url(u), toNativeID: nid)
+                    }
+                }
+            }
+        }
+        attachmentDropTargetID = nil
+        return handled
     }
 
     // MARK: - Time-grid drop

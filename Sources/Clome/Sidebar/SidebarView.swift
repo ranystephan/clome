@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// Zen Browser-inspired sidebar with workspaces and tab list.
 class SidebarView: NSView {
@@ -6,7 +7,7 @@ class SidebarView: NSView {
     private let scrollView = NSScrollView()
     private let stackView = NSStackView()
 
-    private let bgColor = NSColor.clear
+    private var bgColor: NSColor { ClomeMacColor.sidebarSurface }
 
     /// File shelf
     private var bottomBar: NSView!
@@ -19,8 +20,6 @@ class SidebarView: NSView {
     private var sessionsBtn: NSButton!
     private var sessionsPopover: NSPopover?
     private var sessionsRefreshTimer: Timer?
-    private var sessionsBtnIcon: NSImageView?
-    private var sessionsBtnLabel: NSTextField?
 
     /// Remote connection indicator
     private var remoteBtn: NSButton!
@@ -72,6 +71,11 @@ class SidebarView: NSView {
     /// Explorer resize handle
     private var explorerResizeHandle: ExplorerResizeHandle?
 
+    /// Thin separator between the explorer and the source-control section.
+    /// Stored so we can hide it together with those sections when there is no
+    /// project root open.
+    private var chromeSeparator: NSView?
+
     /// Tabs section header
     private var tabsSectionHeader: SidebarSectionHeader?
 
@@ -90,6 +94,7 @@ class SidebarView: NSView {
         setupUI()
         reloadWorkspaces()
         observeNotifications()
+        refreshRemoteState()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -147,8 +152,9 @@ class SidebarView: NSView {
         let separator = NSView()
         separator.translatesAutoresizingMaskIntoConstraints = false
         separator.wantsLayer = true
-        separator.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.06).cgColor
+        separator.layer?.backgroundColor = ClomeMacColor.border.cgColor
         addSubview(separator)
+        chromeSeparator = separator
 
         // ──── Scrollable tab list (terminals/browsers only) ────
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -159,7 +165,7 @@ class SidebarView: NSView {
         addSubview(scrollView)
 
         stackView.orientation = .vertical
-        stackView.spacing = 2
+        stackView.spacing = 6
         stackView.alignment = .centerX
         stackView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -172,59 +178,45 @@ class SidebarView: NSView {
         bottomBar = NSView()
         bottomBar.translatesAutoresizingMaskIntoConstraints = false
         bottomBar.wantsLayer = true
-        bottomBar.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.03).cgColor
+        bottomBar.layer?.backgroundColor = NSColor.clear.cgColor
         addSubview(bottomBar)
 
-        // Shelf toggle button (smaller icon)
-        shelfBtn = makeNavButton(symbol: "tray.and.arrow.down.fill", action: #selector(shelfToggleTapped))
-        let smallCfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
-        shelfBtn.image = NSImage(systemSymbolName: "tray.and.arrow.down.fill", accessibilityDescription: nil)?.withSymbolConfiguration(smallCfg)
+        // 1pt hairline divider above the footer — same treatment AppKit uses
+        // for the source-list status bar in Mail / Notes.
+        let footerDivider = NSView()
+        footerDivider.translatesAutoresizingMaskIntoConstraints = false
+        footerDivider.wantsLayer = true
+        footerDivider.layer?.backgroundColor = ClomeMacColor.border.withAlphaComponent(0.6).cgColor
+        addSubview(footerDivider)
+        NSLayoutConstraint.activate([
+            footerDivider.leadingAnchor.constraint(equalTo: leadingAnchor),
+            footerDivider.trailingAnchor.constraint(equalTo: trailingAnchor),
+            footerDivider.bottomAnchor.constraint(equalTo: bottomBar.topAnchor),
+            footerDivider.heightAnchor.constraint(equalToConstant: 1),
+        ])
+
+        // Three borderless icon buttons — laid out like a native macOS sidebar
+        // status bar (Finder, Notes, Mail). No card chrome, no labels: identical
+        // hit targets, identical symbol weight, hover provides the only fill.
+        shelfBtn = makeFooterIconButton(
+            symbol: "tray.and.arrow.down",
+            tooltip: "File Shelf",
+            action: #selector(shelfToggleTapped)
+        )
         bottomBar.addSubview(shelfBtn)
 
-        // Claude sessions button — sparkles icon + "Claude" label
-        sessionsBtn = NSButton()
-        sessionsBtn.translatesAutoresizingMaskIntoConstraints = false
-        sessionsBtn.bezelStyle = .texturedRounded
-        sessionsBtn.isBordered = false
-        sessionsBtn.title = ""
-        sessionsBtn.target = self
-        sessionsBtn.action = #selector(sessionsToggleTapped)
-
-        let sparkleIcon = NSImageView(); sessionsBtnIcon = sparkleIcon
-        sparkleIcon.translatesAutoresizingMaskIntoConstraints = false
-        sparkleIcon.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Claude Sessions")?.withSymbolConfiguration(smallCfg)
-        sparkleIcon.contentTintColor = NSColor(red: 0.85, green: 0.55, blue: 0.35, alpha: 1.0) // Claude warm orange
-        sparkleIcon.imageScaling = .scaleProportionallyDown
-        sessionsBtn.addSubview(sparkleIcon)
-
-        let claudeLabel = NSTextField(labelWithString: "Claude"); sessionsBtnLabel = claudeLabel
-        claudeLabel.translatesAutoresizingMaskIntoConstraints = false
-        claudeLabel.font = .systemFont(ofSize: 10, weight: .semibold)
-        claudeLabel.textColor = NSColor(white: 1.0, alpha: 0.65)
-        sessionsBtn.addSubview(claudeLabel)
-
-        NSLayoutConstraint.activate([
-            sparkleIcon.leadingAnchor.constraint(equalTo: sessionsBtn.leadingAnchor, constant: 4),
-            sparkleIcon.centerYAnchor.constraint(equalTo: sessionsBtn.centerYAnchor),
-            sparkleIcon.widthAnchor.constraint(equalToConstant: 14),
-            sparkleIcon.heightAnchor.constraint(equalToConstant: 14),
-            claudeLabel.leadingAnchor.constraint(equalTo: sparkleIcon.trailingAnchor, constant: 3),
-            claudeLabel.centerYAnchor.constraint(equalTo: sessionsBtn.centerYAnchor),
-            claudeLabel.trailingAnchor.constraint(equalTo: sessionsBtn.trailingAnchor, constant: -4),
-        ])
+        sessionsBtn = makeFooterIconButton(
+            symbol: "sparkles",
+            tooltip: "Claude Sessions",
+            action: #selector(sessionsToggleTapped)
+        )
         bottomBar.addSubview(sessionsBtn)
 
-        // Remote connection indicator button
-        remoteBtn = NSButton()
-        remoteBtn.translatesAutoresizingMaskIntoConstraints = false
-        remoteBtn.bezelStyle = .texturedRounded
-        remoteBtn.isBordered = false
-        remoteBtn.title = ""
-        remoteBtn.target = self
-        remoteBtn.action = #selector(remoteBtnTapped)
-        remoteBtn.image = NSImage(systemSymbolName: "iphone", accessibilityDescription: "Remote Connection")?.withSymbolConfiguration(smallCfg)
-        remoteBtn.contentTintColor = NSColor(white: 1.0, alpha: 0.35) // dimmed when disconnected
-        remoteBtn.toolTip = "No device connected"
+        remoteBtn = makeFooterIconButton(
+            symbol: "iphone",
+            tooltip: "No device connected",
+            action: #selector(remoteBtnTapped)
+        )
         bottomBar.addSubview(remoteBtn)
 
         // ──── Layout ────
@@ -238,7 +230,7 @@ class SidebarView: NSView {
             switcher.trailingAnchor.constraint(equalTo: trailingAnchor),
 
             // Scrollable tab list (workspaces)
-            scrollView.topAnchor.constraint(equalTo: switcher.bottomAnchor, constant: 4),
+            scrollView.topAnchor.constraint(equalTo: switcher.bottomAnchor, constant: 8),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
 
@@ -255,13 +247,13 @@ class SidebarView: NSView {
             explorerHeightConstraint!,
 
             // Separator
-            separator.topAnchor.constraint(equalTo: explorer.bottomAnchor, constant: 4),
-            separator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            separator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            separator.topAnchor.constraint(equalTo: explorer.bottomAnchor, constant: 8),
+            separator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            separator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             separator.heightAnchor.constraint(equalToConstant: 1),
 
             // Source control
-            scSection.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 2),
+            scSection.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 8),
             scSection.leadingAnchor.constraint(equalTo: leadingAnchor),
             scSection.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollViewBottomConstraint,
@@ -270,29 +262,53 @@ class SidebarView: NSView {
             stackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
             stackView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
 
-            // Bottom bar
+            // Bottom bar — slim native footer, no top border (the parent sidebar
+            // already provides a divider via the source-control section above).
             bottomBar.leadingAnchor.constraint(equalTo: leadingAnchor),
             bottomBar.trailingAnchor.constraint(equalTo: trailingAnchor),
             bottomBar.bottomAnchor.constraint(equalTo: bottomAnchor),
             bottomBar.heightAnchor.constraint(equalToConstant: 36),
 
-            // Shelf button on the left of bottom bar
+            // All three footer buttons share the exact same hit target so they
+            // line up vertically and read as a single control group.
             shelfBtn.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 8),
             shelfBtn.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
-            shelfBtn.widthAnchor.constraint(equalToConstant: 28),
-            shelfBtn.heightAnchor.constraint(equalToConstant: 28),
+            shelfBtn.widthAnchor.constraint(equalToConstant: 26),
+            shelfBtn.heightAnchor.constraint(equalToConstant: 22),
 
-            // Claude sessions button next to shelf button
-            sessionsBtn.leadingAnchor.constraint(equalTo: shelfBtn.trailingAnchor, constant: 4),
+            sessionsBtn.leadingAnchor.constraint(equalTo: shelfBtn.trailingAnchor, constant: 2),
             sessionsBtn.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
-            sessionsBtn.heightAnchor.constraint(equalToConstant: 28),
+            sessionsBtn.widthAnchor.constraint(equalToConstant: 26),
+            sessionsBtn.heightAnchor.constraint(equalToConstant: 22),
 
-            // Remote connection indicator on the right side of bottom bar
             remoteBtn.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -8),
             remoteBtn.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
-            remoteBtn.widthAnchor.constraint(equalToConstant: 28),
-            remoteBtn.heightAnchor.constraint(equalToConstant: 28),
+            remoteBtn.widthAnchor.constraint(equalToConstant: 26),
+            remoteBtn.heightAnchor.constraint(equalToConstant: 22),
         ])
+    }
+
+    /// Native-style sidebar footer button: borderless SF Symbol, subtle hover
+    /// fill, accent tint when "on". Mirrors the look of Finder / Notes / Mail
+    /// status-bar buttons so all three footer controls read as a single group.
+    private func makeFooterIconButton(symbol: String, tooltip: String, action: Selector) -> NSButton {
+        let btn = FooterIconButton()
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.bezelStyle = .texturedRounded
+        btn.isBordered = false
+        btn.title = ""
+        btn.imagePosition = .imageOnly
+        let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+        btn.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)?
+            .withSymbolConfiguration(cfg)
+        btn.contentTintColor = ClomeMacColor.textSecondary
+        btn.toolTip = tooltip
+        btn.target = self
+        btn.action = action
+        btn.wantsLayer = true
+        btn.layer?.cornerRadius = 5
+        btn.layer?.cornerCurve = .continuous
+        return btn
     }
 
     private func makeNavButton(symbol: String, action: Selector?) -> NSButton {
@@ -303,7 +319,13 @@ class SidebarView: NSView {
         btn.title = ""
         let cfg = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
         btn.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
-        btn.contentTintColor = NSColor(white: 1.0, alpha: 0.9)
+        btn.contentTintColor = ClomeMacColor.textSecondary
+        btn.wantsLayer = true
+        btn.layer?.cornerRadius = ClomeMacMetric.compactRadius
+        btn.layer?.cornerCurve = .continuous
+        btn.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
+        btn.layer?.borderWidth = 1
+        btn.layer?.borderColor = ClomeMacColor.border.cgColor
         if let action {
             btn.target = self
             btn.action = action
@@ -318,6 +340,10 @@ class SidebarView: NSView {
         NotificationCenter.default.addObserver(self, selector: #selector(onTerminalFocused(_:)), name: .terminalSurfaceFocused, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(onRemoteClientConnected(_:)), name: .remoteClientConnected, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(onRemoteClientDisconnected(_:)), name: .remoteClientDisconnected, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(onRemotePairingStateChanged(_:)), name: .remotePairingStarted, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(onRemotePairingStateChanged(_:)), name: .remotePairingStopped, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(onRemotePairingStateChanged(_:)), name: .remoteCloudStateChanged, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(onGitStatusChanged(_:)), name: .projectRootGitStatusChanged, object: nil)
     }
 
     @objc private func onNotificationChange(_ n: Notification) {
@@ -358,29 +384,47 @@ class SidebarView: NSView {
     // MARK: - Remote Connection
 
     @objc private func onRemoteClientConnected(_ n: Notification) {
-        isRemoteConnected = true
-        connectedDeviceName = n.userInfo?["deviceName"] as? String
-        updateRemoteButtonAppearance()
+        refreshRemoteState()
     }
 
     @objc private func onRemoteClientDisconnected(_ n: Notification) {
-        // Check if there are still other connected devices
-        let remaining = RemoteServer.shared.connectedDeviceCount
-        if remaining == 0 {
-            isRemoteConnected = false
-            connectedDeviceName = nil
-        } else {
-            connectedDeviceName = RemoteServer.shared.connectedDeviceNames.first
-        }
+        refreshRemoteState()
+    }
+
+    @objc private func onRemotePairingStateChanged(_ n: Notification) {
+        refreshRemoteState()
+    }
+
+    @objc private func onGitStatusChanged(_ n: Notification) {
+        guard let rootPath = n.object as? String,
+              let workspace = workspaceManager.activeWorkspace,
+              workspace.projectRoots.contains(where: { $0.path == rootPath }) else { return }
+        updateSourceControl()
+    }
+
+    private func refreshRemoteState() {
+        let server = RemoteServer.shared
+        isRemoteConnected = server.connectedDeviceCount > 0
+        connectedDeviceName = server.connectedDeviceNames.first
         updateRemoteButtonAppearance()
     }
 
     private func updateRemoteButtonAppearance() {
+        // Native footer buttons communicate state through tint only — no card
+        // background or border, matching the way Mail's status-bar buttons
+        // light up when something is active.
         if isRemoteConnected {
-            remoteBtn.contentTintColor = NSColor(red: 0.3, green: 0.85, blue: 0.6, alpha: 1.0) // green accent
+            remoteBtn.contentTintColor = ClomeMacColor.success
             remoteBtn.toolTip = connectedDeviceName ?? "Device connected"
+        } else if RemoteServer.shared.isPairingMode {
+            remoteBtn.contentTintColor = ClomeMacColor.accent
+            if let code = RemoteServer.shared.currentPairingCode {
+                remoteBtn.toolTip = "Pairing active: \(code)"
+            } else {
+                remoteBtn.toolTip = "Pairing active"
+            }
         } else {
-            remoteBtn.contentTintColor = NSColor(white: 1.0, alpha: 0.35)
+            remoteBtn.contentTintColor = ClomeMacColor.textSecondary
             remoteBtn.toolTip = "No device connected"
         }
     }
@@ -392,38 +436,52 @@ class SidebarView: NSView {
             return
         }
 
-        let statusText: String
-        if isRemoteConnected {
-            let names = RemoteServer.shared.connectedDeviceNames
-            let deviceList = names.isEmpty ? "Unknown device" : names.joined(separator: ", ")
-            statusText = "Connected: \(deviceList)"
-        } else {
-            statusText = "No device connected"
-        }
-
-        let label = NSTextField(labelWithString: statusText)
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 12, weight: .medium)
-        label.textColor = NSColor(white: 1.0, alpha: 0.85)
-        label.alignment = .center
-
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 40))
-        container.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            label.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 12),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -12),
-        ])
-
-        let vc = NSViewController()
-        vc.view = container
+        let server = RemoteServer.shared
+        let content = RemotePopoverContent(
+            connectedDeviceNames: server.connectedDeviceNames,
+            pairedDeviceCount: server.pairedDeviceCount,
+            currentPairingCode: server.currentPairingCode,
+            isPairingMode: server.isPairingMode,
+            cloudStatusSummary: server.cloudStatusSummary,
+            isCloudHostingEnabled: server.isCloudHostingEnabled,
+            onStartPairing: { [weak self] in
+                _ = RemoteServer.shared.startPairing()
+                self?.refreshRemoteState()
+                self?.remotePopover?.performClose(nil)
+                self?.remotePopover = nil
+            },
+            onStopPairing: { [weak self] in
+                RemoteServer.shared.stopPairing()
+                self?.refreshRemoteState()
+                self?.remotePopover?.performClose(nil)
+                self?.remotePopover = nil
+            },
+            onDisconnectAll: { [weak self] in
+                RemoteServer.shared.disconnectAllClients()
+                self?.refreshRemoteState()
+                self?.remotePopover?.performClose(nil)
+                self?.remotePopover = nil
+            },
+            onResetTrust: { [weak self] in
+                RemoteServer.shared.resetTrustedDevices()
+                self?.refreshRemoteState()
+                self?.remotePopover?.performClose(nil)
+                self?.remotePopover = nil
+            },
+            onToggleCloudHosting: { [weak self] enabled in
+                RemoteServer.shared.setCloudHostingEnabled(enabled)
+                self?.refreshRemoteState()
+                self?.remotePopover?.performClose(nil)
+                self?.remotePopover = nil
+            }
+        )
+        let hosting = NSHostingController(rootView: content)
 
         let popover = NSPopover()
-        popover.contentViewController = vc
-        popover.contentSize = NSSize(width: 200, height: 40)
+        popover.contentViewController = hosting
+        popover.contentSize = NSSize(width: 336, height: server.isPairingMode ? 430 : 392)
         popover.behavior = .transient
-        popover.appearance = NSAppearance(named: .darkAqua)
+        popover.appearance = NSAppearance(named: .aqua)
         popover.show(relativeTo: remoteBtn.bounds, of: remoteBtn, preferredEdge: .maxY)
         remotePopover = popover
     }
@@ -435,13 +493,13 @@ class SidebarView: NSView {
             sessionsRefreshTimer?.invalidate()
             sessionsRefreshTimer = nil
             sessionsPopover = nil
-            sessionsBtnIcon?.contentTintColor = NSColor(red: 0.85, green: 0.55, blue: 0.35, alpha: 1.0)
-            sessionsBtnLabel?.textColor = NSColor(white: 1.0, alpha: 0.65)
+            sessionsBtn.contentTintColor = ClomeMacColor.textSecondary
             return
         }
 
-        sessionsBtnIcon?.contentTintColor = NSColor.controlAccentColor
-        sessionsBtnLabel?.textColor = NSColor.controlAccentColor
+        // Tint accent while the popover is open — same affordance Mail uses
+        // for its "show unread" status button.
+        sessionsBtn.contentTintColor = ClomeMacColor.accent
 
         let listView = ClaudeSessionListView()
         listView.translatesAutoresizingMaskIntoConstraints = false
@@ -532,15 +590,13 @@ class SidebarView: NSView {
         let shelf = FileShelfView()
         shelf.translatesAutoresizingMaskIntoConstraints = false
         shelf.alphaValue = 0
-        addSubview(shelf)
+        // Add the shelf as a pure overlay above the existing sidebar content.
+        // We deliberately do NOT reroute the source-control section's bottom
+        // anchor through the shelf — doing so fights the workspace-list /
+        // explorer / source-control constraint chain and on hide leaves the
+        // sidebar in a half-collapsed state.
+        addSubview(shelf, positioned: .above, relativeTo: nil)
         fileShelfView = shelf
-
-        // Swap bottom constraint so source control connects to shelf instead of bottom bar
-        scrollViewBottomConstraint.isActive = false
-        if let sc = sourceControlSection {
-            scrollViewBottomConstraint = sc.bottomAnchor.constraint(lessThanOrEqualTo: shelf.topAnchor)
-        }
-        scrollViewBottomConstraint.isActive = true
 
         NSLayoutConstraint.activate([
             shelf.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -558,21 +614,15 @@ class SidebarView: NSView {
     private func hideFileShelf() {
         guard let shelf = fileShelfView else { return }
         isShelfVisible = false
+        fileShelfView = nil
         shelfBtn.contentTintColor = NSColor(white: 1.0, alpha: 0.9)
 
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.15
             shelf.animator().alphaValue = 0
-        }, completionHandler: { [weak self] in
-            guard let self else { return }
+        }, completionHandler: {
             shelf.cleanup()
             shelf.removeFromSuperview()
-            self.fileShelfView = nil
-            self.scrollViewBottomConstraint.isActive = false
-            if let sc = self.sourceControlSection {
-                self.scrollViewBottomConstraint = sc.bottomAnchor.constraint(lessThanOrEqualTo: self.bottomBar.topAnchor)
-            }
-            self.scrollViewBottomConstraint.isActive = true
         })
     }
 
@@ -599,6 +649,18 @@ class SidebarView: NSView {
 
     private var needsReloadAfterResize = false
 
+    /// Show or hide the file-explorer + source-control chrome as a single unit.
+    /// We collapse the explorer's height to 0 (instead of leaving a stale fixed
+    /// height behind a hidden view) so the workspace list expands to fill the
+    /// reclaimed space cleanly.
+    private func setProjectChromeVisible(_ visible: Bool) {
+        multiRootExplorer?.isHidden = !visible
+        explorerResizeHandle?.isHidden = !visible
+        chromeSeparator?.isHidden = !visible
+        sourceControlSection?.isHidden = !visible
+        explorerHeightConstraint?.constant = visible ? explorerHeight : 0
+    }
+
     func reloadWorkspaces() {
         // Cancel any pending coalesced reload to avoid double-reload
         reloadScheduled = false
@@ -618,8 +680,10 @@ class SidebarView: NSView {
         workspaceSwitcher?.update()
 
         // Update file explorer with project roots from active workspace
+        let activeRoots: [ProjectRoot]
         if let workspace = workspaceManager.activeWorkspace {
-            multiRootExplorer?.setProjectRoots(workspace.projectRoots)
+            activeRoots = workspace.projectRoots
+            multiRootExplorer?.setProjectRoots(activeRoots)
             // Update active file highlight from the current editor tab
             if let activeTab = workspace.activeTab, let editor = activeTab.view as? EditorPanel {
                 multiRootExplorer?.activeFilePath = editor.filePath
@@ -627,8 +691,17 @@ class SidebarView: NSView {
                 multiRootExplorer?.activeFilePath = nil
             }
         } else {
+            activeRoots = []
             multiRootExplorer?.setProjectRoots([])
         }
+        // Hide the explorer / source-control chrome entirely until at least one
+        // folder has been opened. An empty file tree and an empty "Source
+        // Control" section just add visual noise to the welcome state.
+        setProjectChromeVisible(!activeRoots.isEmpty)
+        // Refresh git status so the Source Control section is in sync with the
+        // active workspace on every reload (workspace switch, root added, etc).
+        for root in activeRoots { root.refreshGitStatus() }
+        updateSourceControl()
 
         // Auto-expand all workspaces on first load only
         if !hasAutoExpanded {
@@ -861,7 +934,7 @@ class SidebarView: NSView {
                         splitHeader.trailingAnchor.constraint(equalTo: tabsStack.trailingAnchor, constant: -2).isActive = true
 
                         // ── Pane group (collapsible) ──
-                        if !isSplitCollapsed && isTabActive {
+                        if !isSplitCollapsed {
                             let splitGroup = NSView()
                             splitGroup.translatesAutoresizingMaskIntoConstraints = false
                             splitGroup.wantsLayer = true
@@ -958,17 +1031,28 @@ class SidebarView: NSView {
                         let tabRow = SidebarRow(height: 32)
                         let tabCloseBtn = NSButton()
                         tabRow.configure { view in
-                            let tc = isTabActive ? NSColor(white: 0.95, alpha: 1.0) : NSColor(white: 0.50, alpha: 1.0)
+                            // One palette across every tab type. Inactive labels were sitting
+                            // at white(0.50) which read as muted-grey on the sidebar fill;
+                            // bumped to 0.72 so Terminal / Browser / Flow / Editor titles all
+                            // share the same legibility level.
+                            let tc: NSColor = isTabActive
+                                ? NSColor.white
+                                : NSColor(white: 0.72, alpha: 1.0)
 
                             let icon = NSImageView()
                             if let favicon = tab.favicon {
                                 icon.image = favicon
                                 icon.imageScaling = .scaleProportionallyDown
                             } else {
-                                let iconCfg = NSImage.SymbolConfiguration(pointSize: 13, weight: isTabActive ? .semibold : .regular)
+                                // Use a single point size + weight for every tab type so
+                                // Terminal / Browser / Flow / Editor icons read at the same
+                                // visual weight. When the row is active the icon sits on a
+                                // blue fill, so tint with white (not the accent colour, which
+                                // would vanish into the background).
+                                let iconCfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
                                 let iconName = (tab.view as? TerminalSurface)?.programIcon ?? tab.type.icon
                                 icon.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
-                                icon.contentTintColor = isTabActive ? NSColor.controlAccentColor : tc
+                                icon.contentTintColor = tc
                                 icon.imageScaling = .scaleProportionallyDown
                             }
                             view.addSub(icon, leading: 14, centerY: true, width: 16, height: 16)
@@ -1724,8 +1808,7 @@ extension SidebarView: NSPopoverDelegate {
         sessionsRefreshTimer?.invalidate()
         sessionsRefreshTimer = nil
         sessionsPopover = nil
-        sessionsBtnIcon?.contentTintColor = NSColor(red: 0.85, green: 0.55, blue: 0.35, alpha: 1.0)
-        sessionsBtnLabel?.textColor = NSColor(white: 1.0, alpha: 0.65)
+        sessionsBtn.contentTintColor = ClomeMacColor.textSecondary
     }
 }
 
@@ -1773,6 +1856,41 @@ extension SidebarView: MultiRootExplorerDelegate {
 }
 
 // MARK: - Clickable Card View (wraps a card view, forwards clicks without eating button clicks)
+
+/// Borderless icon button for the sidebar footer. Paints a subtle hover fill
+/// (≈ 6% white) and a slightly darker pressed fill, matching the affordance
+/// AppKit gives system source-list status buttons.
+class FooterIconButton: NSButton {
+    private var isHovered = false
+    private var isPressed = false
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach { removeTrackingArea($0) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self
+        ))
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovered = true; refreshFill() }
+    override func mouseExited(with event: NSEvent)  { isHovered = false; refreshFill() }
+
+    override func mouseDown(with event: NSEvent) {
+        isPressed = true; refreshFill()
+        super.mouseDown(with: event)
+        isPressed = false; refreshFill()
+    }
+
+    private func refreshFill() {
+        let alpha: CGFloat
+        if isPressed      { alpha = 0.12 }
+        else if isHovered { alpha = 0.06 }
+        else              { alpha = 0.0  }
+        layer?.backgroundColor = NSColor(white: 1.0, alpha: alpha).cgColor
+    }
+}
 
 class ClickableCardView: NSView {
     var onClick: (() -> Void)?
@@ -2208,4 +2326,246 @@ class OpaqueCardView: NSView {
 
 class FlippedClipView: NSClipView {
     override var isFlipped: Bool { true }
+}
+
+private struct RemotePopoverContent: View {
+    let connectedDeviceNames: [String]
+    let pairedDeviceCount: Int
+    let currentPairingCode: String?
+    let isPairingMode: Bool
+    let cloudStatusSummary: String
+    let isCloudHostingEnabled: Bool
+    let onStartPairing: () -> Void
+    let onStopPairing: () -> Void
+    let onDisconnectAll: () -> Void
+    let onResetTrust: () -> Void
+    let onToggleCloudHosting: (Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(elevatedSurface)
+                    Image(systemName: "iphone.gen3.radiowaves.left.and.right")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(accent)
+                }
+                .frame(width: 42, height: 42)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Remote Center")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(textPrimary)
+                    Text(statusText)
+                        .font(.system(size: 12))
+                        .foregroundStyle(textSecondary)
+                }
+
+                Spacer(minLength: 8)
+
+                Text(statusBadge)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(statusBadgeColor)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(statusBadgeColor.opacity(0.14), in: Capsule())
+            }
+
+            if let currentPairingCode, isPairingMode {
+                remoteCard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        label("Pairing Code")
+                        Text(currentPairingCode)
+                            .font(.system(size: 32, weight: .bold, design: .monospaced))
+                            .foregroundStyle(textPrimary)
+                        Text("Open Clome Flow on iPhone and enter this code.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(textSecondary)
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                remoteStat(label: "Connected", value: "\(connectedDeviceNames.count)")
+                remoteStat(label: "Trusted", value: "\(pairedDeviceCount)")
+            }
+
+            if !connectedDeviceNames.isEmpty {
+                remoteCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        label("Connected Devices")
+                        ForEach(connectedDeviceNames, id: \.self) { device in
+                            HStack(spacing: 10) {
+                                Image(systemName: "iphone")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(accent)
+                                Text(device)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(textPrimary)
+                                Spacer()
+                            }
+                        }
+                    }
+                }
+            }
+
+            remoteCard {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        label("Remote Anywhere")
+                        Spacer()
+                        Text(isCloudHostingEnabled ? "On" : "Off")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(isCloudHostingEnabled ? success : textTertiary)
+                    }
+                    Text(cloudStatusSummary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(textSecondary)
+                }
+            }
+
+            VStack(spacing: 8) {
+                actionButton(
+                    title: isPairingMode ? "Refresh Pairing Code" : "Start Pairing",
+                    systemImage: "link.badge.plus",
+                    tint: accent,
+                    isPrimary: true,
+                    action: onStartPairing
+                )
+
+                if isPairingMode {
+                    actionButton(
+                        title: "Stop Pairing",
+                        systemImage: "xmark",
+                        tint: textSecondary,
+                        action: onStopPairing
+                    )
+                }
+
+                actionButton(
+                    title: isCloudHostingEnabled ? "Pause Remote Anywhere" : "Enable Remote Anywhere",
+                    systemImage: isCloudHostingEnabled ? "pause.circle" : "bolt.horizontal.circle",
+                    tint: textSecondary,
+                    action: { onToggleCloudHosting(!isCloudHostingEnabled) }
+                )
+
+                actionButton(
+                    title: "Disconnect All Clients",
+                    systemImage: "iphone.slash",
+                    tint: warning,
+                    action: onDisconnectAll
+                )
+
+                actionButton(
+                    title: "Reset Trusted Devices",
+                    systemImage: "trash",
+                    tint: error,
+                    action: onResetTrust
+                )
+            }
+        }
+        .padding(18)
+        .frame(width: 336, alignment: .leading)
+        .background(windowBackground)
+    }
+
+    private var statusText: String {
+        if !connectedDeviceNames.isEmpty {
+            return connectedDeviceNames.joined(separator: ", ")
+        }
+        if isPairingMode {
+            return "Ready to pair a nearby iPhone"
+        }
+        return "No active iPhone session"
+    }
+
+    private var statusBadge: String {
+        if !connectedDeviceNames.isEmpty { return "Connected" }
+        if isPairingMode { return "Pairing" }
+        return "Idle"
+    }
+
+    private var statusBadgeColor: Color {
+        if !connectedDeviceNames.isEmpty { return success }
+        if isPairingMode { return accent }
+        return textTertiary
+    }
+
+    private func remoteStat(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            self.label(label)
+            Text(value)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(textPrimary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(elevatedSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(border, lineWidth: 1)
+        )
+    }
+
+    private func actionButton(
+        title: String,
+        systemImage: String,
+        tint: Color,
+        isPrimary: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+            }
+            .foregroundStyle(isPrimary ? textOnAccent : tint)
+            .padding(.horizontal, 14)
+            .frame(height: 38)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(isPrimary ? tint : elevatedSurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(isPrimary ? tint.opacity(0.18) : border, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func remoteCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 0, content: content)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(border, lineWidth: 1)
+            )
+    }
+
+    private func label(_ value: String) -> some View {
+        Text(value.uppercased())
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .tracking(1.4)
+            .foregroundStyle(textTertiary)
+    }
+
+    private var windowBackground: Color { Color(nsColor: ClomeMacColor.windowBackground) }
+    private var surface: Color { Color(nsColor: ClomeMacColor.chromeSurface) }
+    private var elevatedSurface: Color { Color(nsColor: ClomeMacColor.elevatedSurface) }
+    private var border: Color { Color(nsColor: ClomeMacColor.border) }
+    private var textPrimary: Color { Color(nsColor: ClomeMacColor.textPrimary) }
+    private var textSecondary: Color { Color(nsColor: ClomeMacColor.textSecondary) }
+    private var textTertiary: Color { Color(nsColor: ClomeMacColor.textTertiary) }
+    private var accent: Color { Color(nsColor: ClomeMacColor.accent) }
+    private var success: Color { Color(nsColor: ClomeMacColor.success) }
+    private var warning: Color { Color(nsColor: ClomeMacColor.warning) }
+    private var error: Color { Color(nsColor: ClomeMacColor.error) }
+    private var textOnAccent: Color { Color.white }
 }

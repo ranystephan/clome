@@ -8,6 +8,12 @@ import Security
 // Configure Firebase before anything else can access Auth.auth().
 if Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist") != nil {
     FirebaseApp.configure()
+    do {
+        try Auth.auth().useUserAccessGroup(nil)
+        NSLog("[FlowAuth] Firebase Auth configured to use the private keychain access group")
+    } catch {
+        NSLog("[FlowAuth] Failed to reset Firebase Auth access group: \(error)")
+    }
 } else {
     print("[Clome] GoogleService-Info.plist not found — skipping Firebase configuration")
 }
@@ -44,16 +50,12 @@ if !UserDefaults.standard.bool(forKey: signingMigrationKey) {
 // GIDSignIn creates a GTMKeychainStore WITHOUT the Data Protection keychain flag,
 // so it falls back to the legacy macOS keychain which is blocked by Hardened Runtime.
 // Replace the internal keychain store with one that uses the Data Protection keychain.
-do {
-    let fixedStore = KeychainStore(
-        itemName: "auth",
-        keychainAttributes: [KeychainAttribute.useDataProtectionKeychain]
-    )
-    GIDSignIn.sharedInstance.setValue(fixedStore, forKey: "keychainStore")
-    NSLog("[FlowAuth] ✓ Patched GIDSignIn keychain store with Data Protection flag")
-} catch {
-    NSLog("[FlowAuth] ✗ Failed to patch GIDSignIn keychain: \(error)")
-}
+let fixedStore = KeychainStore(
+    itemName: "auth",
+    keychainAttributes: [KeychainAttribute.useDataProtectionKeychain]
+)
+GIDSignIn.sharedInstance.setValue(fixedStore, forKey: "keychainStore")
+NSLog("[FlowAuth] Patched GIDSignIn keychain store with Data Protection flag")
 
 let app = NSApplication.shared
 

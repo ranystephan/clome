@@ -52,10 +52,15 @@ class FileAccessManager {
     /// Returns true if access was granted.
     @discardableResult
     func requestAccessIfNeeded(for directoryPath: String) -> Bool {
-        if grantedDirectories.contains(directoryPath) { return true }
-
         // Try resolving existing bookmark first
         if let data = bookmarks[directoryPath], resolveBookmark(data: data, forPath: directoryPath) {
+            return true
+        }
+
+        // If we only have transient TCC access, still escalate to NSOpenPanel so we can
+        // create a durable bookmark and stop future rebuilds/terminal launches from
+        // falling back to the system permission sheet again.
+        if hasPersistentAccess(for: directoryPath) {
             return true
         }
 
@@ -108,22 +113,11 @@ class FileAccessManager {
 
     /// Check if a path is within a TCC-protected directory.
     func isProtectedPath(_ path: String) -> Bool {
-        let home = NSHomeDirectory()
-        let protectedPrefixes = [
-            "\(home)/Desktop",
-            "\(home)/Documents",
-            "\(home)/Downloads",
-        ]
-        return protectedPrefixes.contains { path.hasPrefix($0) }
+        protectedDirectory(containing: path) != nil
     }
 
-    /// Check if we already have access to a path's parent TCC-protected directory.
-    /// Returns true if access is already granted (via bookmark or TCC consent).
-    /// Does NOT show any prompts — use `requestAccessIfNeeded(for:)` for that.
-    @discardableResult
-    func ensureAccess(to path: String) -> Bool {
-        guard isProtectedPath(path) else { return true }
-
+    /// Returns the top-level TCC-protected directory that contains the path.
+    func protectedDirectory(containing path: String) -> String? {
         let home = NSHomeDirectory()
         let protectedDirs = [
             "\(home)/Desktop",
@@ -131,13 +125,26 @@ class FileAccessManager {
             "\(home)/Downloads",
         ]
 
-        for dir in protectedDirs {
-            if path.hasPrefix(dir) {
-                return accessDirectory(dir)
-            }
+        return protectedDirs.first { dir in
+            path == dir || path.hasPrefix(dir + "/")
         }
+    }
 
-        return true
+    /// Check if we already have access to a path's parent TCC-protected directory.
+    /// Returns true if access is already granted (via bookmark or TCC consent).
+    /// Does NOT show any prompts — use `requestAccessIfNeeded(for:)` for that.
+    @discardableResult
+    func ensureAccess(to path: String) -> Bool {
+        guard let dir = protectedDirectory(containing: path) else { return true }
+        return accessDirectory(dir)
+    }
+
+    /// Prompts once for a durable bookmark when a terminal/project is about to use a
+    /// protected path as its working directory. Returns false if the user declines.
+    @discardableResult
+    func requestPersistentAccess(for path: String) -> Bool {
+        guard let dir = protectedDirectory(containing: path) else { return true }
+        return requestAccessIfNeeded(for: dir)
     }
 
     // MARK: - Probing (no TCC prompt)
@@ -205,6 +212,10 @@ class FileAccessManager {
             }
             print("[FileAccessManager] Failed to create security-scoped bookmark for \(path): \(error)")
         }
+    }
+
+    private func hasPersistentAccess(for path: String) -> Bool {
+        bookmarks[path] != nil || activeSecurityScopedURLs[path] != nil
     }
 
     private func persistBookmarks() {

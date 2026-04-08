@@ -8,6 +8,17 @@ import ApplicationServices
 @MainActor
 final class SystemPromptMonitor {
 
+    private struct PromptTarget {
+        let sourceApp: String
+        let ownerPID: pid_t?
+        let buttons: [String]
+    }
+
+    private struct DetectedPrompt {
+        let info: SystemPromptInfo
+        let target: PromptTarget
+    }
+
     // MARK: - Callbacks
 
     /// Called when a new system prompt is detected.
@@ -17,6 +28,7 @@ final class SystemPromptMonitor {
 
     private var pollTimer: Timer?
     private var knownPromptIds: Set<String> = []
+    private var promptTargets: [String: PromptTarget] = [:]
     private var isRunning = false
 
     // MARK: - Lifecycle
@@ -71,7 +83,7 @@ final class SystemPromptMonitor {
         // Do the scanning off the main thread
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            var detected: [SystemPromptInfo] = []
+            var detected: [DetectedPrompt] = []
 
             if hasTrust {
                 // Full AX scanning — reads dialog content and buttons
@@ -99,20 +111,20 @@ final class SystemPromptMonitor {
 
     // Background-safe scan methods (nonisolated, return collected prompts)
 
-    private nonisolated func scanOwnAppDialogsSync(pid: pid_t) -> [SystemPromptInfo] {
+    private nonisolated func scanOwnAppDialogsSync(pid: pid_t) -> [DetectedPrompt] {
         let app = AXUIElementCreateApplication(pid)
         var windowsRef: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windowsRef)
         guard result == .success, let windows = windowsRef as? [AXUIElement] else { return [] }
 
-        var prompts: [SystemPromptInfo] = []
+        var prompts: [DetectedPrompt] = []
         for window in windows {
             var subroleRef: CFTypeRef?
             AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &subroleRef)
             let subrole = subroleRef as? String ?? ""
 
             if subrole == "AXDialog" || subrole == "AXSheet" || subrole == "AXSystemDialog" {
-                if let prompt = extractPromptInfo(from: window, sourceApp: "Clome") {
+                if let prompt = extractPromptInfo(from: window, sourceApp: "Clome", ownerPID: pid) {
                     prompts.append(prompt)
                 }
             }
@@ -120,25 +132,25 @@ final class SystemPromptMonitor {
         return prompts
     }
 
-    private nonisolated func scanAppDialogsSync(pid: pid_t, appName: String) -> [SystemPromptInfo] {
+    private nonisolated func scanAppDialogsSync(pid: pid_t, appName: String) -> [DetectedPrompt] {
         let app = AXUIElementCreateApplication(pid)
         var windowsRef: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windowsRef)
         guard result == .success, let windows = windowsRef as? [AXUIElement] else { return [] }
 
-        var prompts: [SystemPromptInfo] = []
+        var prompts: [DetectedPrompt] = []
         for window in windows {
-            if let prompt = extractPromptInfo(from: window, sourceApp: appName) {
+            if let prompt = extractPromptInfo(from: window, sourceApp: appName, ownerPID: pid) {
                 prompts.append(prompt)
             }
         }
         return prompts
     }
 
-    private nonisolated func scanCGWindowAlertsSync() -> [SystemPromptInfo] {
+    private nonisolated func scanCGWindowAlertsSync() -> [DetectedPrompt] {
         guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return [] }
 
-        var prompts: [SystemPromptInfo] = []
+        var prompts: [DetectedPrompt] = []
         for window in windowList {
             guard let layer = window[kCGWindowLayer as String] as? Int,
                   let ownerName = window[kCGWindowOwnerName as String] as? String,
@@ -159,7 +171,7 @@ final class SystemPromptMonitor {
             let result = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windowsRef)
             if result == .success, let axWindows = windowsRef as? [AXUIElement] {
                 for axWindow in axWindows {
-                    if let prompt = extractPromptInfo(from: axWindow, sourceApp: ownerName) {
+                    if let prompt = extractPromptInfo(from: axWindow, sourceApp: ownerName, ownerPID: ownerPID) {
                         prompts.append(prompt)
                     }
                 }
@@ -170,14 +182,18 @@ final class SystemPromptMonitor {
                 let promptId = "cg-\(ownerName)-\(ownerPID)-\(windowName.hashValue)"
                 let title = windowName.isEmpty ? "System Permission" : windowName
                 let message = "A system dialog is waiting on your Mac. Tap a button to respond, or handle it directly on the Mac."
-                prompts.append(SystemPromptInfo(
+                let info = SystemPromptInfo(
                     id: promptId,
                     title: title,
                     message: message,
-                    buttons: ["Allow", "Don't Allow"],
+                    buttons: ["Don't Allow", "Allow"],
                     sourceApp: ownerName,
                     promptType: .generic,
                     timestamp: .now
+                )
+                prompts.append(DetectedPrompt(
+                    info: info,
+                    target: PromptTarget(sourceApp: ownerName, ownerPID: ownerPID, buttons: info.buttons)
                 ))
             }
         }
@@ -186,7 +202,7 @@ final class SystemPromptMonitor {
 
     // MARK: - AX Element Parsing
 
-    private nonisolated func extractPromptInfo(from window: AXUIElement, sourceApp: String) -> SystemPromptInfo? {
+    private nonisolated func extractPromptInfo(from window: AXUIElement, sourceApp: String, ownerPID: pid_t) -> DetectedPrompt? {
         // Get window title
         var titleRef: CFTypeRef?
         AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
@@ -205,20 +221,26 @@ final class SystemPromptMonitor {
         // Need at least some text and at least one button to be a prompt
         guard !texts.isEmpty, !buttons.isEmpty else { return nil }
 
-        let message = texts.joined(separator: "\n")
+        let uniqueTexts = orderedUnique(texts)
+        let uniqueButtons = orderedUnique(buttons)
+        let message = uniqueTexts.joined(separator: "\n")
         let promptId = "\(sourceApp)-\(message.hashValue)"
 
         // Classify the prompt type
         let promptType = classifyPrompt(message: message, title: title)
 
-        return SystemPromptInfo(
+        let info = SystemPromptInfo(
             id: promptId,
             title: title.isEmpty ? sourceApp : title,
             message: message,
-            buttons: buttons,
+            buttons: uniqueButtons,
             sourceApp: sourceApp,
             promptType: promptType,
             timestamp: .now
+        )
+        return DetectedPrompt(
+            info: info,
+            target: PromptTarget(sourceApp: sourceApp, ownerPID: ownerPID, buttons: uniqueButtons)
         )
     }
 
@@ -262,6 +284,16 @@ final class SystemPromptMonitor {
         }
     }
 
+    private nonisolated func orderedUnique<T: Hashable>(_ values: [T]) -> [T] {
+        var seen = Set<T>()
+        var unique: [T] = []
+        for value in values {
+            guard seen.insert(value).inserted else { continue }
+            unique.append(value)
+        }
+        return unique
+    }
+
     private nonisolated func classifyPrompt(message: String, title: String) -> SystemPromptInfo.PromptType {
         let lower = (message + " " + title).lowercased()
         if lower.contains("desktop") || lower.contains("documents") || lower.contains("downloads") ||
@@ -282,7 +314,9 @@ final class SystemPromptMonitor {
 
     // MARK: - Prompt Reporting
 
-    private func reportPrompt(_ prompt: SystemPromptInfo) {
+    private func reportPrompt(_ detectedPrompt: DetectedPrompt) {
+        let prompt = detectedPrompt.info
+        promptTargets[prompt.id] = detectedPrompt.target
         guard !knownPromptIds.contains(prompt.id) else { return }
         knownPromptIds.insert(prompt.id)
         print("[SystemPromptMonitor] Detected system prompt: \(prompt.title) - \(prompt.message.prefix(80))")
@@ -293,6 +327,7 @@ final class SystemPromptMonitor {
         let promptId = prompt.id
         DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
             self?.knownPromptIds.remove(promptId)
+            self?.promptTargets.removeValue(forKey: promptId)
         }
     }
 
@@ -306,60 +341,72 @@ final class SystemPromptMonitor {
 
         let buttonLabel = response.selectedButton
         let buttonIndex = response.buttonIndex
+        let target = promptTargets[response.promptId]
 
         // Run AppleScript on a background queue to avoid blocking @MainActor.
         // NSAppleScript.executeAndReturnError can take several seconds for system dialogs,
         // and blocking the main thread prevents ping/pong keepalive from working.
         DispatchQueue.global(qos: .userInitiated).async {
-            self.clickButtonViaAppleScript(buttonLabel: buttonLabel)
+            self.clickButtonViaAppleScript(buttonLabel: buttonLabel, buttonIndex: buttonIndex, target: target)
 
             // Fallback: try direct AX approach on main thread
             Task { @MainActor in
-                self.clickButtonViaAccessibility(buttonLabel: buttonLabel, buttonIndex: buttonIndex)
+                self.clickButtonViaAccessibility(buttonLabel: buttonLabel, buttonIndex: buttonIndex, target: target)
             }
         }
     }
 
     /// Runs on a background thread — NOT @MainActor.
-    private nonisolated func clickButtonViaAppleScript(buttonLabel: String) {
-        // Try clicking the button in the frontmost dialog
+    private nonisolated func clickButtonViaAppleScript(buttonLabel: String, buttonIndex: Int, target: PromptTarget?) {
+        let escapedLabel = appleScriptEscaped(buttonLabel)
+        let buttonNumber = max(buttonIndex + 1, 1)
+        let targetSource = target?.sourceApp ?? ""
+        let escapedTargetSource = appleScriptEscaped(targetSource)
         let script = """
+        on clickInContainer(containerRef, targetLabel, targetIndex)
+            try
+                click button targetLabel of containerRef
+                return true
+            end try
+            try
+                click button targetIndex of containerRef
+                return true
+            end try
+            return false
+        end clickInContainer
+
+        on clickInProcess(processName, targetLabel, targetIndex)
+            tell application "System Events"
+                if not (exists application process processName) then return false
+                tell application process processName
+                    repeat with w in every window
+                        if clickInContainer(w, targetLabel, targetIndex) then return true
+                        try
+                            if clickInContainer(sheet 1 of w, targetLabel, targetIndex) then return true
+                        end try
+                    end repeat
+                end tell
+            end tell
+            return false
+        end clickInProcess
+
         tell application "System Events"
             try
-                -- Try clicking in the frontmost app's dialog
+                if "\(escapedTargetSource)" is not equal to "" then
+                    if clickInProcess("\(escapedTargetSource)", "\(escapedLabel)", \(buttonNumber)) then return "clicked-target"
+                end if
+            end try
+            try
                 set frontApp to name of first application process whose frontmost is true
-                tell application process frontApp
-                    set dialogWindows to every window whose subrole is "AXDialog" or subrole is "AXSheet"
-                    repeat with w in dialogWindows
-                        try
-                            click button "\(buttonLabel)" of w
-                            return "clicked"
-                        end try
-                    end repeat
-                    -- Also try sheets
-                    repeat with w in every window
-                        try
-                            click button "\(buttonLabel)" of sheet 1 of w
-                            return "clicked"
-                        end try
-                    end repeat
-                end tell
+                if clickInProcess(frontApp, "\(escapedLabel)", \(buttonNumber)) then return "clicked-front"
             end try
-            -- Try UserNotificationCenter dialogs
-            try
-                tell application process "UserNotificationCenter"
-                    click button "\(buttonLabel)" of window 1
-                    return "clicked"
-                end tell
-            end try
-            -- Try CoreServicesUIAgent
-            try
-                tell application process "CoreServicesUIAgent"
-                    click button "\(buttonLabel)" of window 1
-                    return "clicked"
-                end tell
-            end try
+            if clickInProcess("Clome", "\(escapedLabel)", \(buttonNumber)) then return "clicked-clome"
+            if clickInProcess("CoreServicesUIAgent", "\(escapedLabel)", \(buttonNumber)) then return "clicked-core"
+            if clickInProcess("SecurityAgent", "\(escapedLabel)", \(buttonNumber)) then return "clicked-security"
+            if clickInProcess("UserNotificationCenter", "\(escapedLabel)", \(buttonNumber)) then return "clicked-unc"
+            if clickInProcess("System Settings", "\(escapedLabel)", \(buttonNumber)) then return "clicked-settings"
         end tell
+        return "not_found"
         """
 
         var error: NSDictionary?
@@ -373,61 +420,93 @@ final class SystemPromptMonitor {
         }
     }
 
-    private func clickButtonViaAccessibility(buttonLabel: String, buttonIndex: Int) {
-        // Scan all apps for a button matching the label
+    private func clickButtonViaAccessibility(buttonLabel: String, buttonIndex: Int, target: PromptTarget?) {
+        if let ownerPID = target?.ownerPID,
+           clickButtonInApplication(pid: ownerPID, label: buttonLabel, index: buttonIndex) {
+            print("[SystemPromptMonitor] Clicked button '\(buttonLabel)' via Accessibility for pid \(ownerPID)")
+            return
+        }
+
         guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else { return }
 
-        let systemProcesses = Set(["UserNotificationCenter", "SecurityAgent", "CoreServicesUIAgent", "Clome"])
-        for window in windowList {
+        let systemProcesses = Set(["UserNotificationCenter", "SecurityAgent", "CoreServicesUIAgent", "Clome", "System Settings"])
+        let pids: [pid_t] = orderedUnique(windowList.compactMap { window in
             guard let ownerName = window[kCGWindowOwnerName as String] as? String,
                   let ownerPID = window[kCGWindowOwnerPID as String] as? pid_t,
-                  systemProcesses.contains(ownerName) else { continue }
+                  systemProcesses.contains(ownerName) else { return nil }
+            return ownerPID
+        })
 
-            let app = AXUIElementCreateApplication(ownerPID)
-            var windowsRef: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-                  let axWindows = windowsRef as? [AXUIElement] else { continue }
-
-            for axWindow in axWindows {
-                if clickButton(in: axWindow, label: buttonLabel, index: buttonIndex) {
-                    print("[SystemPromptMonitor] Clicked button '\(buttonLabel)' via Accessibility")
-                    return
-                }
+        for pid in pids {
+            if clickButtonInApplication(pid: pid, label: buttonLabel, index: buttonIndex) {
+                print("[SystemPromptMonitor] Clicked button '\(buttonLabel)' via Accessibility")
+                return
             }
         }
     }
 
-    /// Recursively find and click a button in an AX element tree.
-    private func clickButton(in element: AXUIElement, label: String, index: Int, depth: Int = 0) -> Bool {
-        guard depth < 10 else { return false }
+    private func clickButtonInApplication(pid: pid_t, label: String, index: Int) -> Bool {
+        let app = AXUIElementCreateApplication(pid)
+        var windowsRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+              let axWindows = windowsRef as? [AXUIElement] else { return false }
 
-        var childrenRef: CFTypeRef?
-        AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
-        guard let children = childrenRef as? [AXUIElement] else { return false }
-
-        var buttonCount = 0
-        for child in children {
-            var roleRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(child, kAXRoleAttribute as CFString, &roleRef)
-            let role = roleRef as? String ?? ""
-
-            if role == "AXButton" {
-                var titleRef: CFTypeRef?
-                AXUIElementCopyAttributeValue(child, kAXTitleAttribute as CFString, &titleRef)
-                let title = titleRef as? String ?? ""
-
-                if title == label || buttonCount == index {
-                    AXUIElementPerformAction(child, kAXPressAction as CFString)
-                    return true
-                }
-                buttonCount += 1
-            }
-
-            // Recurse
-            if clickButton(in: child, label: label, index: index, depth: depth + 1) {
+        for axWindow in axWindows {
+            if clickButton(in: axWindow, label: label, index: index) {
                 return true
             }
         }
         return false
+    }
+
+    /// Collect all buttons in the AX tree and try exact-label match first, then index fallback.
+    private func clickButton(in element: AXUIElement, label: String, index: Int) -> Bool {
+        var buttons: [AXUIElement] = []
+        collectButtons(from: element, buttons: &buttons, depth: 0)
+        guard !buttons.isEmpty else { return false }
+
+        let normalizedLabel = normalizedButtonLabel(label)
+        if let button = buttons.first(where: { normalizedButtonLabel(buttonTitle(of: $0)) == normalizedLabel }) {
+            return AXUIElementPerformAction(button, kAXPressAction as CFString) == .success
+        }
+
+        guard buttons.indices.contains(index) else { return false }
+        return AXUIElementPerformAction(buttons[index], kAXPressAction as CFString) == .success
+    }
+
+    private nonisolated func collectButtons(from element: AXUIElement, buttons: inout [AXUIElement], depth: Int) {
+        guard depth < 10 else { return }
+
+        var roleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
+        if (roleRef as? String) == "AXButton" {
+            buttons.append(element)
+        }
+
+        var childrenRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
+        guard let children = childrenRef as? [AXUIElement] else { return }
+
+        for child in children {
+            collectButtons(from: child, buttons: &buttons, depth: depth + 1)
+        }
+    }
+
+    private nonisolated func buttonTitle(of element: AXUIElement) -> String {
+        var titleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &titleRef)
+        return titleRef as? String ?? ""
+    }
+
+    private nonisolated func normalizedButtonLabel(_ label: String) -> String {
+        label
+            .replacingOccurrences(of: "’", with: "'")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
+    private nonisolated func appleScriptEscaped(_ string: String) -> String {
+        string.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
     }
 }

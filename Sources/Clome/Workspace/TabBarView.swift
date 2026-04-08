@@ -15,14 +15,16 @@ class TabBarView: NSView {
     private var tabs: [TabItemView] = []
     private(set) var selectedIndex: Int = 0
 
-    private let barHeight: CGFloat = 34
-    private let bgColor = NSColor(red: 0.06, green: 0.06, blue: 0.075, alpha: 1.0)
-    private let borderColor = NSColor(white: 1.0, alpha: 0.06)
+    private let barHeight: CGFloat = 36
+    private let bgColor = ClomeMacColor.chromeSurface
+    private let borderColor = ClomeMacColor.border
 
     override init(frame: NSRect = .zero) {
         addButton = NSButton()
         super.init(frame: frame)
         wantsLayer = true
+        layer?.cornerRadius = ClomeMacMetric.panelRadius
+        layer?.cornerCurve = .continuous
         layer?.backgroundColor = bgColor.cgColor
         setupUI()
     }
@@ -45,7 +47,7 @@ class TabBarView: NSView {
         addSubview(scrollView)
 
         stackView.orientation = .horizontal
-        stackView.spacing = 1
+        stackView.spacing = 4
         stackView.alignment = .centerY
         stackView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -61,7 +63,11 @@ class TabBarView: NSView {
         addButton.title = ""
         let cfg = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
         addButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")?.withSymbolConfiguration(cfg)
-        addButton.contentTintColor = NSColor(white: 0.4, alpha: 1.0)
+        addButton.contentTintColor = ClomeMacColor.textSecondary
+        addButton.wantsLayer = true
+        addButton.layer?.cornerRadius = ClomeMacMetric.compactRadius
+        addButton.layer?.cornerCurve = .continuous
+        addButton.layer?.backgroundColor = ClomeMacColor.chromeSurfaceAlt.cgColor
         addButton.target = self
         addButton.action = #selector(addTabTapped)
         addSubview(addButton)
@@ -85,8 +91,8 @@ class TabBarView: NSView {
 
             addButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             addButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            addButton.widthAnchor.constraint(equalToConstant: 22),
-            addButton.heightAnchor.constraint(equalToConstant: 22),
+            addButton.widthAnchor.constraint(equalToConstant: 26),
+            addButton.heightAnchor.constraint(equalToConstant: 26),
 
             border.leadingAnchor.constraint(equalTo: leadingAnchor),
             border.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -157,9 +163,9 @@ class TabItemView: NSControl {
     private var iconView: NSImageView!
     private let hasCustomIcon: Bool
 
-    private let activeColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
+    private let activeColor = ClomeMacColor.elevatedSurface
     private let inactiveColor = NSColor.clear
-    private let hoverColor = NSColor(red: 0.08, green: 0.08, blue: 0.1, alpha: 1.0)
+    private let hoverColor = ClomeMacColor.chromeSurfaceAlt
 
     init(title: String, icon: NSImage? = nil, index: Int, isSelected: Bool) {
         self.index = index
@@ -168,11 +174,11 @@ class TabItemView: NSControl {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.cornerRadius = 6
+        layer?.cornerRadius = ClomeMacMetric.compactRadius
         layer?.cornerCurve = .continuous
         layer?.backgroundColor = isSelected ? activeColor.cgColor : inactiveColor.cgColor
 
-        let textColor = isSelected ? NSColor(white: 0.92, alpha: 1.0) : NSColor(white: 0.5, alpha: 1.0)
+        let textColor = isSelected ? ClomeMacColor.textPrimary : ClomeMacColor.textSecondary
 
         // Icon
         iconView = NSImageView()
@@ -189,7 +195,7 @@ class TabItemView: NSControl {
 
         label = NSTextField(labelWithString: title)
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 11, weight: isSelected ? .medium : .regular)
+        label.font = ClomeMacFont.captionMedium
         label.textColor = textColor
         label.lineBreakMode = .byTruncatingTail
         addSubview(label)
@@ -201,7 +207,7 @@ class TabItemView: NSControl {
         closeButton.title = ""
         let closeCfg = NSImage.SymbolConfiguration(pointSize: 8, weight: .bold)
         closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")?.withSymbolConfiguration(closeCfg)
-        closeButton.contentTintColor = NSColor(white: 0.35, alpha: 1.0)
+        closeButton.contentTintColor = ClomeMacColor.textTertiary
         closeButton.target = self
         closeButton.action = #selector(closeTapped)
         closeButton.alphaValue = isSelected ? 0.8 : 0.0
@@ -210,7 +216,7 @@ class TabItemView: NSControl {
         NSLayoutConstraint.activate([
             widthAnchor.constraint(greaterThanOrEqualToConstant: 100),
             widthAnchor.constraint(lessThanOrEqualToConstant: 200),
-            heightAnchor.constraint(equalToConstant: 28),
+            heightAnchor.constraint(equalToConstant: 30),
 
             iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -239,10 +245,10 @@ class TabItemView: NSControl {
     /// Update visual state without rebuilding the view.
     func updateSelectionState(_ selected: Bool) {
         isSelected = selected
-        let textColor = selected ? NSColor(white: 0.92, alpha: 1.0) : NSColor(white: 0.5, alpha: 1.0)
+        let textColor = selected ? ClomeMacColor.textPrimary : ClomeMacColor.textSecondary
         layer?.backgroundColor = selected ? activeColor.cgColor : inactiveColor.cgColor
         label.textColor = textColor
-        label.font = .systemFont(ofSize: 11, weight: selected ? .medium : .regular)
+        label.font = ClomeMacFont.captionMedium
         if !hasCustomIcon { iconView.contentTintColor = textColor }
         closeButton.alphaValue = selected ? 0.8 : 0.0
     }
