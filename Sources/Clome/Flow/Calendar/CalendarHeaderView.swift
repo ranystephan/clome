@@ -1,10 +1,6 @@
 import SwiftUI
 
-/// Top toolbar for the Flow calendar.
-///
-/// `CalendarHeaderView` is kept as a thin alias so that any older callers
-/// (like a CLI scripted launch) compile, but the canonical name is
-/// `CalendarToolbar`.
+/// Calendar toolbar. Preserved as `CalendarHeaderView` alias for compat.
 typealias CalendarHeaderView = CalendarToolbar
 
 struct CalendarToolbar: View {
@@ -17,71 +13,45 @@ struct CalendarToolbar: View {
 
     var body: some View {
         HStack(spacing: FlowTokens.spacingMD) {
-            // Nav cluster
+            // Left cluster: nav + today
             HStack(spacing: 4) {
-                navButton(systemImage: "chevron.left", help: "Previous") { step(by: -1) }
-                navButton(systemImage: "chevron.right", help: "Next") { step(by: 1) }
+                navButton("chevron.left") { step(by: -1) }
+                navButton("chevron.right") { step(by: 1) }
+                todayButton
+                    .padding(.leading, 2)
             }
 
-            Button {
-                withAnimation(.flowQuick) { dataManager.selectedDate = Date() }
-            } label: {
-                Text("Today")
-                    .flowFont(.callout)
-                    .foregroundColor(FlowTokens.textSecondary)
-                    .padding(.horizontal, FlowTokens.spacingMD)
-                    .frame(height: controlHeight)
-                    .flowControl()
-            }
-            .buttonStyle(.plain)
-            .help("Jump to today")
+            Spacer()
 
-            // Editorial date marker
+            // Center: tappable range label (opens date picker)
             Button { showDatePicker.toggle() } label: {
-                HStack(alignment: .firstTextBaseline, spacing: FlowTokens.spacingSM - 2) {
-                    Text(weekdayLabel)
-                        .flowFont(.caption)
-                        .foregroundColor(FlowTokens.textTertiary)
-                    Text(dayNumberLabel)
-                        .font(.system(size: 20, weight: .semibold))
+                HStack(spacing: FlowTokens.spacingSM) {
+                    Text(rangeLabel)
+                        .flowFont(.title3)
                         .foregroundColor(FlowTokens.textPrimary)
-                        .tracking(-0.3)
-                    Text(monthYearLabel)
-                        .flowFont(.caption)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
                         .foregroundColor(FlowTokens.textTertiary)
                 }
-                .padding(.horizontal, FlowTokens.spacingSM)
+                .padding(.horizontal, FlowTokens.spacingMD)
                 .frame(height: controlHeight)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .popover(isPresented: $showDatePicker, arrowEdge: .top) {
-                DatePicker(
-                    "",
-                    selection: $dataManager.selectedDate,
-                    displayedComponents: .date
-                )
-                .datePickerStyle(.graphical)
-                .labelsHidden()
-                .padding(FlowTokens.spacingMD)
-                .frame(width: FlowTokens.popoverWidth + 20)
+                DatePicker("", selection: $dataManager.selectedDate, displayedComponents: .date)
+                    .datePickerStyle(.graphical)
+                    .labelsHidden()
+                    .padding(FlowTokens.spacingMD)
+                    .frame(width: 280)
             }
 
             Spacer()
 
-            viewModeSegments
+            // Right cluster: view switcher + sidebar
+            viewModeSwitcher
 
-            Button {
-                withAnimation(.flowSpring) { showSidebar.toggle() }
-            } label: {
-                Image(systemName: "sidebar.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(showSidebar ? FlowTokens.textPrimary : FlowTokens.textTertiary)
-                    .frame(width: controlHeight, height: controlHeight)
-                    .flowControl(isActive: showSidebar)
-            }
-            .buttonStyle(.plain)
-            .help("Toggle agenda sidebar")
+            sidebarToggle
         }
         .padding(.horizontal, FlowTokens.spacingLG)
         .padding(.vertical, FlowTokens.spacingMD)
@@ -91,45 +61,55 @@ struct CalendarToolbar: View {
         }
     }
 
-    // MARK: - Bits
+    // MARK: - Pieces
 
-    private func navButton(systemImage: String, help: String, action: @escaping () -> Void) -> some View {
+    private func navButton(_ icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 10, weight: .semibold))
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(FlowTokens.textSecondary)
                 .frame(width: controlHeight, height: controlHeight)
                 .flowControl()
         }
         .buttonStyle(.plain)
-        .help(help)
     }
 
-    private var viewModeSegments: some View {
+    private var todayButton: some View {
+        Button {
+            withAnimation(.flowQuick) { dataManager.selectedDate = Date() }
+        } label: {
+            Text("Today")
+                .flowFont(.callout)
+                .foregroundColor(FlowTokens.textPrimary)
+                .padding(.horizontal, FlowTokens.spacingMD)
+                .frame(height: controlHeight)
+                .flowControl()
+        }
+        .buttonStyle(.plain)
+        .help("Jump to today")
+    }
+
+    private var viewModeSwitcher: some View {
         HStack(spacing: 2) {
             ForEach(CalendarViewMode.allCases, id: \.self) { mode in
+                let isActive = dataManager.viewMode == mode
                 Button {
                     withAnimation(.flowQuick) { dataManager.viewMode = mode }
                 } label: {
-                    Text(label(for: mode))
+                    Text(mode == .week ? "Week" : "Month")
                         .flowFont(.callout)
-                        .foregroundColor(dataManager.viewMode == mode ? FlowTokens.textPrimary : FlowTokens.textTertiary)
+                        .foregroundColor(isActive ? FlowTokens.textPrimary : FlowTokens.textTertiary)
                         .padding(.horizontal, FlowTokens.spacingMD)
                         .frame(height: 22)
                         .background {
-                            if dataManager.viewMode == mode {
+                            if isActive {
                                 RoundedRectangle(cornerRadius: FlowTokens.radiusControl, style: .continuous)
                                     .fill(FlowTokens.bg3)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: FlowTokens.radiusControl, style: .continuous)
-                                            .strokeBorder(FlowTokens.borderStrong, lineWidth: FlowTokens.hairline)
-                                    )
                             }
                         }
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(label(for: mode))
             }
         }
         .padding(2)
@@ -143,40 +123,55 @@ struct CalendarToolbar: View {
         )
     }
 
-    private func label(for mode: CalendarViewMode) -> String {
-        switch mode {
-        case .week:  return "Week"
-        case .month: return "Month"
+    private var sidebarToggle: some View {
+        Button {
+            withAnimation(.flowSpring) { showSidebar.toggle() }
+        } label: {
+            Image(systemName: "sidebar.right")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(showSidebar ? FlowTokens.textPrimary : FlowTokens.textTertiary)
+                .frame(width: controlHeight, height: controlHeight)
+                .flowControl(isActive: showSidebar)
+        }
+        .buttonStyle(.plain)
+        .help("Toggle agenda")
+    }
+
+    // MARK: - Range label
+
+    private var rangeLabel: String {
+        let f = DateFormatter()
+        switch dataManager.viewMode {
+        case .month:
+            f.dateFormat = "MMMM yyyy"
+            return f.string(from: dataManager.selectedDate)
+        case .week:
+            let cal = Calendar.current
+            var comps = cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: dataManager.selectedDate)
+            comps.weekday = 1
+            guard let start = cal.date(from: comps),
+                  let end = cal.date(byAdding: .day, value: 6, to: start) else {
+                f.dateFormat = "MMM d"
+                return f.string(from: dataManager.selectedDate)
+            }
+            let sameMonth = cal.component(.month, from: start) == cal.component(.month, from: end)
+            if sameMonth {
+                f.dateFormat = "MMMM d"
+                let sf = f.string(from: start)
+                f.dateFormat = "d, yyyy"
+                return "\(sf)–\(f.string(from: end))"
+            } else {
+                f.dateFormat = "MMM d"
+                let sf = f.string(from: start)
+                f.dateFormat = "MMM d, yyyy"
+                return "\(sf) – \(f.string(from: end))"
+            }
         }
     }
 
-    // MARK: - Date Labels
-
-    private var weekdayLabel: String {
-        let f = DateFormatter(); f.dateFormat = "EEE"
-        return f.string(from: dataManager.selectedDate).uppercased()
-    }
-
-    private var dayNumberLabel: String {
-        let f = DateFormatter(); f.dateFormat = "d"
-        return f.string(from: dataManager.selectedDate)
-    }
-
-    private var monthYearLabel: String {
-        let f = DateFormatter(); f.dateFormat = "MMM yyyy"
-        return f.string(from: dataManager.selectedDate)
-    }
-
-    // MARK: - Step
-
     private func step(by amount: Int) {
         let cal = Calendar.current
-        let component: Calendar.Component = {
-            switch dataManager.viewMode {
-            case .week:  return .weekOfYear
-            case .month: return .month
-            }
-        }()
+        let component: Calendar.Component = dataManager.viewMode == .week ? .weekOfYear : .month
         if let next = cal.date(byAdding: component, value: amount, to: dataManager.selectedDate) {
             withAnimation(.flowQuick) { dataManager.selectedDate = next }
         }

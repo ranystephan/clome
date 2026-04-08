@@ -1,476 +1,266 @@
 import SwiftUI
 import ClomeModels
 
-/// Right-side sidebar that lists the selected day's items broken into
-/// three editorial sections: Schedule (timed events), Tasks (scheduled
-/// todos and deadlines), and Reminders. Mirrors the iOS Today view's
-/// agenda card vocabulary.
+/// Agenda sidebar — restrained list of the selected day's schedule.
+///
+/// Sections:
+///   - Today  (selected day's timed events, sorted chronologically)
+///   - Tasks  (scheduled todos for the day)
+///   - Due    (deadlines for the day, if any)
+///
+/// No hero card. No editorial "NOW MEETING" block. Just a clean agenda
+/// list with time labels in the left column and titles on the right,
+/// Apple Reminders / Fantastical style.
 struct CalendarAgendaSidebar: View {
     @ObservedObject var dataManager: CalendarDataManager
     @ObservedObject private var syncService = FlowSyncService.shared
+
     @State private var currentTime = Date()
-    @State private var newTodoTitle: String = ""
-    @FocusState private var addTodoFocused: Bool
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: FlowTokens.spacingXL) {
-                heroSection
-                scheduleSection
-                tasksSection
-                deadlinesSection
-                Spacer(minLength: 0)
+        VStack(spacing: 0) {
+            header
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: FlowTokens.spacingXL) {
+                    scheduleSection
+                    tasksSection
+                    deadlinesSection
+                    Spacer(minLength: FlowTokens.spacingXL)
+                }
+                .padding(.horizontal, FlowTokens.spacingLG)
+                .padding(.top, FlowTokens.spacingLG)
+                .padding(.bottom, FlowTokens.spacingXXL)
             }
-            .padding(FlowTokens.spacingLG)
         }
         .background(FlowTokens.bg0)
         .onReceive(ticker) { currentTime = $0 }
     }
 
-    // MARK: - Hero (current/next meeting)
+    // MARK: - Header
 
-    @ViewBuilder
-    private var heroSection: some View {
-        if let active = activeMeeting {
-            heroCard(item: active, status: .now)
-        } else if let next = nextMeeting {
-            heroCard(item: next, status: .upcoming)
-        } else {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("NO MEETINGS")
-                    .flowFont(.sectionLabel)
-                    .foregroundColor(FlowTokens.textTertiary)
-                Text(emptyStateGreeting)
-                    .flowFont(.title3)
-                    .foregroundColor(FlowTokens.textPrimary)
-                Text("Tap the canvas to create something.")
-                    .flowFont(.caption)
-                    .foregroundColor(FlowTokens.textTertiary)
-            }
-            .padding(FlowTokens.spacingLG)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: FlowTokens.radiusXL, style: .continuous)
-                    .fill(FlowTokens.bg2)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: FlowTokens.radiusXL, style: .continuous)
-                    .strokeBorder(FlowTokens.border, lineWidth: FlowTokens.hairline)
-            )
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(relativeDayLabel.uppercased())
+                .flowFont(.sectionLabel)
+                .foregroundColor(FlowTokens.textTertiary)
+            Text(fullDateLabel)
+                .flowFont(.title2)
+                .foregroundColor(FlowTokens.textPrimary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, FlowTokens.spacingLG)
+        .padding(.top, FlowTokens.spacingLG)
+        .padding(.bottom, FlowTokens.spacingMD)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(FlowTokens.border).frame(height: FlowTokens.hairline)
         }
     }
 
-    private enum HeroStatus { case now, upcoming }
-
-    private func heroCard(item: any CalendarItemProtocol, status: HeroStatus) -> some View {
-        let countdown = countdownString(to: status == .now ? item.endDate : item.startDate)
-        let yellow = FlowTokens.editorialYellow
-        let dark = FlowTokens.editorialDark
-        let progress = status == .now ? activeProgress(item: item) : 0
-
-        return HStack(spacing: 0) {
-            // Left yellow banner — the iOS "You Have a Meeting" hero
-            VStack(alignment: .leading, spacing: 4) {
-                Text(status == .now ? "HAPPENING" : "UP NEXT")
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(1.2)
-                    .foregroundColor(dark.opacity(0.7))
-                Text(countdown)
-                    .font(.system(size: 26, weight: .bold, design: .monospaced))
-                    .tracking(-1)
-                    .foregroundColor(dark)
-                Spacer(minLength: 0)
-                Text(item.title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(dark)
-                    .lineLimit(2)
-            }
-            .padding(FlowTokens.spacingMD)
-            .frame(width: 132, alignment: .leading)
-            .frame(maxHeight: .infinity)
-            .background(yellow)
-
-            // Right details
-            VStack(alignment: .leading, spacing: FlowTokens.spacingSM) {
-                Text(timeRange(item))
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(FlowTokens.textSecondary)
-
-                if let loc = location(of: item), !loc.isEmpty {
-                    HStack(spacing: 4) {
-                        Image(systemName: "mappin.and.ellipse")
-                            .font(.system(size: 9))
-                        Text(loc).lineLimit(1)
-                    }
-                    .font(.system(size: 11))
-                    .foregroundColor(FlowTokens.textTertiary)
-                }
-
-                Spacer(minLength: 0)
-
-                if status == .now {
-                    VStack(alignment: .leading, spacing: 4) {
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(FlowTokens.editorialRed.opacity(0.18))
-                                Capsule().fill(FlowTokens.editorialRed)
-                                    .frame(width: max(2, geo.size.width * progress))
-                            }
-                        }
-                        .frame(height: 4)
-                        Text("\(Int(progress * 100))%  ·  \(remainingString(item: item))")
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                            .foregroundColor(FlowTokens.editorialRed)
-                    }
-                } else {
-                    Text("Starts " + relativeString(item.startDate))
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(FlowTokens.textTertiary)
-                }
-            }
-            .padding(FlowTokens.spacingMD)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(FlowTokens.bg2)
-        }
-        .frame(height: 132)
-        .clipShape(RoundedRectangle(cornerRadius: FlowTokens.radiusXL, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: FlowTokens.radiusXL, style: .continuous)
-                .strokeBorder(FlowTokens.border, lineWidth: FlowTokens.hairline)
-        )
+    private var relativeDayLabel: String {
+        let cal = Calendar.current
+        let d = dataManager.selectedDate
+        if cal.isDateInToday(d) { return "Today" }
+        if cal.isDateInYesterday(d) { return "Yesterday" }
+        if cal.isDateInTomorrow(d) { return "Tomorrow" }
+        let f = DateFormatter(); f.dateFormat = "EEEE"
+        return f.string(from: d)
     }
 
-    // MARK: - Schedule section
+    private var fullDateLabel: String {
+        let f = DateFormatter(); f.dateFormat = "MMMM d"
+        return f.string(from: dataManager.selectedDate)
+    }
+
+    // MARK: - Schedule
 
     private var scheduleSection: some View {
-        section(title: "SCHEDULE", count: timedEvents.count) {
-            if timedEvents.isEmpty {
-                emptyRow("No events on this day")
+        let items = scheduleItems
+        return VStack(alignment: .leading, spacing: FlowTokens.spacingSM) {
+            sectionHeader("Schedule", count: items.count)
+
+            if items.isEmpty {
+                emptyHint("Nothing scheduled")
             } else {
-                ForEach(timedEvents, id: \.calendarItemID) { item in
-                    agendaRow(
-                        leading: timeStack(item),
-                        accent: item.displayColor,
-                        title: item.title,
-                        subtitle: location(of: item),
-                        isPast: item.endDate < currentTime
-                    )
+                VStack(spacing: 2) {
+                    ForEach(items, id: \.calendarItemID) { item in
+                        agendaRow(item)
+                    }
                 }
             }
         }
     }
+
+    private var scheduleItems: [any CalendarItemProtocol] {
+        let cal = Calendar.current
+        return dataManager.items
+            .filter { $0.kind == .systemEvent && cal.isDate($0.startDate, inSameDayAs: dataManager.selectedDate) }
+            .sorted { $0.startDate < $1.startDate }
+    }
+
+    // MARK: - Tasks
 
     private var tasksSection: some View {
-        section(title: "TASKS", count: activeTodos.count) {
-            addTodoRow
-            if activeTodos.isEmpty {
-                emptyRow("Nothing on your plate")
+        let items = taskItems
+        return VStack(alignment: .leading, spacing: FlowTokens.spacingSM) {
+            sectionHeader("Tasks", count: items.count)
+
+            if items.isEmpty {
+                emptyHint("No tasks scheduled")
             } else {
-                ForEach(activeTodos) { todo in
-                    todoRow(todo)
+                VStack(spacing: 2) {
+                    ForEach(items, id: \.calendarItemID) { item in
+                        agendaRow(item)
+                    }
                 }
             }
         }
     }
 
-    private var addTodoRow: some View {
-        HStack(spacing: 0) {
-            Image(systemName: "plus.circle")
-                .font(.system(size: 14))
-                .foregroundColor(FlowTokens.textHint)
-                .frame(width: 44)
-
-            Rectangle()
-                .fill(FlowTokens.calendarTodo.opacity(0.5))
-                .frame(width: 2, height: 28)
-                .clipShape(Capsule())
-
-            TextField("Add a todo…", text: $newTodoTitle)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(FlowTokens.textPrimary)
-                .focused($addTodoFocused)
-                .padding(.leading, FlowTokens.spacingSM)
-                .padding(.vertical, 8)
-                .onSubmit(commitNewTodo)
-
-            Spacer(minLength: 0)
-        }
-        .padding(.trailing, FlowTokens.spacingMD)
-        .contentShape(Rectangle())
-        .onTapGesture { addTodoFocused = true }
-    }
-
-    private func todoRow(_ todo: TodoItem) -> some View {
-        HStack(alignment: .center, spacing: 0) {
-            Button {
-                syncService.toggleTodoComplete(id: todo.id)
-            } label: {
-                Image(systemName: todo.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 14))
-                    .foregroundColor(todo.isCompleted ? FlowTokens.success : FlowTokens.textTertiary)
-                    .frame(width: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            Rectangle()
-                .fill(FlowTokens.calendarTodo.opacity(todo.isCompleted ? 0.35 : 1.0))
-                .frame(width: 2, height: 28)
-                .clipShape(Capsule())
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(todo.title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(todo.isCompleted ? FlowTokens.textTertiary : FlowTokens.textPrimary)
-                    .strikethrough(todo.isCompleted, color: FlowTokens.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .multilineTextAlignment(.leading)
-                if let sub = todoSubtitle(todo) {
-                    Text(sub)
-                        .font(.system(size: 10))
-                        .foregroundColor(FlowTokens.textTertiary)
-                        .lineLimit(1)
-                }
-            }
-            .padding(.leading, FlowTokens.spacingSM)
-            .padding(.vertical, 8)
-
-            Spacer(minLength: 0)
-        }
-        .padding(.trailing, FlowTokens.spacingMD)
-    }
-
-    private func commitNewTodo() {
-        let trimmed = newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        syncService.addTodo(TodoItem(title: trimmed))
-        newTodoTitle = ""
-        addTodoFocused = true
-    }
-
-    private var activeTodos: [TodoItem] {
-        syncService.todos
-            .filter { !$0.isCompleted }
-            .sorted { a, b in
-                switch (a.scheduledDate, b.scheduledDate) {
-                case let (la?, lb?): return la < lb
-                case (_?, nil):      return true
-                case (nil, _?):      return false
-                default:             return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
-                }
-            }
-    }
-
-    private func todoSubtitle(_ todo: TodoItem) -> String? {
-        guard let date = todo.scheduledDate else { return nil }
+    private var taskItems: [any CalendarItemProtocol] {
         let cal = Calendar.current
-        let f = DateFormatter()
-        if cal.isDateInToday(date) {
-            f.dateFormat = "'Today' h:mm a"
-        } else if cal.isDateInTomorrow(date) {
-            f.dateFormat = "'Tomorrow' h:mm a"
-        } else {
-            f.dateFormat = "MMM d · h:mm a"
-        }
-        return f.string(from: date)
+        return dataManager.items
+            .filter { $0.kind == .todo && cal.isDate($0.startDate, inSameDayAs: dataManager.selectedDate) }
+            .sorted { $0.startDate < $1.startDate }
     }
 
+    // MARK: - Deadlines
+
+    @ViewBuilder
     private var deadlinesSection: some View {
-        section(title: "DEADLINES", count: deadlineItems.count) {
-            if deadlineItems.isEmpty {
-                emptyRow("Nothing due")
-            } else {
-                ForEach(deadlineItems, id: \.calendarItemID) { item in
-                    agendaRow(
-                        leading: AnyView(
-                            Image(systemName: "flag.fill")
-                                .font(.system(size: 11))
-                                .foregroundColor(item.displayColor)
-                                .frame(width: 44)
-                        ),
-                        accent: item.displayColor,
-                        title: item.title,
-                        subtitle: dueLabel(item),
-                        isPast: item.isCompleted
-                    )
+        let items = deadlineItems
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: FlowTokens.spacingSM) {
+                sectionHeader("Due", count: items.count)
+                VStack(spacing: 2) {
+                    ForEach(items, id: \.calendarItemID) { item in
+                        agendaRow(item)
+                    }
                 }
             }
         }
-    }
-
-    // MARK: - Section frame
-
-    private func section<Content: View>(
-        title: String,
-        count: Int,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: FlowTokens.spacingSM) {
-            HStack(spacing: 6) {
-                Text(title)
-                    .flowFont(.sectionLabel)
-                    .foregroundColor(FlowTokens.textTertiary)
-                Text("\(count)")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(FlowTokens.textHint)
-            }
-            VStack(spacing: 1) {
-                content()
-            }
-            .background(
-                RoundedRectangle(cornerRadius: FlowTokens.radiusMedium, style: .continuous)
-                    .fill(FlowTokens.bg1)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: FlowTokens.radiusMedium, style: .continuous)
-                    .strokeBorder(FlowTokens.border, lineWidth: FlowTokens.hairline)
-            )
-        }
-    }
-
-    // MARK: - Row
-
-    private func agendaRow<Leading: View>(
-        leading: Leading,
-        accent: Color,
-        title: String,
-        subtitle: String?,
-        isPast: Bool
-    ) -> some View {
-        HStack(alignment: .center, spacing: 0) {
-            leading
-
-            Rectangle()
-                .fill(accent.opacity(isPast ? 0.35 : 1.0))
-                .frame(width: 2, height: 28)
-                .clipShape(Capsule())
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(isPast ? FlowTokens.textTertiary : FlowTokens.textPrimary)
-                    .lineLimit(1)
-                if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.system(size: 10))
-                        .foregroundColor(FlowTokens.textTertiary)
-                        .lineLimit(1)
-                }
-            }
-            .padding(.leading, FlowTokens.spacingSM)
-            .padding(.vertical, 8)
-
-            Spacer(minLength: 0)
-        }
-        .padding(.trailing, FlowTokens.spacingMD)
-    }
-
-    private func timeStack(_ item: any CalendarItemProtocol) -> AnyView {
-        let f = DateFormatter(); f.dateFormat = "h:mm a"
-        return AnyView(
-            VStack(alignment: .trailing, spacing: 0) {
-                Text(f.string(from: item.startDate))
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundColor(FlowTokens.textSecondary)
-                Text(f.string(from: item.endDate))
-                    .font(.system(size: 9, weight: .regular, design: .monospaced))
-                    .foregroundColor(FlowTokens.textHint)
-            }
-            .frame(width: 56, alignment: .trailing)
-            .padding(.trailing, FlowTokens.spacingSM)
-        )
-    }
-
-    private func emptyRow(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11))
-            .foregroundColor(FlowTokens.textHint)
-            .padding(FlowTokens.spacingMD)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: - Filtering
-
-    private var dayItems: [any CalendarItemProtocol] {
-        let cal = Calendar.current
-        return dataManager.items.filter { cal.isDate($0.startDate, inSameDayAs: dataManager.selectedDate) }
-    }
-
-    private var timedEvents: [any CalendarItemProtocol] {
-        dayItems.filter { $0.kind == .systemEvent && !$0.isAllDay }
-            .sorted { $0.startDate < $1.startDate }
-    }
-
-    private var todoItems: [any CalendarItemProtocol] {
-        dayItems.filter { $0.kind == .todo }
-            .sorted { $0.startDate < $1.startDate }
     }
 
     private var deadlineItems: [any CalendarItemProtocol] {
-        dayItems.filter { $0.kind == .deadline }
+        let cal = Calendar.current
+        return dataManager.items
+            .filter { $0.kind == .deadline && cal.isDate($0.startDate, inSameDayAs: dataManager.selectedDate) }
             .sorted { $0.startDate < $1.startDate }
     }
 
-    private var activeMeeting: (any CalendarItemProtocol)? {
-        timedEvents.first { $0.startDate <= currentTime && $0.endDate > currentTime }
-    }
+    // MARK: - Section header
 
-    private var nextMeeting: (any CalendarItemProtocol)? {
-        timedEvents.first { $0.startDate > currentTime }
-    }
-
-    // MARK: - Helpers
-
-    private var emptyStateGreeting: String {
-        let h = Calendar.current.component(.hour, from: currentTime)
-        switch h {
-        case 5..<12: return "Good morning."
-        case 12..<17: return "Good afternoon."
-        case 17..<22: return "Good evening."
-        default: return "Quiet hours."
+    private func sectionHeader(_ title: String, count: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: FlowTokens.spacingSM) {
+            Text(title.uppercased())
+                .flowFont(.sectionLabel)
+                .foregroundColor(FlowTokens.textTertiary)
+            if count > 0 {
+                Text("\(count)")
+                    .flowFont(.timestamp)
+                    .foregroundColor(FlowTokens.textMuted)
+            }
+            Spacer(minLength: 0)
         }
     }
 
-    private func countdownString(to date: Date) -> String {
-        let s = max(0, Int(date.timeIntervalSince(currentTime)))
-        let m = s / 60, sec = s % 60
-        if m >= 60 { return String(format: "%d:%02d", m / 60, m % 60) }
-        return String(format: "%02d:%02d", m, sec)
+    // MARK: - Agenda row
+
+    private func agendaRow(_ item: any CalendarItemProtocol) -> some View {
+        let status = rowStatus(for: item)
+        let isNow = status == .now
+        let isPast = status == .past
+        let tint = item.displayColor
+
+        return HStack(alignment: .top, spacing: FlowTokens.spacingMD) {
+            // Time column
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(formatted(item.startDate, "h:mm"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundColor(isPast ? FlowTokens.textMuted : FlowTokens.textSecondary)
+                Text(formatted(item.startDate, "a").lowercased())
+                    .font(.system(size: 9, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundColor(FlowTokens.textMuted)
+            }
+            .frame(width: 38, alignment: .trailing)
+
+            // Accent bar
+            Rectangle()
+                .fill(isPast ? tint.opacity(0.45) : tint)
+                .frame(width: FlowTokens.accentBarWidth)
+                .padding(.vertical, 1)
+
+            // Title + meta
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.title)
+                    .font(.system(size: 12, weight: isNow ? .semibold : .medium))
+                    .foregroundColor(isPast ? FlowTokens.textTertiary : FlowTokens.textPrimary)
+                    .strikethrough(item.isCompleted)
+                    .lineLimit(2)
+                Text(metaLabel(for: item))
+                    .flowFont(.timestamp)
+                    .foregroundColor(FlowTokens.textMuted)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            if isNow {
+                Circle()
+                    .fill(FlowTokens.editorialRed)
+                    .frame(width: 6, height: 6)
+                    .padding(.top, 4)
+            }
+        }
+        .padding(.vertical, FlowTokens.spacingSM - 2)
+        .padding(.horizontal, FlowTokens.spacingSM)
+        .background(
+            RoundedRectangle(cornerRadius: FlowTokens.radiusControl, style: .continuous)
+                .fill(isNow ? FlowTokens.bg2.opacity(0.5) : Color.clear)
+        )
     }
 
-    private func remainingString(item: any CalendarItemProtocol) -> String {
-        let s = max(0, Int(item.endDate.timeIntervalSince(currentTime)))
-        let m = s / 60
-        if m >= 60 { return "\(m / 60)h \(m % 60)m left" }
-        return "\(m)m left"
+    private func metaLabel(for item: any CalendarItemProtocol) -> String {
+        switch item.kind {
+        case .systemEvent:
+            let duration = item.endDate.timeIntervalSince(item.startDate)
+            let mins = Int(duration / 60)
+            if mins <= 0 { return "—" }
+            if mins < 60 { return "\(mins) min" }
+            let h = mins / 60
+            let m = mins % 60
+            return m == 0 ? "\(h)h" : "\(h)h \(m)m"
+        case .todo:     return "Task"
+        case .deadline: return "Due"
+        case .reminder: return "Reminder"
+        }
     }
 
-    private func activeProgress(item: any CalendarItemProtocol) -> Double {
-        let total = item.endDate.timeIntervalSince(item.startDate)
-        guard total > 0 else { return 0 }
-        let elapsed = currentTime.timeIntervalSince(item.startDate)
-        return max(0, min(1, elapsed / total))
+    // MARK: - Empty hint
+
+    private func emptyHint(_ text: String) -> some View {
+        Text(text)
+            .flowFont(.caption)
+            .foregroundColor(FlowTokens.textMuted)
+            .padding(.horizontal, FlowTokens.spacingSM)
+            .padding(.vertical, FlowTokens.spacingXS)
     }
 
-    private func relativeString(_ date: Date) -> String {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .short
-        return f.localizedString(for: date, relativeTo: currentTime)
+    // MARK: - Status
+
+    private enum RowStatus { case past, now, upcoming }
+
+    private func rowStatus(for item: any CalendarItemProtocol) -> RowStatus {
+        if currentTime >= item.endDate { return .past }
+        if currentTime >= item.startDate { return .now }
+        return .upcoming
     }
 
-    private func timeRange(_ item: any CalendarItemProtocol) -> String {
-        let f = DateFormatter(); f.dateFormat = "h:mm a"
-        return "\(f.string(from: item.startDate)) – \(f.string(from: item.endDate))"
-    }
-
-    private func location(of item: any CalendarItemProtocol) -> String? {
-        (item as? SystemEventItem)?.location
-    }
-
-    private func dueLabel(_ item: any CalendarItemProtocol) -> String? {
-        let f = DateFormatter(); f.dateFormat = "h:mm a"
-        return "Due " + f.string(from: item.startDate)
+    private func formatted(_ date: Date, _ format: String) -> String {
+        let f = DateFormatter(); f.dateFormat = format
+        return f.string(from: date)
     }
 }
