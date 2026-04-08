@@ -27,6 +27,16 @@ final class BlockStore: ObservableObject {
     /// When the running block was started (persistent across app launches).
     @Published private(set) var runningStartedAt: Date?
 
+    /// Undo/redo depth published so UI can enable/disable controls.
+    @Published private(set) var canUndo: Bool = false
+    @Published private(set) var canRedo: Bool = false
+
+    // In-memory action log (not persisted across launches). Bounded.
+    private var undoStack: [BlockAction] = []
+    private var redoStack: [BlockAction] = []
+    private let undoLimit = 50
+    private var isApplyingUndo = false
+
     // MARK: - Private state
 
     private var db: OpaquePointer?
@@ -158,6 +168,7 @@ final class BlockStore: ObservableObject {
         nativeBlocks[id] = block
         persist(block)
         persistAttachments(id: id, attachments: attachments)
+        record(.created(id: id))
         recompute()
         return id
     }
@@ -258,6 +269,9 @@ final class BlockStore: ObservableObject {
     }
 
     func delete(_ id: UUID) {
+        if let block = nativeBlocks[id] {
+            record(.deleted(block: block))
+        }
         nativeBlocks.removeValue(forKey: id)
         nativeAttachments.removeValue(forKey: id)
         deleteRow(id)
@@ -603,6 +617,100 @@ final class BlockStore: ObservableObject {
         if let ts = readMeta("running_started_at"), let v = Double(ts) {
             runningStartedAt = Date(timeIntervalSince1970: v)
         }
+    }
+
+    // MARK: - Undo / Redo
+
+    /// A reversible mutation. Only covers the subset of actions the user
+    /// is likely to want to undo (create/delete/move). Title and notes
+    /// edits are intentionally excluded for M10a simplicity.
+    enum BlockAction {
+        case created(id: UUID)
+        case deleted(block: Block)
+        case moved(id: String, oldStart: Date, oldEnd: Date, newStart: Date, newEnd: Date)
+    }
+
+    private func record(_ action: BlockAction) {
+        guard !isApplyingUndo else { return }
+        undoStack.append(action)
+        if undoStack.count > undoLimit { undoStack.removeFirst() }
+        redoStack.removeAll()
+        canUndo = !undoStack.isEmpty
+        canRedo = false
+    }
+
+    /// Reverses the most recent action.
+    func undo() {
+        guard let action = undoStack.popLast() else { return }
+        isApplyingUndo = true
+        let inverse = apply(inverseOf: action)
+        isApplyingUndo = false
+        if let inverse { redoStack.append(inverse) }
+        canUndo = !undoStack.isEmpty
+        canRedo = !redoStack.isEmpty
+    }
+
+    /// Re-applies the most recently undone action.
+    func redo() {
+        guard let action = redoStack.popLast() else { return }
+        isApplyingUndo = true
+        let inverse = apply(inverseOf: action)
+        isApplyingUndo = false
+        if let inverse { undoStack.append(inverse) }
+        canUndo = !undoStack.isEmpty
+        canRedo = !redoStack.isEmpty
+    }
+
+    /// Applies the inverse of an action and returns the counterpart action
+    /// to push onto the opposite stack (so that undo/redo is symmetric).
+    private func apply(inverseOf action: BlockAction) -> BlockAction? {
+        switch action {
+        case .created(let id):
+            // Reverse = delete. Return counterpart = deleted(block).
+            guard let block = nativeBlocks[id] else { return nil }
+            delete(id)
+            return .deleted(block: block)
+
+        case .deleted(let block):
+            // Reverse = recreate with the same UUID.
+            guard case let .native(id) = block.source else { return nil }
+            nativeBlocks[id] = block
+            persist(block)
+            persistAttachments(id: id, attachments: block.attachments)
+            recompute()
+            return .created(id: id)
+
+        case .moved(let id, let oldStart, let oldEnd, let newStart, let newEnd):
+            // Reverse = move back to old times.
+            applyMove(id: id, start: oldStart, end: oldEnd)
+            return .moved(id: id,
+                          oldStart: newStart, oldEnd: newEnd,
+                          newStart: oldStart, newEnd: oldEnd)
+        }
+    }
+
+    /// Move without recording (used by undo/redo and by recorded moveBlock).
+    private func applyMove(id: String, start: Date, end: Date) {
+        if let nid = nativeID(for: id), var block = nativeBlocks[nid] {
+            block.start = start
+            block.end = end
+            nativeBlocks[nid] = block
+            persist(block)
+            recompute()
+        } else if id.hasPrefix("ek-") {
+            let ek = String(id.dropFirst("ek-".count))
+            calendar.moveSystemEvent(identifier: ek, newStart: start, newEnd: end)
+        }
+    }
+
+    /// Records + applies a move. Called by drag-end in the week view.
+    func moveBlock(id: String, newStart: Date, newEnd: Date) {
+        guard let block = block(withID: id) else { return }
+        let action = BlockAction.moved(id: id,
+                                        oldStart: block.start, oldEnd: block.end,
+                                        newStart: newStart, newEnd: newEnd)
+        applyMove(id: id, start: newStart, end: newEnd)
+        record(action)
     }
 
     // MARK: - Utils

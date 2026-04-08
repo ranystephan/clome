@@ -23,6 +23,15 @@ struct CalendarWeekView: View {
     @State private var hoveredID: String?
     @State private var dropTargetedDay: Date?
     @State private var pendingDropY: CGFloat = 0
+
+    // Drag / resize state
+    @State private var dragID: String?
+    @State private var dragTranslation: CGSize = .zero
+    @State private var dragMode: DragMode = .move
+    @State private var dragColumnWidth: CGFloat = 0
+
+    enum DragMode { case move, resizeTop, resizeBottom }
+
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     struct CreateDraft: Equatable {
@@ -75,6 +84,30 @@ struct CalendarWeekView: View {
         }
         .background(FlowTokens.bg0)
         .onReceive(ticker) { now = $0 }
+        .background {
+            // Hidden keyboard shortcut buttons (Apple-quiet way to wire
+            // global shortcuts without fighting first responder).
+            Group {
+                Button("") { store.undo() }
+                    .keyboardShortcut("z", modifiers: .command)
+                Button("") { store.redo() }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                Button("") { deleteSelected() }
+                    .keyboardShortcut(.delete, modifiers: [])
+                Button("") { store.selectedBlockID = nil }
+                    .keyboardShortcut(.escape, modifiers: [])
+            }
+            .opacity(0)
+            .allowsHitTesting(false)
+            .frame(width: 0, height: 0)
+        }
+    }
+
+    private func deleteSelected() {
+        guard editingID == nil, createDraft == nil,
+              let id = store.selectedBlockID,
+              let block = store.block(withID: id) else { return }
+        deleteBlock(block)
     }
 
     // MARK: - Timeline
@@ -183,30 +216,7 @@ struct CalendarWeekView: View {
             }
 
             ForEach(timed) { block in
-                let slot = slots[block.id] ?? CalendarOverlapLayout.Slot(column: 0, columnCount: 1)
-                let slotW = max(20, (width - 4) / CGFloat(slot.columnCount))
-                let x = 2 + slotW * CGFloat(slot.column)
-                let y = CalendarGridGeometry.y(for: block.start)
-                let h = CalendarGridGeometry.height(from: block.start, to: block.end)
-                let past = block.end < now
-                let id = block.id
-
-                BlockCard(
-                    block: block,
-                    isPast: past,
-                    isHovered: hoveredID == id,
-                    isSelected: store.selectedBlockID == id && editingID != id,
-                    isRunning: store.runningBlockID == id,
-                    isEditing: editingID == id,
-                    editingTitle: editingID == id ? $editingTitle : nil,
-                    onCommit: { commitEdit(block) },
-                    onDelete: { deleteBlock(block) }
-                )
-                .frame(width: slotW - 2, height: max(18, h - 1))
-                .offset(x: x, y: y)
-                .onHover { hoveredID = $0 ? id : (hoveredID == id ? nil : hoveredID) }
-                .onTapGesture(count: 2) { beginEdit(block) }
-                .onTapGesture { store.selectedBlockID = id }
+                draggableCard(block: block, slots: slots, columnWidth: width)
             }
 
             // Inline create ghost card
@@ -225,6 +235,169 @@ struct CalendarWeekView: View {
                 .offset(x: 2, y: CalendarGridGeometry.y(for: draft.start))
             }
         }
+    }
+
+    // MARK: - Draggable card
+
+    private func draggableCard(block: Block,
+                                slots: [String: CalendarOverlapLayout.Slot],
+                                columnWidth: CGFloat) -> some View {
+        let slot = slots[block.id] ?? CalendarOverlapLayout.Slot(column: 0, columnCount: 1)
+        let slotW = max(20, (columnWidth - 4) / CGFloat(slot.columnCount))
+        let baseX = 2 + slotW * CGFloat(slot.column)
+        let baseY = CalendarGridGeometry.y(for: block.start)
+        let baseH = CalendarGridGeometry.height(from: block.start, to: block.end)
+        let past = block.end < now
+        let id = block.id
+        let isDragging = dragID == id
+        let frame = liveFrame(baseX: baseX, baseY: baseY, baseH: baseH, isDragging: isDragging)
+        let x = frame.0, y = frame.1, h = frame.2
+
+        return BlockCard(
+            block: block,
+            isPast: past,
+            isHovered: hoveredID == id,
+            isSelected: store.selectedBlockID == id && editingID != id,
+            isRunning: store.runningBlockID == id,
+            isEditing: editingID == id,
+            editingTitle: editingID == id ? $editingTitle : nil,
+            onCommit: { commitEdit(block) },
+            onDelete: { deleteBlock(block) }
+        )
+        .frame(width: slotW - 2, height: h)
+        .scaleEffect(isDragging && dragMode == .move ? 1.02 : 1.0)
+        .opacity(isDragging ? 0.92 : 1.0)
+        .offset(x: x, y: y)
+        .zIndex(isDragging ? 10 : 0)
+        .overlay(alignment: .top) {
+            resizeHandle(edge: .resizeTop, block: block, width: slotW - 2)
+                .offset(x: x, y: y)
+        }
+        .overlay(alignment: .top) {
+            resizeHandle(edge: .resizeBottom, block: block, width: slotW - 2)
+                .offset(x: x, y: y + h - 6)
+        }
+        .onHover { hoveredID = $0 ? id : (hoveredID == id ? nil : hoveredID) }
+        .onTapGesture(count: 2) { beginEdit(block) }
+        .onTapGesture { store.selectedBlockID = id }
+        .gesture(
+            DragGesture(minimumDistance: 4, coordinateSpace: .local)
+                .onChanged { v in
+                    if dragID != id {
+                        dragID = id
+                        dragMode = .move
+                        dragColumnWidth = columnWidth
+                        store.selectedBlockID = id
+                    }
+                    if dragMode == .move {
+                        dragTranslation = v.translation
+                    }
+                }
+                .onEnded { v in
+                    guard dragID == id else { return }
+                    if dragMode == .move {
+                        commitMoveDrag(block: block, translation: v.translation, columnWidth: dragColumnWidth)
+                    }
+                    clearDrag()
+                }
+        )
+    }
+
+    private func liveFrame(baseX: CGFloat, baseY: CGFloat, baseH: CGFloat, isDragging: Bool)
+        -> (CGFloat, CGFloat, CGFloat) {
+        guard isDragging else { return (baseX, baseY, baseH) }
+        var x = baseX, y = baseY, h = baseH
+        switch dragMode {
+        case .move:
+            x += dragTranslation.width
+            y += dragTranslation.height
+        case .resizeTop:
+            let dy = dragTranslation.height
+            y += dy
+            h -= dy
+        case .resizeBottom:
+            h += dragTranslation.height
+        }
+        return (x, y, max(18, h))
+    }
+
+    private func resizeHandle(edge: DragMode, block: Block, width: CGFloat) -> some View {
+        let id = block.id
+        // Only show resize handles on the currently selected/hovered card.
+        let visible = store.selectedBlockID == id || hoveredID == id
+        let isNS = edge == .resizeTop || edge == .resizeBottom
+        return Color.clear
+            .frame(width: width, height: 6)
+            .contentShape(Rectangle())
+            .opacity(visible ? 1 : 0)
+            .onHover { if $0 && isNS { NSCursor.resizeUpDown.push() } else if isNS { NSCursor.pop() } }
+            .gesture(
+                DragGesture(minimumDistance: 2, coordinateSpace: .local)
+                    .onChanged { v in
+                        if dragID != id {
+                            dragID = id
+                            dragMode = edge
+                            store.selectedBlockID = id
+                        }
+                        dragTranslation = v.translation
+                    }
+                    .onEnded { v in
+                        guard dragID == id else { return }
+                        commitResizeDrag(block: block, translation: v.translation, edge: edge)
+                        clearDrag()
+                    }
+            )
+    }
+
+    private func clearDrag() {
+        dragID = nil
+        dragTranslation = .zero
+        dragMode = .move
+    }
+
+    private func snapMinutes(_ pixels: CGFloat) -> Int {
+        let totalMin = Int((pixels / CalendarGridGeometry.hourHeight) * 60)
+        let snap = CalendarGridGeometry.snapMinutes
+        return (totalMin / snap) * snap
+    }
+
+    private func commitMoveDrag(block: Block, translation: CGSize, columnWidth: CGFloat) {
+        let colDelta = columnWidth > 0 && !isDay
+            ? Int((translation.width / columnWidth).rounded())
+            : 0
+        let minDelta = snapMinutes(translation.height)
+        let cal = Calendar.current
+        var newStart = block.start
+        if colDelta != 0 {
+            newStart = cal.date(byAdding: .day, value: colDelta, to: newStart) ?? newStart
+        }
+        newStart = cal.date(byAdding: .minute, value: minDelta, to: newStart) ?? newStart
+        let newEnd = newStart.addingTimeInterval(block.end.timeIntervalSince(block.start))
+        guard newStart != block.start || newEnd != block.end else { return }
+        store.moveBlock(id: block.id, newStart: newStart, newEnd: newEnd)
+    }
+
+    private func commitResizeDrag(block: Block, translation: CGSize, edge: DragMode) {
+        let minDelta = snapMinutes(translation.height)
+        guard minDelta != 0 else { return }
+        let cal = Calendar.current
+        var newStart = block.start
+        var newEnd = block.end
+        switch edge {
+        case .resizeTop:
+            newStart = cal.date(byAdding: .minute, value: minDelta, to: newStart) ?? newStart
+            if newEnd.timeIntervalSince(newStart) < 15 * 60 {
+                newStart = newEnd.addingTimeInterval(-15 * 60)
+            }
+        case .resizeBottom:
+            newEnd = cal.date(byAdding: .minute, value: minDelta, to: newEnd) ?? newEnd
+            if newEnd.timeIntervalSince(newStart) < 15 * 60 {
+                newEnd = newStart.addingTimeInterval(15 * 60)
+            }
+        case .move:
+            return
+        }
+        store.moveBlock(id: block.id, newStart: newStart, newEnd: newEnd)
     }
 
     // MARK: - Interactions
