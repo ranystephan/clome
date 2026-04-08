@@ -1,24 +1,50 @@
 import SwiftUI
 
-/// Thin shell that composes CalendarHeaderView with the active view mode
-/// (day/week/month), items panel, AI chat bar, and manages the creation popover.
+/// Root of the Flow calendar surface.
+///
+/// Layout:
+///   ┌──────────────────────────────────────────┐
+///   │  Toolbar  (nav · today · day/week/month) │
+///   ├──────────────────────┬───────────────────┤
+///   │                      │  Agenda Sidebar   │
+///   │   Calendar Canvas    │  ─ today's items  │
+///   │   (day/week/month)   │  ─ tasks          │
+///   │                      │  ─ deadlines      │
+///   └──────────────────────┴───────────────────┘
 struct FlowCalendarView: View {
     @ObservedObject private var dataManager = CalendarDataManager.shared
     @State private var showCreationPopover = false
     @State private var creationTime: Date?
-    @State private var showItemsPanel = true
+    @State private var showSidebar = true
+
+    private let sidebarWidth: CGFloat = FlowTokens.sidebarWidth
 
     var body: some View {
         VStack(spacing: 0) {
-            CalendarHeaderView(dataManager: dataManager)
-            Divider().background(FlowTokens.border)
+            CalendarToolbar(
+                dataManager: dataManager,
+                showSidebar: $showSidebar
+            )
 
             if !dataManager.hasCalendarAccess {
                 accessRequired
             } else {
-                calendarWithPanel
+                HStack(spacing: 0) {
+                    canvas
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    if showSidebar {
+                        Rectangle()
+                            .fill(FlowTokens.border)
+                            .frame(width: FlowTokens.hairline)
+                        CalendarAgendaSidebar(dataManager: dataManager)
+                            .frame(width: sidebarWidth)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
+                }
             }
         }
+        .background(FlowTokens.bg0)
         .task { dataManager.refresh() }
         .onChange(of: dataManager.selectedDate) { _, _ in dataManager.refresh() }
         .onChange(of: dataManager.viewMode) { _, _ in dataManager.refresh() }
@@ -32,119 +58,45 @@ struct FlowCalendarView: View {
         }
     }
 
-    // MARK: - Calendar + Items Panel + Chat
+    // MARK: - Canvas
 
-    private var calendarWithPanel: some View {
-        VStack(spacing: 0) {
-            // Calendar content (expandable)
-            calendarContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            // Collapsible items panel
-            if showItemsPanel {
-                panelDivider
-                CalendarItemsPanel()
-                    .frame(maxHeight: 200)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else {
-                panelToggleBar
-            }
-
-            // AI Chat bar (always visible)
-            CalendarChatBar()
+    @ViewBuilder
+    private var canvas: some View {
+        switch dataManager.viewMode {
+        case .week:
+            CalendarWeekView(
+                dataManager: dataManager,
+                showCreationPopover: $showCreationPopover,
+                creationTime: $creationTime
+            )
+        case .month:
+            CalendarMonthView(dataManager: dataManager)
         }
-    }
-
-    // MARK: - Calendar Content
-
-    private var calendarContent: some View {
-        Group {
-            switch dataManager.viewMode {
-            case .day:
-                CalendarDayView(
-                    dataManager: dataManager,
-                    showCreationPopover: $showCreationPopover,
-                    creationTime: $creationTime
-                )
-            case .week:
-                CalendarWeekView(
-                    dataManager: dataManager,
-                    showCreationPopover: $showCreationPopover,
-                    creationTime: $creationTime
-                )
-            case .month:
-                CalendarMonthView(dataManager: dataManager)
-            }
-        }
-    }
-
-    // MARK: - Panel Divider with Toggle
-
-    private var panelDivider: some View {
-        HStack {
-            Rectangle()
-                .fill(FlowTokens.border)
-                .frame(height: 0.5)
-
-            Button {
-                withAnimation(.flowSpring) { showItemsPanel = false }
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundColor(FlowTokens.textMuted)
-                    .frame(width: 20, height: 12)
-                    .background(FlowTokens.bg2)
-                    .cornerRadius(FlowTokens.radiusSmall)
-            }
-            .buttonStyle(.plain)
-            .help("Collapse panel")
-
-            Rectangle()
-                .fill(FlowTokens.border)
-                .frame(height: 0.5)
-        }
-    }
-
-    private var panelToggleBar: some View {
-        Button {
-            withAnimation(.flowSpring) { showItemsPanel = true }
-        } label: {
-            HStack {
-                Spacer()
-                Image(systemName: "chevron.up")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundColor(FlowTokens.textMuted)
-                Text("Todos & Deadlines")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(FlowTokens.textMuted)
-                Image(systemName: "chevron.up")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundColor(FlowTokens.textMuted)
-                Spacer()
-            }
-            .padding(.vertical, FlowTokens.spacingSM)
-            .background(FlowTokens.bg1)
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Access Required
 
     private var accessRequired: some View {
-        VStack(spacing: FlowTokens.spacingMD) {
+        VStack(spacing: FlowTokens.spacingLG) {
             Spacer()
             Image(systemName: "calendar.badge.exclamationmark")
-                .font(.system(size: 28))
-                .foregroundColor(FlowTokens.textDisabled)
-            Text("Calendar access required")
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 36, weight: .light))
                 .foregroundColor(FlowTokens.textTertiary)
+            VStack(spacing: 4) {
+                Text("Calendar access required")
+                    .flowFont(.title3)
+                    .foregroundColor(FlowTokens.textPrimary)
+                Text("Flow needs access to your calendar to display events.")
+                    .flowFont(.caption)
+                    .foregroundColor(FlowTokens.textTertiary)
+            }
             Button("Grant Access") { dataManager.requestCalendarAccess() }
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(FlowTokens.accent)
-                .buttonStyle(.plain)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .tint(FlowTokens.accent)
             Spacer()
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(FlowTokens.bg0)
     }
 }

@@ -6,7 +6,6 @@ import ClomeModels
 // MARK: - Calendar View Mode
 
 enum CalendarViewMode: String, CaseIterable {
-    case day
     case week
     case month
 }
@@ -24,7 +23,7 @@ final class CalendarDataManager: ObservableObject {
 
     @Published var items: [any CalendarItemProtocol] = []
     @Published var selectedDate: Date = Date()
-    @Published var viewMode: CalendarViewMode = .day
+    @Published var viewMode: CalendarViewMode = .week
     @Published private(set) var hasCalendarAccess = false
     @Published private(set) var hasReminderAccess = false
 
@@ -128,11 +127,6 @@ final class CalendarDataManager: ObservableObject {
 
     private func dateRange(for mode: CalendarViewMode, around date: Date, calendar: Calendar) -> (Date, Date) {
         switch mode {
-        case .day:
-            let start = calendar.startOfDay(for: date)
-            let end = calendar.date(byAdding: .day, value: 1, to: start)!.addingTimeInterval(-1)
-            return (start, end)
-
         case .week:
             // Sunday-based week
             var components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)
