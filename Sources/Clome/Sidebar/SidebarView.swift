@@ -210,6 +210,13 @@ class SidebarView: NSView {
             tooltip: "Claude Sessions",
             action: #selector(sessionsToggleTapped)
         )
+        if let claudeImage = NSImage(named: "claude-logo") {
+            claudeImage.size = NSSize(width: 14, height: 14)
+            claudeImage.isTemplate = false
+            sessionsBtn.image = claudeImage
+            // Don't tint — preserve Claude brand color
+            sessionsBtn.contentTintColor = nil
+        }
         bottomBar.addSubview(sessionsBtn)
 
         remoteBtn = makeFooterIconButton(
