@@ -13,7 +13,7 @@ struct FlowPanelHostView: View {
     }
 
     @State private var isAuthenticated = false
-    @State private var activeMode: FlowMode = .calendar
+    @State private var activeMode: FlowMode = .dashboard
     @State private var authHandle: AuthStateDidChangeListenerHandle?
     @State private var showSettings = false
     @State private var showInspector = false
@@ -22,7 +22,8 @@ struct FlowPanelHostView: View {
     @Namespace private var modeAnimation
 
     enum FlowMode: String, CaseIterable, Identifiable {
-        case calendar = "Calendar"
+        case dashboard = "Dashboard"
+        case calendar = "Plan"
         case todos = "Todos"
         case deadlines = "Deadlines"
         case notes = "Notes"
@@ -32,11 +33,12 @@ struct FlowPanelHostView: View {
 
         /// Tabs that appear in the top segmented picker.
         static var dockCases: [FlowMode] {
-            [.calendar, .deadlines, .notes, .chat]
+            [.dashboard, .calendar, .deadlines, .notes, .chat]
         }
 
         var icon: String {
             switch self {
+            case .dashboard: return "square.grid.2x2"
             case .calendar:  return "calendar"
             case .todos:     return "checklist"
             case .notes:     return "note.text"
@@ -175,6 +177,8 @@ struct FlowPanelHostView: View {
     private var content: some View {
         Group {
             switch activeMode {
+            case .dashboard:
+                FlowDashboardView()
             case .calendar:
                 FlowCalendarView()
             case .todos:
