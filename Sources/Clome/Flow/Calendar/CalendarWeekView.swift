@@ -5,7 +5,19 @@ import SwiftUI
 struct CalendarWeekView: View {
     @ObservedObject var dataManager: CalendarDataManager
     @State private var now = Date()
+    @State private var createDraft: CreateDraft?
+    @State private var createTitle: String = ""
+    @State private var selectedID: String?
+    @State private var editingID: String?
+    @State private var editingTitle: String = ""
+    @State private var hoveredID: String?
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+
+    struct CreateDraft: Equatable {
+        let day: Date
+        let start: Date
+        let end: Date
+    }
 
     private var days: [Date] {
         let ref = dataManager.viewMode == .day ? dataManager.selectedDate : dataManager.selectedDate
@@ -116,6 +128,13 @@ struct CalendarWeekView: View {
         let slots = CalendarOverlapLayout.layout(timedArray(timed))
 
         return ZStack(alignment: .topLeading) {
+            // Transparent tap target for inline create.
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture(coordinateSpace: .local) { location in
+                    handleBackgroundTap(day: day, y: location.y)
+                }
+
             // Vertical divider on the right edge (skip last column).
             if !isDay && index < 6 {
                 Rectangle()
@@ -132,12 +151,106 @@ struct CalendarWeekView: View {
                 let y = CalendarGridGeometry.y(for: item.startDate)
                 let h = CalendarGridGeometry.height(from: item.startDate, to: item.endDate)
                 let past = item.endDate < now
+                let id = item.calendarItemID
 
-                CalendarEventCard(item: item, isPast: past)
-                    .frame(width: slotW - 2, height: max(18, h - 1))
-                    .offset(x: x, y: y)
+                CalendarEventCard(
+                    item: item,
+                    isPast: past,
+                    isHovered: hoveredID == id,
+                    isSelected: selectedID == id && editingID != id,
+                    isEditing: editingID == id,
+                    editingTitle: editingID == id ? $editingTitle : nil,
+                    onCommit: { commitEdit(item) },
+                    onDelete: { deleteItem(item) }
+                )
+                .frame(width: slotW - 2, height: max(18, h - 1))
+                .offset(x: x, y: y)
+                .onHover { hoveredID = $0 ? id : (hoveredID == id ? nil : hoveredID) }
+                .onTapGesture(count: 2) { beginEdit(item) }
+                .onTapGesture { selectedID = id }
+            }
+
+            // Inline create ghost card
+            if let draft = createDraft, cal.isDate(draft.day, inSameDayAs: day) {
+                CalendarInlineCreate(
+                    start: draft.start,
+                    end: draft.end,
+                    title: $createTitle,
+                    onCommit: commitCreate,
+                    onCancel: cancelCreate
+                )
+                .frame(
+                    width: width - 4,
+                    height: max(24, CalendarGridGeometry.height(from: draft.start, to: draft.end) - 1)
+                )
+                .offset(x: 2, y: CalendarGridGeometry.y(for: draft.start))
             }
         }
+    }
+
+    // MARK: - Interactions
+
+    private func handleBackgroundTap(day: Date, y: CGFloat) {
+        // If we're creating or editing, a background tap commits / dismisses.
+        if createDraft != nil { commitCreate(); return }
+        if editingID != nil { commitEditCurrent(); return }
+        if selectedID != nil { selectedID = nil; return }
+
+        let start = CalendarGridGeometry.time(forY: y, onDay: day)
+        let end = start.addingTimeInterval(60 * 60)
+        createTitle = ""
+        createDraft = CreateDraft(day: Calendar.current.startOfDay(for: day), start: start, end: end)
+    }
+
+    private func commitCreate() {
+        guard let draft = createDraft else { return }
+        let title = createTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty {
+            dataManager.createSystemEvent(title: title, start: draft.start, end: draft.end)
+        }
+        createDraft = nil
+        createTitle = ""
+    }
+
+    private func cancelCreate() {
+        createDraft = nil
+        createTitle = ""
+    }
+
+    private func beginEdit(_ item: any CalendarItemProtocol) {
+        guard item.kind == .systemEvent else { return }
+        selectedID = item.calendarItemID
+        editingID = item.calendarItemID
+        editingTitle = item.title
+    }
+
+    private func commitEdit(_ item: any CalendarItemProtocol) {
+        guard let sys = item as? SystemEventItem else {
+            editingID = nil
+            return
+        }
+        let trimmed = editingTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty && trimmed != sys.title {
+            dataManager.updateSystemEvent(identifier: sys.eventIdentifier, title: trimmed)
+        }
+        editingID = nil
+    }
+
+    private func commitEditCurrent() {
+        guard let id = editingID,
+              let item = dataManager.items.first(where: { $0.calendarItemID == id }) else {
+            editingID = nil
+            return
+        }
+        commitEdit(item)
+    }
+
+    private func deleteItem(_ item: any CalendarItemProtocol) {
+        if let sys = item as? SystemEventItem {
+            dataManager.deleteSystemEvent(identifier: sys.eventIdentifier)
+        }
+        selectedID = nil
+        editingID = nil
     }
 
     /// Type-erase to a concrete array so `CalendarOverlapLayout.layout` (generic)
