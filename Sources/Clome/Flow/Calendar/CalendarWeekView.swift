@@ -18,7 +18,6 @@ struct CalendarWeekView: View {
     @State private var now = Date()
     @State private var createDraft: CreateDraft?
     @State private var createTitle: String = ""
-    @State private var selectedID: String?
     @State private var editingID: String?
     @State private var editingTitle: String = ""
     @State private var hoveredID: String?
@@ -196,7 +195,7 @@ struct CalendarWeekView: View {
                     block: block,
                     isPast: past,
                     isHovered: hoveredID == id,
-                    isSelected: selectedID == id && editingID != id,
+                    isSelected: store.selectedBlockID == id && editingID != id,
                     isEditing: editingID == id,
                     editingTitle: editingID == id ? $editingTitle : nil,
                     onCommit: { commitEdit(block) },
@@ -206,7 +205,7 @@ struct CalendarWeekView: View {
                 .offset(x: x, y: y)
                 .onHover { hoveredID = $0 ? id : (hoveredID == id ? nil : hoveredID) }
                 .onTapGesture(count: 2) { beginEdit(block) }
-                .onTapGesture { selectedID = id }
+                .onTapGesture { store.selectedBlockID = id }
             }
 
             // Inline create ghost card
@@ -232,7 +231,7 @@ struct CalendarWeekView: View {
     private func handleBackgroundTap(day: Date, y: CGFloat) {
         if createDraft != nil { commitCreate(); return }
         if editingID != nil { commitEditCurrent(); return }
-        if selectedID != nil { selectedID = nil; return }
+        if store.selectedBlockID != nil { store.selectedBlockID = nil; return }
 
         let start = CalendarGridGeometry.time(forY: y, onDay: day)
         let end = start.addingTimeInterval(60 * 60)
@@ -261,7 +260,7 @@ struct CalendarWeekView: View {
 
     private func beginEdit(_ block: Block) {
         guard block.isEditable else { return }
-        selectedID = block.id
+        store.selectedBlockID = block.id
         editingID = block.id
         editingTitle = block.title
     }
@@ -285,7 +284,7 @@ struct CalendarWeekView: View {
 
     private func deleteBlock(_ block: Block) {
         store.deleteAny(id: block.id)
-        selectedID = nil
+        store.selectedBlockID = nil
         editingID = nil
     }
 

@@ -19,6 +19,9 @@ final class BlockStore: ObservableObject {
     /// Merged view of all blocks (native + adapters). Recomputed on change.
     @Published private(set) var blocks: [Block] = []
 
+    /// Currently selected block id, if any. Drives the Block Inspector.
+    @Published var selectedBlockID: String?
+
     // MARK: - Private state
 
     private var db: OpaquePointer?

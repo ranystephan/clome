@@ -3,6 +3,7 @@ import SwiftUI
 /// Root of the Flow calendar surface.
 struct FlowCalendarView: View {
     @ObservedObject private var dataManager = CalendarDataManager.shared
+    @ObservedObject private var store = BlockStore.shared
     @State private var showSidebar = true
 
     var body: some View {
@@ -27,7 +28,7 @@ struct FlowCalendarView: View {
                         Rectangle()
                             .fill(FlowTokens.border)
                             .frame(width: FlowTokens.hairline)
-                        CalendarAgendaSidebar(dataManager: dataManager)
+                        sidebarContent
                             .frame(width: FlowTokens.sidebarWidth)
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
@@ -38,6 +39,18 @@ struct FlowCalendarView: View {
         .task { dataManager.refresh() }
         .onChange(of: dataManager.selectedDate) { _, _ in dataManager.refresh() }
         .onChange(of: dataManager.viewMode) { _, _ in dataManager.refresh() }
+    }
+
+    @ViewBuilder
+    private var sidebarContent: some View {
+        if let id = store.selectedBlockID, let block = store.block(withID: id) {
+            BlockInspector(store: store, block: block)
+                .id(id) // force re-sync when selection changes
+                .transition(.opacity)
+        } else {
+            CalendarAgendaSidebar(dataManager: dataManager)
+                .transition(.opacity)
+        }
     }
 
     private var accessRequired: some View {
