@@ -26,7 +26,8 @@ struct CalendarWeekView: View {
     private let hourHeight: CGFloat = 42
     private let gutterWidth: CGFloat = 52
     private let headerHeight: CGFloat = 58
-    private let allDayLaneHeight: CGFloat = 24
+    private let allDayPillHeight: CGFloat = 18
+    private let allDayMaxRows: Int = 2
 
     private var timelineHeight: CGFloat {
         CGFloat(endHour - startHour) * hourHeight
@@ -128,35 +129,46 @@ struct CalendarWeekView: View {
     // MARK: - All-day strip
 
     private var allDayStrip: some View {
-        HStack(spacing: 0) {
+        // Compute strip height from the busiest column so the lane fits
+        // exactly N rows + padding — never expands to fill the parent.
+        let busiest = min(allDayMaxRows + 1, // +1 for the "+N" overflow row
+                          weekDays.map { allDayItems(for: $0).count }.max() ?? 0)
+        let visibleRows = min(busiest, allDayMaxRows + 1)
+        let stripHeight = CGFloat(max(1, visibleRows)) * (allDayPillHeight + 2)
+            + FlowTokens.spacingSM * 2
+
+        return HStack(alignment: .top, spacing: 0) {
             Text("all-day")
                 .flowFont(.micro)
                 .foregroundColor(FlowTokens.textMuted)
                 .frame(width: gutterWidth, alignment: .trailing)
                 .padding(.trailing, FlowTokens.spacingSM)
+                .padding(.top, FlowTokens.spacingSM + 2)
 
-            HStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
                 ForEach(weekDays, id: \.self) { day in
                     let items = allDayItems(for: day)
                     VStack(alignment: .leading, spacing: 2) {
-                        ForEach(items.prefix(2), id: \.calendarItemID) { item in
+                        ForEach(items.prefix(allDayMaxRows), id: \.calendarItemID) { item in
                             allDayPill(item)
                                 .onTapGesture { openDetail(item) }
                         }
-                        if items.count > 2 {
-                            Text("+\(items.count - 2)")
+                        if items.count > allDayMaxRows {
+                            Text("+\(items.count - allDayMaxRows)")
                                 .flowFont(.micro)
                                 .foregroundColor(FlowTokens.textMuted)
+                                .frame(height: allDayPillHeight)
                                 .padding(.leading, 4)
                         }
+                        Spacer(minLength: 0)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                     .padding(.horizontal, 3)
                 }
             }
         }
+        .frame(height: stripHeight)
         .padding(.vertical, FlowTokens.spacingSM)
-        .frame(minHeight: allDayLaneHeight)
         .background(FlowTokens.bg0)
     }
 
@@ -170,9 +182,9 @@ struct CalendarWeekView: View {
                 .foregroundColor(FlowTokens.textPrimary)
                 .lineLimit(1)
                 .padding(.trailing, 5)
-                .padding(.vertical, 2)
             Spacer(minLength: 0)
         }
+        .frame(height: allDayPillHeight)
         .background(
             RoundedRectangle(cornerRadius: FlowTokens.radiusControl - 2, style: .continuous)
                 .fill(item.displayColor.opacity(FlowTokens.eventFillActive))
