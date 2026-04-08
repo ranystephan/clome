@@ -49,11 +49,11 @@ struct FlowDeadlineView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().background(FlowTokens.border)
+            Rectangle().fill(FlowTokens.border).frame(height: FlowTokens.hairline)
 
             if showAddForm {
                 addForm
-                Divider().background(FlowTokens.border)
+                Rectangle().fill(FlowTokens.border).frame(height: FlowTokens.hairline)
             }
 
             if activeDeadlines.isEmpty && !showAddForm {
@@ -92,12 +92,13 @@ struct FlowDeadlineView: View {
 
     private var addForm: some View {
         VStack(spacing: FlowTokens.spacingMD) {
-            TextField("Deadline title...", text: $newTitle)
+            TextField("Deadline title…", text: $newTitle)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
+                .flowFont(.body)
                 .foregroundColor(FlowTokens.textPrimary)
                 .focused($isAddFocused)
                 .onSubmit { saveDeadline() }
+                .flowInput(isFocused: isAddFocused)
 
             HStack(spacing: FlowTokens.spacingMD) {
                 // Date picker
@@ -123,22 +124,20 @@ struct FlowDeadlineView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: FlowTokens.spacingSM) {
                     ForEach([HabitCategory.general, .work, .study, .research, .lecture, .creative], id: \.self) { cat in
+                        let isActive = newCategory == cat
                         Button {
                             newCategory = cat
                         } label: {
-                            HStack(spacing: 3) {
+                            HStack(spacing: 4) {
                                 Image(systemName: cat.icon)
-                                    .font(.system(size: 8))
+                                    .font(.system(size: 9, weight: .semibold))
                                 Text(cat.displayName)
-                                    .font(.system(size: 9, weight: .medium))
+                                    .flowFont(.micro)
                             }
-                            .foregroundColor(newCategory == cat ? FlowTokens.textPrimary : FlowTokens.textTertiary)
-                            .padding(.horizontal, FlowTokens.spacingMD)
-                            .padding(.vertical, 3)
-                            .background(
-                                RoundedRectangle(cornerRadius: FlowTokens.radiusSmall, style: .continuous)
-                                    .fill(newCategory == cat ? FlowTokens.accentSubtle : FlowTokens.bg2)
-                            )
+                            .foregroundColor(isActive ? FlowTokens.textPrimary : FlowTokens.textTertiary)
+                            .padding(.horizontal, FlowTokens.spacingMD - 2)
+                            .padding(.vertical, 4)
+                            .flowControl(isActive: isActive, radius: FlowTokens.radiusControl)
                         }
                         .buttonStyle(.plain)
                     }
@@ -270,7 +269,7 @@ struct FlowDeadlineView: View {
 
             // Expanded content
             if isExpanded {
-                Divider().background(FlowTokens.border)
+                Rectangle().fill(FlowTokens.border).frame(height: FlowTokens.hairline)
 
                 if !deadline.linkedEventTitles.isEmpty {
                     VStack(alignment: .leading, spacing: FlowTokens.spacingXS) {

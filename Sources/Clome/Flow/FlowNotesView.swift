@@ -36,9 +36,9 @@ struct FlowNotesView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().background(FlowTokens.border)
+            Rectangle().fill(FlowTokens.border).frame(height: FlowTokens.hairline)
             categoryFilterBar
-            Divider().background(FlowTokens.border)
+            Rectangle().fill(FlowTokens.border).frame(height: FlowTokens.hairline)
 
             if sync.notes.isEmpty {
                 emptyState
@@ -121,24 +121,21 @@ struct FlowNotesView: View {
     private func filterChip(label: String, icon: String?, isActive: Bool, count: Int,
                              action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 3) {
+            HStack(spacing: 4) {
                 if let icon {
                     Image(systemName: icon)
-                        .font(.system(size: 8))
+                        .font(.system(size: 9, weight: .semibold))
                 }
                 Text(label)
-                    .font(.system(size: 9, weight: .medium))
+                    .flowFont(.micro)
                 Text("\(count)")
-                    .font(.system(size: 8, weight: .regular, design: .monospaced))
+                    .flowFont(.timestamp)
                     .foregroundColor(isActive ? FlowTokens.textSecondary : FlowTokens.textMuted)
             }
             .foregroundColor(isActive ? FlowTokens.textPrimary : FlowTokens.textTertiary)
-            .padding(.horizontal, FlowTokens.spacingMD)
-            .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: FlowTokens.radiusSmall, style: .continuous)
-                    .fill(isActive ? FlowTokens.accentSubtle : FlowTokens.bg2)
-            )
+            .padding(.horizontal, FlowTokens.spacingMD - 2)
+            .padding(.vertical, 4)
+            .flowControl(isActive: isActive, radius: FlowTokens.radiusControl)
         }
         .buttonStyle(.plain)
     }
@@ -148,32 +145,28 @@ struct FlowNotesView: View {
     private var notesList: some View {
         ScrollView {
             VStack(spacing: 0) {
-                // Search field (collapsible)
                 if showSearch {
                     HStack(spacing: FlowTokens.spacingSM) {
                         Image(systemName: "magnifyingglass")
-                            .font(.system(size: 10))
+                            .font(.system(size: 11, weight: .medium))
                             .foregroundColor(FlowTokens.textHint)
-                        TextField("Search notes...", text: $searchText)
+                        TextField("Search notes…", text: $searchText)
                             .textFieldStyle(.plain)
-                            .font(.system(size: 11))
+                            .flowFont(.body)
                             .foregroundColor(FlowTokens.textPrimary)
                         if !searchText.isEmpty {
                             Button {
                                 searchText = ""
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 11))
                                     .foregroundColor(FlowTokens.textMuted)
                             }
                             .buttonStyle(.plain)
                         }
                     }
-                    .padding(.horizontal, FlowTokens.spacingMD)
-                    .padding(.vertical, FlowTokens.spacingSM)
-                    .background(FlowTokens.bg2)
-                    .cornerRadius(FlowTokens.radiusSmall)
-                    .padding(.horizontal, FlowTokens.spacingMD)
+                    .flowInput()
+                    .padding(.horizontal, FlowTokens.spacingLG)
                     .padding(.top, FlowTokens.spacingMD)
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
@@ -198,10 +191,9 @@ struct FlowNotesView: View {
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 0) {
-                // Left category accent bar
                 RoundedRectangle(cornerRadius: 1)
                     .fill(categoryColor(note.category))
-                    .frame(width: 3)
+                    .frame(width: FlowTokens.accentBarWidth)
 
                 VStack(alignment: .leading, spacing: FlowTokens.spacingSM) {
                     // Header row

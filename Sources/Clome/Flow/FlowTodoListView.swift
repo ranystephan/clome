@@ -35,7 +35,7 @@ struct FlowTodoListView: View {
     var body: some View {
         VStack(spacing: 0) {
             inputBar
-            Divider().background(FlowTokens.border)
+            Rectangle().fill(FlowTokens.border).frame(height: FlowTokens.hairline)
             todoList
         }
     }
@@ -43,9 +43,8 @@ struct FlowTodoListView: View {
     // MARK: - Input Bar
 
     private var inputBar: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: FlowTokens.spacingSM) {
-                // Priority indicator
+        VStack(spacing: FlowTokens.spacingSM) {
+            HStack(spacing: FlowTokens.spacingMD) {
                 Button {
                     withAnimation(.flowQuick) { showPriorityPicker.toggle() }
                 } label: {
@@ -56,9 +55,9 @@ struct FlowTodoListView: View {
                 .buttonStyle(.plain)
                 .help("Priority: \(newTodoPriority.displayName)")
 
-                TextField("Add todo...", text: $newTodoText)
+                TextField("Add todo…", text: $newTodoText)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12))
+                    .flowFont(.body)
                     .foregroundColor(FlowTokens.textPrimary)
                     .focused($isInputFocused)
                     .onSubmit { addTodo() }
@@ -67,18 +66,16 @@ struct FlowTodoListView: View {
                     Button {
                         addTodo()
                     } label: {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 14))
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 16, weight: .regular))
                             .foregroundColor(FlowTokens.accent)
                     }
                     .buttonStyle(.plain)
+                    .keyboardShortcut(.return, modifiers: [])
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, FlowTokens.spacingMD)
-            .background(FlowTokens.bg1)
+            .flowInput(isFocused: isInputFocused)
 
-            // Priority picker row
             if showPriorityPicker || isInputFocused {
                 HStack(spacing: FlowTokens.spacingSM) {
                     ForEach(TodoPriority.allCases, id: \.self) { priority in
@@ -86,32 +83,29 @@ struct FlowTodoListView: View {
                     }
                     Spacer()
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, FlowTokens.spacingSM)
-                .background(FlowTokens.bg1)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        .padding(.horizontal, FlowTokens.spacingLG)
+        .padding(.vertical, FlowTokens.spacingMD)
     }
 
     private func priorityPill(_ priority: TodoPriority) -> some View {
-        Button {
+        let isActive = newTodoPriority == priority
+        return Button {
             withAnimation(.flowQuick) { newTodoPriority = priority }
         } label: {
-            HStack(spacing: 3) {
+            HStack(spacing: 4) {
                 Circle()
                     .fill(priorityColor(priority))
                     .frame(width: 6, height: 6)
                 Text(priority.displayName)
-                    .font(.system(size: 9, weight: .medium))
+                    .flowFont(.micro)
             }
-            .foregroundColor(newTodoPriority == priority ? FlowTokens.textPrimary : FlowTokens.textTertiary)
-            .padding(.horizontal, FlowTokens.spacingMD)
-            .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: FlowTokens.radiusSmall, style: .continuous)
-                    .fill(newTodoPriority == priority ? FlowTokens.bg3 : Color.clear)
-            )
+            .foregroundColor(isActive ? FlowTokens.textPrimary : FlowTokens.textTertiary)
+            .padding(.horizontal, FlowTokens.spacingMD - 2)
+            .padding(.vertical, 4)
+            .flowControl(isActive: isActive, radius: FlowTokens.radiusControl)
         }
         .buttonStyle(.plain)
     }
@@ -151,10 +145,10 @@ struct FlowTodoListView: View {
                     .flowSectionHeader()
                 Spacer()
                 Text("\(items.count)")
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .flowFont(.timestamp)
                     .foregroundColor(FlowTokens.textMuted)
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, FlowTokens.spacingLG)
             .padding(.top, FlowTokens.spacingLG)
             .padding(.bottom, FlowTokens.spacingSM)
 
@@ -167,69 +161,63 @@ struct FlowTodoListView: View {
     // MARK: - Todo Row
 
     private func todoRow(_ todo: TodoItem) -> some View {
-        HStack(spacing: 0) {
-            // Left priority bar
+        HStack(spacing: FlowTokens.spacingMD) {
+            // Priority accent bar (tokenized)
             RoundedRectangle(cornerRadius: 1)
                 .fill(priorityColor(todo.priority))
-                .frame(width: 3)
-                .padding(.vertical, 4)
+                .frame(width: FlowTokens.accentBarWidth)
+                .padding(.vertical, 6)
 
-            HStack(spacing: FlowTokens.spacingMD) {
-                // Checkbox
-                Button {
-                    withAnimation(.flowSpring) {
-                        syncService.toggleTodoComplete(id: todo.id)
-                    }
-                } label: {
-                    Image(systemName: todo.isCompleted ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 14))
-                        .foregroundColor(todo.isCompleted ? FlowTokens.success.opacity(0.6) : FlowTokens.textTertiary)
+            Button {
+                withAnimation(.flowSpring) {
+                    syncService.toggleTodoComplete(id: todo.id)
                 }
-                .buttonStyle(.plain)
-
-                // Title (inline edit or display)
-                if editingTodoID == todo.id {
-                    TextField("", text: $editingText)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12))
-                        .foregroundColor(FlowTokens.textPrimary)
-                        .focused($isEditFocused)
-                        .onSubmit { commitEdit(todo.id) }
-                        .onExitCommand { cancelEdit() }
-                } else {
-                    Text(todo.title)
-                        .font(.system(size: 12))
-                        .foregroundColor(todo.isCompleted ? FlowTokens.textDisabled : FlowTokens.textPrimary)
-                        .strikethrough(todo.isCompleted, color: FlowTokens.textDisabled)
-                        .lineLimit(1)
-                        .onTapGesture(count: 2) {
-                            startEdit(todo)
-                        }
-                }
-
-                Spacer()
-
-                // Category icon
-                Image(systemName: todo.category.icon)
-                    .font(.system(size: 9))
-                    .foregroundColor(FlowTokens.textMuted)
-
-                // Delete button
-                Button {
-                    withAnimation(.flowSpring) {
-                        syncService.deleteTodo(id: todo.id)
-                    }
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(FlowTokens.textMuted)
-                }
-                .buttonStyle(.plain)
-                .opacity(0.5)
+            } label: {
+                Image(systemName: todo.isCompleted ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundColor(todo.isCompleted ? FlowTokens.success.opacity(0.7) : FlowTokens.textTertiary)
             }
-            .padding(.leading, FlowTokens.spacingMD)
-            .padding(.trailing, 10)
+            .buttonStyle(.plain)
+
+            if editingTodoID == todo.id {
+                TextField("", text: $editingText)
+                    .textFieldStyle(.plain)
+                    .flowFont(.body)
+                    .foregroundColor(FlowTokens.textPrimary)
+                    .focused($isEditFocused)
+                    .onSubmit { commitEdit(todo.id) }
+                    .onExitCommand { cancelEdit() }
+            } else {
+                Text(todo.title)
+                    .flowFont(.body)
+                    .foregroundColor(todo.isCompleted ? FlowTokens.textDisabled : FlowTokens.textPrimary)
+                    .strikethrough(todo.isCompleted, color: FlowTokens.textDisabled)
+                    .lineLimit(1)
+                    .onTapGesture(count: 2) {
+                        startEdit(todo)
+                    }
+            }
+
+            Spacer()
+
+            Image(systemName: todo.category.icon)
+                .font(.system(size: 10))
+                .foregroundColor(FlowTokens.textMuted)
+
+            Button {
+                withAnimation(.flowSpring) {
+                    syncService.deleteTodo(id: todo.id)
+                }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(FlowTokens.textMuted)
+            }
+            .buttonStyle(.plain)
+            .opacity(0.5)
         }
+        .padding(.leading, FlowTokens.spacingLG - 2)
+        .padding(.trailing, FlowTokens.spacingLG)
         .frame(height: FlowTokens.rowHeight)
         .background(Color.clear)
         .contentShape(Rectangle())
@@ -242,20 +230,20 @@ struct FlowTodoListView: View {
             Button {
                 withAnimation(.flowSpring) { showCompleted.toggle() }
             } label: {
-                HStack {
+                HStack(spacing: FlowTokens.spacingSM) {
                     Image(systemName: showCompleted ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: 9, weight: .semibold))
                         .foregroundColor(FlowTokens.textMuted)
                     Text("COMPLETED")
                         .flowSectionHeader()
                     Spacer()
                     Text("\(completedTodos.count)")
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .flowFont(.timestamp)
                         .foregroundColor(FlowTokens.textMuted)
                 }
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, FlowTokens.spacingLG)
             .padding(.top, FlowTokens.spacingLG)
             .padding(.bottom, FlowTokens.spacingSM)
 
@@ -271,15 +259,15 @@ struct FlowTodoListView: View {
 
     private var emptyState: some View {
         VStack(spacing: FlowTokens.spacingMD) {
-            Spacer().frame(height: 40)
+            Spacer().frame(height: 48)
             Image(systemName: "checkmark.circle")
-                .font(.system(size: 28))
+                .font(.system(size: 28, weight: .light))
                 .foregroundColor(FlowTokens.textDisabled)
             Text("All clear")
-                .font(.system(size: 13, weight: .medium))
+                .flowFont(.title3)
                 .foregroundColor(FlowTokens.textTertiary)
             Text("Add a todo above to get started")
-                .font(.system(size: 11))
+                .flowFont(.caption)
                 .foregroundColor(FlowTokens.textMuted)
             Spacer()
         }
