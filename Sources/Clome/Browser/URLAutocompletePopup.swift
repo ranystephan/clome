@@ -1,14 +1,48 @@
 import AppKit
 
+enum URLSuggestionKind {
+    case directNavigation
+    case search
+    case bookmark
+    case history
+
+    var symbolName: String {
+        switch self {
+        case .directNavigation: return "arrow.up.forward"
+        case .search: return "magnifyingglass"
+        case .bookmark: return "star.fill"
+        case .history: return "clock"
+        }
+    }
+
+    var badgeText: String {
+        switch self {
+        case .directNavigation: return "Open"
+        case .search: return "Search"
+        case .bookmark: return "Saved"
+        case .history: return "Recent"
+        }
+    }
+
+    var tintColor: NSColor {
+        switch self {
+        case .directNavigation: return NSColor.systemBlue.withAlphaComponent(0.82)
+        case .search: return NSColor.white.withAlphaComponent(0.72)
+        case .bookmark: return NSColor.systemYellow.withAlphaComponent(0.86)
+        case .history: return NSColor.white.withAlphaComponent(0.42)
+        }
+    }
+}
+
 /// A single autocomplete suggestion for the URL bar.
 struct URLSuggestion {
     let title: String
-    let url: String
-    let isBookmark: Bool
+    let subtitle: String
+    let value: String
+    let kind: URLSuggestionKind
 }
 
-/// A floating popup below the URL bar showing autocomplete suggestions
-/// from history and bookmarks, styled to match the Clome dark theme.
+/// A floating popup below the URL bar showing local navigation suggestions.
 @MainActor
 final class URLAutocompletePopup: NSObject {
 
@@ -19,18 +53,17 @@ final class URLAutocompletePopup: NSObject {
 
     private var panel: NSPanel?
     private var tableView: NSTableView?
-    private var scrollView: NSScrollView?
 
-    private let rowHeight: CGFloat = 36
-    private let maxVisible: Int = 7
+    private let rowHeight: CGFloat = 52
+    private let maxVisible = 8
 
     var popupHeight: CGFloat {
-        min(CGFloat(suggestions.count), CGFloat(maxVisible)) * rowHeight + 4
+        min(CGFloat(suggestions.count), CGFloat(maxVisible)) * rowHeight + 12
     }
 
     func update(suggestions: [URLSuggestion]) {
         self.suggestions = suggestions
-        self.selectedIndex = -1
+        self.selectedIndex = suggestions.isEmpty ? -1 : 0
         tableView?.reloadData()
     }
 
@@ -39,79 +72,81 @@ final class URLAutocompletePopup: NSObject {
         let viewFrameOnScreen = parentWindow.convertToScreen(viewFrameInWindow)
         let width = viewFrameOnScreen.width
         let height = popupHeight
-        let origin = NSPoint(x: viewFrameOnScreen.origin.x, y: viewFrameOnScreen.origin.y - height)
-        let frame = NSRect(x: origin.x, y: origin.y, width: width, height: height)
+        let frame = NSRect(
+            x: viewFrameOnScreen.origin.x,
+            y: viewFrameOnScreen.origin.y - height - 6,
+            width: width,
+            height: height
+        )
 
-        if let panel = panel {
+        if let panel {
             panel.setFrame(frame, display: true)
             tableView?.reloadData()
             return
         }
 
-        // Create panel
-        let p = NSPanel(
+        let panel = NSPanel(
             contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        p.isOpaque = false
-        p.backgroundColor = .clear
-        p.hasShadow = true
-        p.level = .popUpMenu
-        p.isReleasedWhenClosed = false
-        p.hidesOnDeactivate = true
-        p.becomesKeyOnlyIfNeeded = true
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .popUpMenu
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = true
+        panel.becomesKeyOnlyIfNeeded = true
 
-        // Container with rounded corners
-        let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
+        let container = NSVisualEffectView(frame: NSRect(origin: .zero, size: frame.size))
+        container.material = .hudWindow
+        container.blendingMode = .withinWindow
+        container.state = .active
         container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.10, alpha: 0.98).cgColor
-        container.layer?.cornerRadius = 10
+        container.layer?.cornerRadius = 16
         container.layer?.cornerCurve = .continuous
-        container.layer?.borderColor = NSColor(white: 1.0, alpha: 0.08).cgColor
-        container.layer?.borderWidth = 0.5
+        container.layer?.borderColor = NSColor(white: 1.0, alpha: 0.10).cgColor
+        container.layer?.borderWidth = 1
         container.autoresizingMask = [.width, .height]
 
-        // Table view
-        let tv = NSTableView()
-        tv.backgroundColor = .clear
-        tv.headerView = nil
-        tv.rowHeight = rowHeight
-        tv.intercellSpacing = NSSize(width: 0, height: 0)
-        tv.selectionHighlightStyle = .none
-        tv.delegate = self
-        tv.dataSource = self
-        tv.action = #selector(rowClicked(_:))
-        tv.target = self
+        let tableView = NSTableView()
+        tableView.backgroundColor = .clear
+        tableView.headerView = nil
+        tableView.rowHeight = rowHeight
+        tableView.intercellSpacing = .zero
+        tableView.selectionHighlightStyle = .none
+        tableView.focusRingType = .none
+        tableView.delegate = self
+        tableView.dataSource = self
+        tableView.action = #selector(rowClicked(_:))
+        tableView.target = self
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("suggestion"))
         column.width = frame.width
-        tv.addTableColumn(column)
+        tableView.addTableColumn(column)
 
-        let sv = NSScrollView(frame: NSRect(x: 0, y: 2, width: frame.width, height: frame.height - 4))
-        sv.documentView = tv
-        sv.drawsBackground = false
-        sv.hasVerticalScroller = false
-        sv.autoresizingMask = [.width, .height]
-        container.addSubview(sv)
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 6, width: frame.width, height: frame.height - 12))
+        scrollView.documentView = tableView
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = false
+        scrollView.autoresizingMask = [.width, .height]
+        container.addSubview(scrollView)
 
-        p.contentView = container
-        self.panel = p
-        self.tableView = tv
-        self.scrollView = sv
+        panel.contentView = container
+        self.panel = panel
+        self.tableView = tableView
 
-        parentWindow.addChildWindow(p, ordered: .above)
+        parentWindow.addChildWindow(panel, ordered: .above)
     }
 
     func dismiss() {
-        if let p = panel {
-            p.parent?.removeChildWindow(p)
-            p.orderOut(nil)
+        if let panel {
+            panel.parent?.removeChildWindow(panel)
+            panel.orderOut(nil)
         }
         panel = nil
         tableView = nil
-        scrollView = nil
     }
 
     func moveSelection(down: Bool) {
@@ -128,14 +163,12 @@ final class URLAutocompletePopup: NSObject {
     }
 
     @objc private func rowClicked(_ sender: Any?) {
-        guard let tv = tableView else { return }
-        let row = tv.clickedRow
+        guard let tableView else { return }
+        let row = tableView.clickedRow
         guard row >= 0, row < suggestions.count else { return }
         onSelect?(suggestions[row])
     }
 }
-
-// MARK: - NSTableViewDataSource & NSTableViewDelegate
 
 extension URLAutocompletePopup: NSTableViewDataSource, NSTableViewDelegate {
 
@@ -151,38 +184,53 @@ extension URLAutocompletePopup: NSTableViewDataSource, NSTableViewDelegate {
 
             let cellView = NSView(frame: NSRect(x: 0, y: 0, width: tableView.bounds.width, height: rowHeight))
             cellView.wantsLayer = true
-            cellView.layer?.cornerRadius = 6
+            cellView.layer?.cornerRadius = 12
+            cellView.layer?.cornerCurve = .continuous
             cellView.layer?.backgroundColor = isSelected
-                ? NSColor(white: 1.0, alpha: 0.08).cgColor
+                ? NSColor.white.withAlphaComponent(0.09).cgColor
                 : NSColor.clear.cgColor
 
-            // Icon
-            let iconView = NSImageView(frame: NSRect(x: 10, y: 10, width: 16, height: 16))
-            let symbolName = suggestion.isBookmark ? "star.fill" : "clock"
-            let cfg = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
-            iconView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
-            iconView.contentTintColor = suggestion.isBookmark
-                ? NSColor.systemYellow.withAlphaComponent(0.7)
-                : NSColor(white: 0.4, alpha: 1.0)
-            cellView.addSubview(iconView)
+            let iconContainer = NSView(frame: NSRect(x: 12, y: 9, width: 34, height: 34))
+            iconContainer.wantsLayer = true
+            iconContainer.layer?.cornerRadius = 10
+            iconContainer.layer?.cornerCurve = .continuous
+            iconContainer.layer?.backgroundColor = suggestion.kind.tintColor.withAlphaComponent(0.16).cgColor
+            cellView.addSubview(iconContainer)
 
-            // Title
-            let displayTitle = suggestion.title.isEmpty ? suggestion.url : suggestion.title
-            let titleLabel = NSTextField(labelWithString: displayTitle)
-            titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
-            titleLabel.textColor = NSColor(white: 0.85, alpha: 1.0)
+            let iconView = NSImageView(frame: NSRect(x: 9, y: 9, width: 16, height: 16))
+            let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+            iconView.image = NSImage(systemSymbolName: suggestion.kind.symbolName, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+            iconView.contentTintColor = suggestion.kind.tintColor
+            iconContainer.addSubview(iconView)
+
+            let titleLabel = NSTextField(labelWithString: suggestion.title)
+            titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+            titleLabel.textColor = NSColor.white.withAlphaComponent(0.92)
             titleLabel.lineBreakMode = .byTruncatingTail
-            titleLabel.frame = NSRect(x: 34, y: 18, width: tableView.bounds.width - 48, height: 16)
+            titleLabel.frame = NSRect(x: 56, y: 25, width: tableView.bounds.width - 138, height: 16)
             cellView.addSubview(titleLabel)
 
-            // URL
-            let cleanedURL = cleanURL(suggestion.url)
-            let urlLabel = NSTextField(labelWithString: cleanedURL)
-            urlLabel.font = .systemFont(ofSize: 10, weight: .regular)
-            urlLabel.textColor = NSColor(white: 0.4, alpha: 1.0)
-            urlLabel.lineBreakMode = .byTruncatingTail
-            urlLabel.frame = NSRect(x: 34, y: 3, width: tableView.bounds.width - 48, height: 14)
-            cellView.addSubview(urlLabel)
+            let subtitleLabel = NSTextField(labelWithString: suggestion.subtitle)
+            subtitleLabel.font = .systemFont(ofSize: 11, weight: .regular)
+            subtitleLabel.textColor = NSColor.white.withAlphaComponent(0.42)
+            subtitleLabel.lineBreakMode = .byTruncatingTail
+            subtitleLabel.frame = NSRect(x: 56, y: 10, width: tableView.bounds.width - 138, height: 14)
+            cellView.addSubview(subtitleLabel)
+
+            let badgeLabel = NSTextField(labelWithString: suggestion.kind.badgeText.uppercased())
+            badgeLabel.font = .systemFont(ofSize: 9, weight: .semibold)
+            badgeLabel.alignment = .center
+            badgeLabel.textColor = isSelected
+                ? NSColor.white.withAlphaComponent(0.85)
+                : NSColor.white.withAlphaComponent(0.52)
+            badgeLabel.frame = NSRect(x: tableView.bounds.width - 72, y: 18, width: 56, height: 14)
+            badgeLabel.wantsLayer = true
+            badgeLabel.layer?.cornerRadius = 7
+            badgeLabel.layer?.cornerCurve = .continuous
+            badgeLabel.layer?.backgroundColor = isSelected
+                ? NSColor.white.withAlphaComponent(0.13).cgColor
+                : NSColor.white.withAlphaComponent(0.06).cgColor
+            cellView.addSubview(badgeLabel)
 
             return cellView
         }
@@ -190,14 +238,5 @@ extension URLAutocompletePopup: NSTableViewDataSource, NSTableViewDelegate {
 
     nonisolated func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
         MainActor.assumeIsolated { rowHeight }
-    }
-
-    private func cleanURL(_ url: String) -> String {
-        var cleaned = url
-        if cleaned.hasPrefix("https://") { cleaned = String(cleaned.dropFirst(8)) }
-        else if cleaned.hasPrefix("http://") { cleaned = String(cleaned.dropFirst(7)) }
-        if cleaned.hasPrefix("www.") { cleaned = String(cleaned.dropFirst(4)) }
-        if cleaned.hasSuffix("/") { cleaned = String(cleaned.dropLast()) }
-        return cleaned
     }
 }

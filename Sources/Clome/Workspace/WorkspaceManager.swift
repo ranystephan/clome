@@ -110,7 +110,11 @@ class WorkspaceManager {
 
             // Restore tabs
             for tab in savedWs.tabs {
+                let beforeCount = workspace.tabs.count
                 restoreTab(tab, into: workspace)
+                if tab.pinned, workspace.tabs.count > beforeCount {
+                    workspace.tabs[workspace.tabs.count - 1].isPinned = true
+                }
             }
 
             // Re-enable auto-terminal creation now that restore is complete

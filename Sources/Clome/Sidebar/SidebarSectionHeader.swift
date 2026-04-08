@@ -11,6 +11,7 @@ class SidebarSectionHeader: NSView {
     var onToggle: ((Bool) -> Void)?
 
     private let disclosureIcon = NSImageView()
+    private let chevronConfig = NSImage.SymbolConfiguration(pointSize: 8, weight: .bold)
     private let titleLabel = NSTextField(labelWithString: "")
     private let badgeLabel = NSTextField(labelWithString: "")
     private let actionStack = NSStackView()
@@ -24,9 +25,8 @@ class SidebarSectionHeader: NSView {
 
         // Disclosure triangle
         disclosureIcon.translatesAutoresizingMaskIntoConstraints = false
-        let cfg = NSImage.SymbolConfiguration(pointSize: 8, weight: .bold)
-        disclosureIcon.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
         disclosureIcon.contentTintColor = ClomeMacColor.textTertiary
+        disclosureIcon.imageScaling = .scaleProportionallyDown
         addSubview(disclosureIcon)
 
         // Title
@@ -70,10 +70,8 @@ class SidebarSectionHeader: NSView {
             actionStack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
-        // Set initial chevron state immediately (no animation)
-        let initialAngle: CGFloat = isExpanded ? .pi / 2 : 0
-        disclosureIcon.wantsLayer = true
-        disclosureIcon.layer?.setAffineTransform(CGAffineTransform(rotationAngle: initialAngle))
+        // Set initial chevron image
+        updateDisclosure()
 
         // Click to toggle
         let click = NSClickGestureRecognizer(target: self, action: #selector(headerClicked))
@@ -110,11 +108,9 @@ class SidebarSectionHeader: NSView {
     }
 
     private func updateDisclosure() {
-        let angle: CGFloat = isExpanded ? .pi / 2 : 0
-        CATransaction.begin()
-        CATransaction.setAnimationDuration(0.15)
-        disclosureIcon.layer?.setAffineTransform(CGAffineTransform(rotationAngle: angle))
-        CATransaction.commit()
+        let name = isExpanded ? "chevron.down" : "chevron.right"
+        disclosureIcon.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(chevronConfig)
     }
 
     @objc private func headerClicked() {

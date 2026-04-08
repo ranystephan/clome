@@ -90,11 +90,32 @@ class LatexCompiler {
             let pipe = Pipe()
             process.standardOutput = pipe
             process.standardError = pipe
+            // Detach stdin so pdflatex never blocks waiting for input on prompts
+            // that slip past -interaction=nonstopmode.
+            process.standardInput = FileHandle.nullDevice
+
+            // Drain the pipe on a background queue *while* the process runs.
+            // pdflatex easily emits >64KB of output, which fills the pipe buffer
+            // and deadlocks a naive readDataToEndOfFile()-after-waitUntilExit()
+            // pattern — the compiler blocks on write, we block on wait, forever.
+            let readHandle = pipe.fileHandleForReading
+            let collected = DispatchQueue(label: "latex.pipe.collect")
+            var buffer = Data()
+            let done = DispatchSemaphore(value: 0)
+            readHandle.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                if chunk.isEmpty {
+                    handle.readabilityHandler = nil
+                    done.signal()
+                } else {
+                    collected.sync { buffer.append(chunk) }
+                }
+            }
 
             do {
                 try process.run()
-                process.waitUntilExit()
             } catch {
+                readHandle.readabilityHandler = nil
                 return CompileResult(
                     success: false,
                     pdfPath: nil,
@@ -104,7 +125,12 @@ class LatexCompiler {
                 )
             }
 
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            // Wait for EOF on the pipe so we capture the tail of the log.
+            _ = done.wait(timeout: .now() + 2.0)
+            readHandle.readabilityHandler = nil
+
+            let data = collected.sync { buffer }
             let output = String(data: data, encoding: .utf8) ?? ""
             fullLog += "=== Pass \(pass)/\(runs) ===\n\(output)\n"
             lastExitCode = process.terminationStatus

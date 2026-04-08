@@ -7,6 +7,7 @@ class WorkspaceTab: Identifiable {
     let type: TabType
     let view: NSView
     var title: String
+    var isPinned: Bool = false
 
     /// Split container for this tab's content. Supports recursive splits.
     let splitContainer = PaneContainerView()
@@ -493,6 +494,23 @@ class Workspace: Identifiable {
             activeTabIndex += 1
         }
         onTabsChanged?()
+    }
+
+    /// Toggle a tab's pinned state. Pinned tabs are kept ordered before unpinned ones
+    /// in the sidebar; this method moves the tab to the boundary so the underlying
+    /// `tabs` array order matches the visual order.
+    func setTabPinned(_ index: Int, pinned: Bool) {
+        guard index >= 0, index < tabs.count else { return }
+        if tabs[index].isPinned == pinned { return }
+        tabs[index].isPinned = pinned
+        // Move to end of pinned group (if pinning) or start of unpinned group (if unpinning)
+        let pinnedCount = tabs.filter { $0.isPinned }.count
+        let target = pinned ? pinnedCount - 1 : pinnedCount
+        if index != target {
+            moveTab(from: index, to: target)
+        } else {
+            onTabsChanged?()
+        }
     }
 
     func renameTab(_ index: Int, to name: String) {

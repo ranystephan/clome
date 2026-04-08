@@ -245,6 +245,27 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)
 
+        // Browser menu
+        let browserMenuItem = NSMenuItem()
+        let browserMenu = NSMenu(title: "Browser")
+        browserMenu.addItem(withTitle: "Back", action: #selector(browserBack(_:)), keyEquivalent: "[")
+        browserMenu.items.last?.keyEquivalentModifierMask = [.command]
+        browserMenu.addItem(withTitle: "Forward", action: #selector(browserForward(_:)), keyEquivalent: "]")
+        browserMenu.items.last?.keyEquivalentModifierMask = [.command]
+        browserMenu.addItem(NSMenuItem.separator())
+        browserMenu.addItem(withTitle: "Reload", action: #selector(browserReload(_:)), keyEquivalent: "r")
+        browserMenu.items.last?.keyEquivalentModifierMask = [.command]
+        browserMenu.addItem(withTitle: "Reload From Origin", action: #selector(browserReloadFromOrigin(_:)), keyEquivalent: "r")
+        browserMenu.items.last?.keyEquivalentModifierMask = [.command, .shift]
+        browserMenu.addItem(withTitle: "Open Location", action: #selector(browserOpenLocation(_:)), keyEquivalent: "l")
+        browserMenu.items.last?.keyEquivalentModifierMask = [.command]
+        browserMenu.addItem(withTitle: "Show Start Page", action: #selector(browserShowStartPage(_:)), keyEquivalent: "l")
+        browserMenu.items.last?.keyEquivalentModifierMask = [.command, .shift]
+        browserMenu.addItem(NSMenuItem.separator())
+        browserMenu.addItem(withTitle: "Save Site", action: #selector(browserToggleSavedSite(_:)), keyEquivalent: "")
+        browserMenuItem.submenu = browserMenu
+        mainMenu.addItem(browserMenuItem)
+
         // Window menu
         let windowMenuItem = NSMenuItem()
         let windowMenu = NSMenu(title: "Window")
@@ -337,6 +358,42 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func newBrowserTab(_ sender: Any?) {
         mainWindow?.workspaceManager.activeWorkspace?.addBrowserSurface()
+    }
+
+    private func activeBrowserPanel() -> BrowserPanel? {
+        guard let workspace = mainWindow?.workspaceManager.activeWorkspace else { return nil }
+        if let browser = workspace.activeTab?.focusedPane as? BrowserPanel {
+            return browser
+        }
+        return workspace.activeTab?.view as? BrowserPanel
+    }
+
+    @objc private func browserBack(_ sender: Any?) {
+        activeBrowserPanel()?.navigateBack()
+    }
+
+    @objc private func browserForward(_ sender: Any?) {
+        activeBrowserPanel()?.navigateForward()
+    }
+
+    @objc private func browserReload(_ sender: Any?) {
+        activeBrowserPanel()?.reloadPage()
+    }
+
+    @objc private func browserReloadFromOrigin(_ sender: Any?) {
+        activeBrowserPanel()?.reloadPage(fromOrigin: true)
+    }
+
+    @objc private func browserOpenLocation(_ sender: Any?) {
+        activeBrowserPanel()?.focusAddressBar()
+    }
+
+    @objc private func browserShowStartPage(_ sender: Any?) {
+        activeBrowserPanel()?.showStartPage()
+    }
+
+    @objc private func browserToggleSavedSite(_ sender: Any?) {
+        activeBrowserPanel()?.toggleSavedSite()
     }
 
     @objc private func newFlowTab(_ sender: Any?) {

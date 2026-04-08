@@ -928,6 +928,9 @@ class SidebarView: NSView {
                             self?.isDraggingTab = false
                             self?.setNeedsReload()
                         }
+                        splitHeader.onDragReorder = { [weak self] delta in
+                            self?.handleTabDrag(workspace: workspace, from: capturedTabIndex, delta: delta)
+                        }
 
                         tabsStack.addArrangedSubview(splitHeader)
                         splitHeader.leadingAnchor.constraint(equalTo: tabsStack.leadingAnchor, constant: 2).isActive = true
@@ -1057,6 +1060,14 @@ class SidebarView: NSView {
                             }
                             view.addSub(icon, leading: 14, centerY: true, width: 16, height: 16)
 
+                            if tab.isPinned {
+                                let pinIcon = NSImageView()
+                                let pinCfg = NSImage.SymbolConfiguration(pointSize: 8, weight: .bold)
+                                pinIcon.image = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Pinned")?.withSymbolConfiguration(pinCfg)
+                                pinIcon.contentTintColor = isTabActive ? NSColor.white : NSColor(white: 0.55, alpha: 1.0)
+                                view.addSub(pinIcon, leading: 2, centerY: true, width: 9, height: 9)
+                            }
+
                             let title = NSTextField(labelWithString: tab.title)
                             title.font = .systemFont(ofSize: 11, weight: isTabActive ? .medium : .regular)
                             title.textColor = tc
@@ -1128,6 +1139,10 @@ class SidebarView: NSView {
                             self?.onDragTabEnded?(capturedWsIndex, capturedTabIndex, point)
                             self?.isDraggingTab = false
                             self?.setNeedsReload()
+                        }
+                        // Vertical drag → reorder this tab within its workspace
+                        tabRow.onDragReorder = { [weak self] delta in
+                            self?.handleTabDrag(workspace: workspace, from: capturedTabIndex, delta: delta)
                         }
 
                         tabsStack.addArrangedSubview(tabRow)
@@ -1756,6 +1771,9 @@ class SidebarView: NSView {
         let menu = NSMenu()
         let rename = NSMenuItem(title: "Rename Tab", action: #selector(ctxRenameTab(_:)), keyEquivalent: "")
         rename.target = self; rename.representedObject = ["workspace": workspace, "tabIndex": tabIndex] as [String: Any]; menu.addItem(rename)
+        let isPinned = (tabIndex >= 0 && tabIndex < workspace.tabs.count) ? workspace.tabs[tabIndex].isPinned : false
+        let pin = NSMenuItem(title: isPinned ? "Unpin Tab" : "Pin Tab", action: #selector(ctxTogglePinTab(_:)), keyEquivalent: "")
+        pin.target = self; pin.representedObject = ["workspace": workspace, "tabIndex": tabIndex] as [String: Any]; menu.addItem(pin)
         menu.addItem(NSMenuItem.separator())
         let close = NSMenuItem(title: "Close Tab", action: #selector(ctxCloseTab(_:)), keyEquivalent: "")
         close.target = self; close.representedObject = ["workspace": workspace, "wsIndex": wsIndex, "tabIndex": tabIndex] as [String: Any]; menu.addItem(close)
@@ -1794,10 +1812,52 @@ class SidebarView: NSView {
 
     private func handleWorkspaceDrag(from index: Int, delta: CGFloat) {
         if delta < -20 && index > 0 {
-            workspaceManager.moveWorkspace(from: index, to: index - 1); reloadWorkspaces()
+            workspaceManager.moveWorkspace(from: index, to: index - 1)
+            persistSession()
+            reloadWorkspaces()
         } else if delta > 20 && index < workspaceManager.workspaces.count - 1 {
-            workspaceManager.moveWorkspace(from: index, to: index + 1); reloadWorkspaces()
+            workspaceManager.moveWorkspace(from: index, to: index + 1)
+            persistSession()
+            reloadWorkspaces()
         }
+    }
+
+    /// Handle vertical drag-reorder of a sidebar tab row within its workspace.
+    /// Pinned tabs may only swap with other pinned tabs; unpinned only with unpinned.
+    private func handleTabDrag(workspace: Workspace, from index: Int, delta: CGFloat) {
+        guard index >= 0, index < workspace.tabs.count else { return }
+        let isPinned = workspace.tabs[index].isPinned
+        let targetIndex: Int
+        if delta < -20 {
+            targetIndex = index - 1
+        } else if delta > 20 {
+            targetIndex = index + 1
+        } else {
+            return
+        }
+        guard targetIndex >= 0, targetIndex < workspace.tabs.count else { return }
+        // Don't cross the pin/unpin boundary
+        guard workspace.tabs[targetIndex].isPinned == isPinned else { return }
+        workspace.moveTab(from: index, to: targetIndex)
+        persistSession()
+        reloadWorkspaces()
+    }
+
+    private func persistSession() {
+        SessionState.shared.saveWorkspaces(
+            workspaceManager.workspaces,
+            activeIndex: workspaceManager.activeWorkspaceIndex
+        )
+    }
+
+    @objc private func ctxTogglePinTab(_ sender: NSMenuItem) {
+        guard let info = sender.representedObject as? [String: Any],
+              let ws = info["workspace"] as? Workspace,
+              let ti = info["tabIndex"] as? Int,
+              ti >= 0, ti < ws.tabs.count else { return }
+        ws.setTabPinned(ti, pinned: !ws.tabs[ti].isPinned)
+        persistSession()
+        reloadWorkspaces()
     }
 }
 

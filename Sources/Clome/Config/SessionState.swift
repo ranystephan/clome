@@ -125,6 +125,11 @@ class SessionState {
             sqlite3_exec(db, sql, nil, nil, nil)
             upsert(key: "schema_version", value: "4")
         }
+        if version < 5 {
+            // Pinned tab support — idempotent ALTER (fails silently if column already exists)
+            sqlite3_exec(db, "ALTER TABLE surfaces ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0", nil, nil, nil)
+            upsert(key: "schema_version", value: "5")
+        }
     }
 
     // MARK: - Pinned Files
@@ -325,7 +330,7 @@ class SessionState {
                 }
             }
 
-            let sql = "INSERT INTO surfaces (id, workspace_id, type, working_directory, title, position, url, split_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            let sql = "INSERT INTO surfaces (id, workspace_id, type, working_directory, title, position, url, split_path, pinned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
             var stmt: OpaquePointer?
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
                 sqlite3_bind_text(stmt, 1, (surfaceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
@@ -336,6 +341,7 @@ class SessionState {
                 sqlite3_bind_int(stmt, 6, Int32(index))
                 sqlite3_bind_text(stmt, 7, (resourcePath as NSString).utf8String, -1, SQLITE_TRANSIENT)
                 sqlite3_bind_text(stmt, 8, (extraData as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int(stmt, 9, tab.isPinned ? 1 : 0)
                 let rc = sqlite3_step(stmt)
                 if rc != SQLITE_DONE {
                     print("SessionState: INSERT surface failed: \(errorMessage())")
@@ -391,6 +397,7 @@ class SessionState {
         let resourcePath: String  // file path, URL, or working directory
         let position: Int
         let extraData: String // JSON for project open files, split layout, etc.
+        let pinned: Bool
     }
 
     struct SavedWorkspace {
@@ -444,7 +451,7 @@ class SessionState {
 
     private func restoreTabs(forWorkspaceId workspaceId: String) -> [SavedTab] {
         var tabs: [SavedTab] = []
-        let sql = "SELECT id, type, title, working_directory, position, split_path FROM surfaces WHERE workspace_id = ? ORDER BY position"
+        let sql = "SELECT id, type, title, working_directory, position, split_path, pinned FROM surfaces WHERE workspace_id = ? ORDER BY position"
         var stmt: OpaquePointer?
         if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
             sqlite3_bind_text(stmt, 1, (workspaceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
@@ -470,7 +477,8 @@ class SessionState {
                 } else {
                     extraData = ""
                 }
-                tabs.append(SavedTab(id: id, type: type, title: title, resourcePath: resourcePath, position: position, extraData: extraData))
+                let pinned = sqlite3_column_int(stmt, 6) != 0
+                tabs.append(SavedTab(id: id, type: type, title: title, resourcePath: resourcePath, position: position, extraData: extraData, pinned: pinned))
             }
             sqlite3_finalize(stmt)
         }

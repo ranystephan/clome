@@ -37,15 +37,21 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     static let sharedProcessPool = WKProcessPool()
 
     private(set) var webView: WKWebView!
+    private var navBar: NSVisualEffectView!
     private var backButton: NSButton!
     private var forwardButton: NSButton!
+    private var homeButton: NSButton!
     private var reloadButton: NSButton!
-    private var loadingBar: NSProgressIndicator!
+    private var loadingBar: NSView!
+    private var loadingBarFill: NSView!
+    private var loadingBarFillWidth: NSLayoutConstraint!
     private var bookmarkButton: NSButton!
     private var menuButton: NSButton!
     private var cookieButton: NSButton!
     private var popupToggleButton: NSButton!
     private var keyButton: NSButton!
+    private var navBottomBorder: NSView!
+    private var startPageView: BrowserStartPageView!
 
     weak var delegate: BrowserPanelDelegate?
 
@@ -64,10 +70,13 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     private var currentDomainCookieCount: Int = 0
     private var autocompletePopup: URLAutocompletePopup?
 
-    private let idleBg = NSColor(white: 1.0, alpha: 0.06)
-    private let hoverBg = NSColor(white: 1.0, alpha: 0.09)
-    private let editBg = NSColor(white: 1.0, alpha: 0.12)
+    private let idleBg = NSColor(white: 1.0, alpha: 0.07)
+    private let hoverBg = NSColor(white: 1.0, alpha: 0.10)
+    private let editBg = NSColor(white: 1.0, alpha: 0.15)
     private let activeAccent = NSColor(red: 0.38, green: 0.56, blue: 1.0, alpha: 1.0)
+    private let chromeTint = NSColor(white: 1.0, alpha: 0.72)
+    private let chromeMutedTint = NSColor(white: 1.0, alpha: 0.44)
+    private let chromeStroke = NSColor(white: 1.0, alpha: 0.08)
     private var isPageLoading = false
 
     private(set) var favicon: NSImage?
@@ -92,6 +101,8 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = AppearanceSettings.shared.backgroundBgColor.cgColor
+        NotificationCenter.default.addObserver(self, selector: #selector(browserDataChanged(_:)), name: .browserDataDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appearanceChanged(_:)), name: .appearanceSettingsChanged, object: nil)
         setupUI()
     }
 
@@ -108,13 +119,15 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         formAutofillManager?.unregister(from: oldWebView.configuration)
         formAutofillManager?.webView = nil
         oldWebView.removeObserver(self, forKeyPath: "title")
+        oldWebView.removeObserver(self, forKeyPath: "estimatedProgress")
         oldWebView.removeFromSuperview()
 
         // Add our scripts to the provided configuration
         webAuthnHandler?.register(on: configuration)
         formAutofillManager?.register(on: configuration)
 
-        let newWebView = WKWebView(frame: .zero, configuration: configuration)
+        let newWebView = ClomeWebView(frame: .zero, configuration: configuration)
+        newWebView.browserPanel = self
         newWebView.navigationDelegate = self
         newWebView.uiDelegate = self
         newWebView.allowsBackForwardNavigationGestures = true
@@ -124,24 +137,33 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
             newWebView.isInspectable = true
         }
         newWebView.addObserver(self, forKeyPath: "title", options: .new, context: nil)
+        newWebView.addObserver(self, forKeyPath: "estimatedProgress", options: .new, context: nil)
         webView = newWebView
         webAuthnHandler?.webView = newWebView
         formAutofillManager?.webView = newWebView
         newWebView.translatesAutoresizingMaskIntoConstraints = true
         newWebView.autoresizingMask = [.width, .height]
-        addSubview(newWebView)
+        if let startPageView {
+            addSubview(newWebView, positioned: .below, relativeTo: startPageView)
+        } else {
+            addSubview(newWebView)
+        }
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) not supported")
     }
 
+    override var acceptsFirstResponder: Bool { true }
+
     private func setupUI() {
-        // Navigation bar
-        let navBar = NSView()
+        navBar = NSVisualEffectView()
         navBar.translatesAutoresizingMaskIntoConstraints = false
+        navBar.material = .headerView
+        navBar.blendingMode = .withinWindow
+        navBar.state = .active
         navBar.wantsLayer = true
-        navBar.layer?.backgroundColor = AppearanceSettings.shared.backgroundBgColor.withAlphaComponent(1.0).cgColor
+        navBar.layer?.cornerCurve = .continuous
         addSubview(navBar)
 
         // Back button
@@ -152,28 +174,39 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         forwardButton = makeNavButton(symbol: "chevron.right", action: #selector(goForward))
         navBar.addSubview(forwardButton)
 
+        // Home / start page button
+        homeButton = makeNavButton(symbol: "house", action: #selector(showStartPageFromChrome))
+        homeButton.toolTip = "Show start page"
+        navBar.addSubview(homeButton)
+
         // Reload button
         reloadButton = makeNavButton(symbol: "arrow.clockwise", action: #selector(reload))
         navBar.addSubview(reloadButton)
 
-        // Loading bar (modern slim progress animation below nav bar)
-        loadingBar = NSProgressIndicator()
-        loadingBar.style = .bar
-        loadingBar.isIndeterminate = true
-        loadingBar.usesThreadedAnimation = true
-        loadingBar.isDisplayedWhenStopped = false
+        // Loading bar — minimal determinate line pinned to bottom of nav bar.
+        // Fills left→right based on WKWebView.estimatedProgress, fades out on finish.
+        loadingBar = NSView()
         loadingBar.translatesAutoresizingMaskIntoConstraints = false
+        loadingBar.wantsLayer = true
         loadingBar.alphaValue = 0
-        loadingBar.isHidden = true
         navBar.addSubview(loadingBar)
+
+        loadingBarFill = NSView()
+        loadingBarFill.translatesAutoresizingMaskIntoConstraints = false
+        loadingBarFill.wantsLayer = true
+        loadingBarFill.layer?.backgroundColor = activeAccent.cgColor
+        loadingBarFill.layer?.cornerRadius = 0.75
+        loadingBar.addSubview(loadingBarFill)
 
         // URL pill background
         urlPill = NSView()
         urlPill.translatesAutoresizingMaskIntoConstraints = false
         urlPill.wantsLayer = true
         urlPill.layer?.backgroundColor = idleBg.cgColor
-        urlPill.layer?.cornerRadius = 8
+        urlPill.layer?.cornerRadius = 6
         urlPill.layer?.cornerCurve = .continuous
+        urlPill.layer?.borderWidth = 1
+        urlPill.layer?.borderColor = chromeStroke.cgColor
         navBar.addSubview(urlPill)
 
         // Lock icon
@@ -188,29 +221,25 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
 
         // URL text field (custom subclass to detect focus)
         let field = URLBarTextField()
+        field.browserPanel = self
         field.onBecomeFirstResponder = { [weak self] in
             guard let self = self, !self.isUrlFocused else { return }
             self.isUrlFocused = true
-            self.lockIcon.isHidden = true
-            self.urlPill.layer?.backgroundColor = self.editBg.cgColor
-            let fullURL = self.storedURL?.absoluteString ?? ""
-            self.urlField.stringValue = fullURL
-            self.urlField.alignment = .left
-            self.urlField.textColor = NSColor(white: 0.9, alpha: 1.0)
-            // Select all after the field editor is fully set up
+            self.showFullURL()
+            self.showAutocomplete(for: self.currentAddressBarText())
             DispatchQueue.main.async {
                 self.urlField.currentEditor()?.selectAll(nil)
             }
         }
         urlField = field
         urlField.translatesAutoresizingMaskIntoConstraints = false
-        urlField.font = .systemFont(ofSize: 12, weight: .regular)
-        urlField.textColor = NSColor(white: 0.55, alpha: 1.0)
-        urlField.placeholderString = "Search or enter website"
+        urlField.font = .systemFont(ofSize: 13, weight: .regular)
+        urlField.textColor = chromeMutedTint
+        urlField.placeholderString = "Search or enter a website"
         urlField.drawsBackground = false
         urlField.isBordered = false
         urlField.focusRingType = .none
-        urlField.alignment = .center
+        urlField.alignment = .left
         urlField.isEditable = true
         urlField.isSelectable = true
         urlField.delegate = self
@@ -261,6 +290,11 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         // Menu button (bookmarks & history)
         menuButton = makeNavButton(symbol: "line.3.horizontal", action: #selector(showBrowserMenu))
         navBar.addSubview(menuButton)
+
+        navBottomBorder = NSView()
+        navBottomBorder.translatesAutoresizingMaskIntoConstraints = false
+        navBottomBorder.wantsLayer = true
+        navBar.addSubview(navBottomBorder)
 
         // WebView — with persistent data store and shared process pool for cookies
         let config = WKWebViewConfiguration()
@@ -377,6 +411,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
             webView.isInspectable = true
         }
         webView.addObserver(self, forKeyPath: "title", options: .new, context: nil)
+        webView.addObserver(self, forKeyPath: "estimatedProgress", options: .new, context: nil)
         webAuthnHandler?.webView = webView
         formAutofillManager?.webView = webView
         formAutofillManager?.navBar = navBar
@@ -388,6 +423,22 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         webView.autoresizingMask = [.width, .height]
         addSubview(webView)
 
+        startPageView = BrowserStartPageView()
+        startPageView.translatesAutoresizingMaskIntoConstraints = false
+        startPageView.onOpenURL = { [weak self] url in
+            self?.loadURL(url)
+        }
+        startPageView.onFocusAddressBar = { [weak self] in
+            self?.focusAddressBar()
+        }
+        startPageView.onImportBrowserData = {
+            BrowserImportWindowController.show()
+        }
+        startPageView.onClearHistory = {
+            BookmarkManager.shared.clearHistory()
+        }
+        addSubview(startPageView)
+
         // Observe cookie changes for persistence tracking
         persistentDataStore.httpCookieStore.add(self)
 
@@ -395,31 +446,36 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
             navBar.topAnchor.constraint(equalTo: topAnchor),
             navBar.leadingAnchor.constraint(equalTo: leadingAnchor),
             navBar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            navBar.heightAnchor.constraint(equalToConstant: 40),
+            navBar.heightAnchor.constraint(equalToConstant: 34),
 
-            backButton.leadingAnchor.constraint(equalTo: navBar.leadingAnchor, constant: 8),
+            backButton.leadingAnchor.constraint(equalTo: navBar.leadingAnchor, constant: 12),
             backButton.centerYAnchor.constraint(equalTo: navBar.centerYAnchor),
-            backButton.widthAnchor.constraint(equalToConstant: 28),
-            backButton.heightAnchor.constraint(equalToConstant: 28),
+            backButton.widthAnchor.constraint(equalToConstant: 22),
+            backButton.heightAnchor.constraint(equalToConstant: 22),
 
             forwardButton.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 2),
             forwardButton.centerYAnchor.constraint(equalTo: navBar.centerYAnchor),
-            forwardButton.widthAnchor.constraint(equalToConstant: 28),
-            forwardButton.heightAnchor.constraint(equalToConstant: 28),
+            forwardButton.widthAnchor.constraint(equalToConstant: 22),
+            forwardButton.heightAnchor.constraint(equalToConstant: 22),
 
-            reloadButton.leadingAnchor.constraint(equalTo: forwardButton.trailingAnchor, constant: 2),
+            homeButton.leadingAnchor.constraint(equalTo: forwardButton.trailingAnchor, constant: 4),
+            homeButton.centerYAnchor.constraint(equalTo: navBar.centerYAnchor),
+            homeButton.widthAnchor.constraint(equalToConstant: 22),
+            homeButton.heightAnchor.constraint(equalToConstant: 22),
+
+            reloadButton.leadingAnchor.constraint(equalTo: homeButton.trailingAnchor, constant: 4),
             reloadButton.centerYAnchor.constraint(equalTo: navBar.centerYAnchor),
-            reloadButton.widthAnchor.constraint(equalToConstant: 28),
-            reloadButton.heightAnchor.constraint(equalToConstant: 28),
+            reloadButton.widthAnchor.constraint(equalToConstant: 22),
+            reloadButton.heightAnchor.constraint(equalToConstant: 22),
 
             // URL pill — leave room for popup toggle + bookmark + menu buttons on the right
-            urlPill.leadingAnchor.constraint(equalTo: reloadButton.trailingAnchor, constant: 8),
-            urlPill.trailingAnchor.constraint(equalTo: popupToggleButton.leadingAnchor, constant: -6),
+            urlPill.leadingAnchor.constraint(equalTo: reloadButton.trailingAnchor, constant: 10),
+            urlPill.trailingAnchor.constraint(equalTo: popupToggleButton.leadingAnchor, constant: -8),
             urlPill.centerYAnchor.constraint(equalTo: navBar.centerYAnchor),
-            urlPill.heightAnchor.constraint(equalToConstant: 28),
+            urlPill.heightAnchor.constraint(equalToConstant: 24),
 
             // Lock icon inside pill
-            lockIcon.leadingAnchor.constraint(equalTo: urlPill.leadingAnchor, constant: 10),
+            lockIcon.leadingAnchor.constraint(equalTo: urlPill.leadingAnchor, constant: 12),
             lockIcon.centerYAnchor.constraint(equalTo: urlPill.centerYAnchor),
             lockIcon.widthAnchor.constraint(equalToConstant: 12),
             lockIcon.heightAnchor.constraint(equalToConstant: 12),
@@ -431,39 +487,56 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
             keyButton.heightAnchor.constraint(equalToConstant: 20),
 
             // Cookie indicator inside pill (right edge)
-            cookieButton.trailingAnchor.constraint(equalTo: urlPill.trailingAnchor, constant: -4),
+            cookieButton.trailingAnchor.constraint(equalTo: urlPill.trailingAnchor, constant: -8),
             cookieButton.centerYAnchor.constraint(equalTo: urlPill.centerYAnchor),
             cookieButton.widthAnchor.constraint(equalToConstant: 20),
             cookieButton.heightAnchor.constraint(equalToConstant: 20),
 
             // Text field inside pill — vertically centered
-            urlField.leadingAnchor.constraint(equalTo: urlPill.leadingAnchor, constant: 10),
-            urlField.trailingAnchor.constraint(equalTo: cookieButton.leadingAnchor, constant: -2),
+            urlField.leadingAnchor.constraint(equalTo: lockIcon.trailingAnchor, constant: 10),
+            urlField.trailingAnchor.constraint(equalTo: cookieButton.leadingAnchor, constant: -4),
             urlField.centerYAnchor.constraint(equalTo: urlPill.centerYAnchor),
 
             // Popup toggle button
             popupToggleButton.trailingAnchor.constraint(equalTo: bookmarkButton.leadingAnchor, constant: -2),
             popupToggleButton.centerYAnchor.constraint(equalTo: navBar.centerYAnchor),
-            popupToggleButton.widthAnchor.constraint(equalToConstant: 28),
-            popupToggleButton.heightAnchor.constraint(equalToConstant: 28),
+            popupToggleButton.widthAnchor.constraint(equalToConstant: 22),
+            popupToggleButton.heightAnchor.constraint(equalToConstant: 22),
 
             // Bookmark button
             bookmarkButton.trailingAnchor.constraint(equalTo: menuButton.leadingAnchor, constant: -2),
             bookmarkButton.centerYAnchor.constraint(equalTo: navBar.centerYAnchor),
-            bookmarkButton.widthAnchor.constraint(equalToConstant: 28),
-            bookmarkButton.heightAnchor.constraint(equalToConstant: 28),
+            bookmarkButton.widthAnchor.constraint(equalToConstant: 22),
+            bookmarkButton.heightAnchor.constraint(equalToConstant: 22),
 
             // Menu button
-            menuButton.trailingAnchor.constraint(equalTo: navBar.trailingAnchor, constant: -8),
+            menuButton.trailingAnchor.constraint(equalTo: navBar.trailingAnchor, constant: -12),
             menuButton.centerYAnchor.constraint(equalTo: navBar.centerYAnchor),
-            menuButton.widthAnchor.constraint(equalToConstant: 28),
-            menuButton.heightAnchor.constraint(equalToConstant: 28),
+            menuButton.widthAnchor.constraint(equalToConstant: 22),
+            menuButton.heightAnchor.constraint(equalToConstant: 22),
 
-            loadingBar.leadingAnchor.constraint(equalTo: navBar.leadingAnchor, constant: 8),
-            loadingBar.trailingAnchor.constraint(equalTo: navBar.trailingAnchor, constant: -8),
-            loadingBar.bottomAnchor.constraint(equalTo: navBar.bottomAnchor, constant: -2),
-            loadingBar.heightAnchor.constraint(equalToConstant: 2),
+            loadingBar.leadingAnchor.constraint(equalTo: navBar.leadingAnchor),
+            loadingBar.trailingAnchor.constraint(equalTo: navBar.trailingAnchor),
+            loadingBar.bottomAnchor.constraint(equalTo: navBar.bottomAnchor),
+            loadingBar.heightAnchor.constraint(equalToConstant: 1.5),
+
+            loadingBarFill.leadingAnchor.constraint(equalTo: loadingBar.leadingAnchor),
+            loadingBarFill.topAnchor.constraint(equalTo: loadingBar.topAnchor),
+            loadingBarFill.bottomAnchor.constraint(equalTo: loadingBar.bottomAnchor),
+
+            navBottomBorder.leadingAnchor.constraint(equalTo: navBar.leadingAnchor),
+            navBottomBorder.trailingAnchor.constraint(equalTo: navBar.trailingAnchor),
+            navBottomBorder.bottomAnchor.constraint(equalTo: navBar.bottomAnchor),
+            navBottomBorder.heightAnchor.constraint(equalToConstant: 1),
+
+            startPageView.topAnchor.constraint(equalTo: navBar.bottomAnchor),
+            startPageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            startPageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            startPageView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+
+        loadingBarFillWidth = loadingBarFill.widthAnchor.constraint(equalToConstant: 0)
+        loadingBarFillWidth.isActive = true
 
         // Hover tracking on pill
         urlPill.addTrackingArea(NSTrackingArea(
@@ -472,14 +545,17 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
             owner: self
         ))
 
+        applyChromeAppearance()
+        refreshStartPage()
+        updateStartPageVisibility()
     }
 
     override func layout() {
         super.layout()
-        // Manually position the webView below the 40px nav bar.
+        // Manually position the webView below the browser chrome.
         // Using autoresizing masks instead of Auto Layout to avoid
         // conflicting with Web Inspector's internal NSSplitView.
-        let navHeight: CGFloat = 40
+        let navHeight = navBar?.frame.height ?? 54
         let webFrame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height - navHeight)
         if webView.frame != webFrame {
             webView.frame = webFrame
@@ -492,15 +568,18 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     }
 
     private func makeNavButton(symbol: String, action: Selector) -> NSButton {
-        let button = NSButton()
+        let button = BrowserChromeButton()
         button.translatesAutoresizingMaskIntoConstraints = false
         button.bezelStyle = .texturedRounded
         button.isBordered = false
         let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
-        button.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+        button.contentTintColor = chromeTint
         button.target = self
         button.action = action
+        button.baseBackgroundColor = NSColor(white: 1.0, alpha: 0.035)
+        button.hoverBackgroundColor = NSColor(white: 1.0, alpha: 0.08)
+        button.borderColor = chromeStroke
         return button
     }
 
@@ -509,12 +588,13 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         webView?.loadHTMLString("", baseURL: nil)
         webView?.navigationDelegate = nil
         webView?.uiDelegate = nil
-        loadingBar?.stopAnimation(nil)
+        persistentDataStore.httpCookieStore.remove(self)
         if let config = webView?.configuration {
             formAutofillManager?.unregister(from: config)
         }
         formAutofillManager?.webView = nil
         webView?.removeObserver(self, forKeyPath: "title")
+        webView?.removeObserver(self, forKeyPath: "estimatedProgress")
         webView?.removeFromSuperview()
         webView = nil
     }
@@ -524,19 +604,220 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
             webView?.stopLoading()
             webView?.navigationDelegate = nil
             webView?.uiDelegate = nil
-            loadingBar?.stopAnimation(nil)
-            if let config = webView?.configuration {
+            persistentDataStore.httpCookieStore.remove(self)
+                if let config = webView?.configuration {
                 formAutofillManager?.unregister(from: config)
             }
             formAutofillManager?.webView = nil
             webView?.removeObserver(self, forKeyPath: "title")
+        webView?.removeObserver(self, forKeyPath: "estimatedProgress")
+            NotificationCenter.default.removeObserver(self)
         }
     }
 
     override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey: Any]?, context: UnsafeMutableRawPointer?) {
         if keyPath == "title", let pageTitle = webView?.title, !pageTitle.isEmpty {
             title = pageTitle
+        } else if keyPath == "estimatedProgress", let wv = webView {
+            updateLoadingProgress(CGFloat(wv.estimatedProgress))
         }
+    }
+
+    @objc private func appearanceChanged(_ notification: Notification) {
+        layer?.backgroundColor = AppearanceSettings.shared.backgroundBgColor.cgColor
+        applyChromeAppearance()
+    }
+
+    @objc private func browserDataChanged(_ notification: Notification) {
+        updateBookmarkButton()
+        refreshStartPage()
+    }
+
+    private func applyChromeAppearance() {
+        navBar.layer?.backgroundColor = AppearanceSettings.shared.backgroundBgColor.withAlphaComponent(0.86).cgColor
+        navBar.layer?.borderColor = chromeStroke.cgColor
+        navBar.layer?.borderWidth = 0.5
+        navBottomBorder.layer?.backgroundColor = chromeStroke.cgColor
+        urlPill.layer?.borderColor = chromeStroke.cgColor
+        if !isUrlFocused {
+            urlPill.layer?.backgroundColor = idleBg.cgColor
+        }
+    }
+
+    private func isShowingStartPage(for url: URL?) -> Bool {
+        guard let url else { return true }
+        return url.absoluteString == "about:blank"
+    }
+
+    private func updateStartPageVisibility() {
+        let shouldShow = isShowingStartPage(for: storedURL)
+        startPageView?.isHidden = !shouldShow
+        if shouldShow {
+            refreshStartPage()
+        }
+    }
+
+    private func refreshStartPage() {
+        startPageView?.reloadContent(
+            bookmarks: BookmarkManager.shared.bookmarks,
+            history: BookmarkManager.shared.recentHistory(limit: 10)
+        )
+    }
+
+    func focusAddressBar(selectAll: Bool = true) {
+        window?.makeFirstResponder(urlField)
+        guard selectAll else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.urlField.currentEditor()?.selectAll(nil)
+        }
+    }
+
+    func showStartPage() {
+        webView.stopLoading()
+        if webView.url != nil {
+            webView.load(URLRequest(url: URL(string: "about:blank")!))
+        }
+        storedURL = nil
+        title = "Browser"
+        urlField.stringValue = ""
+        setLoadingState(false)
+        updateNavigationButtons()
+        showDomain()
+        updateStartPageVisibility()
+        window?.makeFirstResponder(urlField)
+    }
+
+    func reloadPage(fromOrigin: Bool = false) {
+        if fromOrigin {
+            webView.reloadFromOrigin()
+        } else {
+            webView.reload()
+        }
+    }
+
+    func navigateBack() {
+        webView.goBack()
+    }
+
+    func navigateForward() {
+        webView.goForward()
+    }
+
+    func toggleSavedSite() {
+        toggleBookmark()
+    }
+
+    private func updateNavigationButtons() {
+        backButton.isEnabled = webView.canGoBack
+        forwardButton.isEnabled = webView.canGoForward
+    }
+
+    private func currentAddressBarText() -> String {
+        if let editor = urlField.currentEditor() {
+            return editor.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return urlField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func setAddressBarIcon(symbol: String, tint: NSColor) {
+        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
+        lockIcon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        lockIcon.contentTintColor = tint
+        lockIcon.isHidden = false
+    }
+
+    private func relativeTimeString(for date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func looksLikeDirectNavigation(_ query: String) -> Bool {
+        let lower = query.lowercased()
+        return lower.contains("://")
+            || lower.hasPrefix("localhost")
+            || lower.hasPrefix("127.")
+            || lower.hasPrefix("192.168.")
+            || lower.hasPrefix("10.")
+            || (lower.contains(".") && !lower.contains(" "))
+    }
+
+    private func cleanedDisplayURL(_ value: String) -> String {
+        var cleaned = value
+        if cleaned.hasPrefix("https://") { cleaned = String(cleaned.dropFirst(8)) }
+        else if cleaned.hasPrefix("http://") { cleaned = String(cleaned.dropFirst(7)) }
+        if cleaned.hasPrefix("www.") { cleaned = String(cleaned.dropFirst(4)) }
+        if cleaned.hasSuffix("/") { cleaned = String(cleaned.dropLast()) }
+        return cleaned
+    }
+
+    private func scoreAutocompleteMatch(query: String, title: String, url: String, isBookmark: Bool) -> Int {
+        let normalizedQuery = query.lowercased()
+        let normalizedTitle = title.lowercased()
+        let normalizedURL = url.lowercased()
+        let host = URL(string: url)?.host?.lowercased() ?? ""
+
+        var score = 0
+        if host == normalizedQuery { score += 160 }
+        if host.hasPrefix(normalizedQuery) { score += 120 }
+        if normalizedTitle.hasPrefix(normalizedQuery) { score += 100 }
+        if normalizedURL.hasPrefix(normalizedQuery) { score += 90 }
+        if host.contains(normalizedQuery) { score += 72 }
+        if normalizedTitle.contains(normalizedQuery) { score += 58 }
+        if normalizedURL.contains(normalizedQuery) { score += 46 }
+        if isBookmark { score += 18 }
+        return score
+    }
+
+    private func activateSuggestion(_ suggestion: URLSuggestion) {
+        dismissAutocomplete()
+        loadURL(suggestion.value)
+        window?.makeFirstResponder(webView)
+    }
+
+    fileprivate func handleKeyEquivalent(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown else { return false }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let chars = event.charactersIgnoringModifiers ?? ""
+
+        if flags == .command && chars == "r" {
+            reloadPage()
+            return true
+        }
+        if flags == [.command, .shift] && chars == "R" {
+            reloadPage(fromOrigin: true)
+            return true
+        }
+        if flags == .command && chars == "l" {
+            focusAddressBar()
+            return true
+        }
+        if flags == [.command, .shift] && chars == "L" {
+            showStartPage()
+            return true
+        }
+        if flags == .command && chars == "[" {
+            navigateBack()
+            return true
+        }
+        if flags == .command && chars == "]" {
+            navigateForward()
+            return true
+        }
+        if flags == .command && chars == "." {
+            webView.stopLoading()
+            return true
+        }
+        if flags == [.option, .command] && chars == "u" {
+            viewPageSource()
+            return true
+        }
+        if flags == [.option, .command] && chars == "i" {
+            openWebInspector()
+            return true
+        }
+
+        return false
     }
 
     // MARK: - URL Bar Display
@@ -545,21 +826,26 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         storedURL = url
         if !isUrlFocused { showDomain() }
         updateBookmarkButton()
+        updateStartPageVisibility()
     }
 
     private func showDomain() {
-        urlField.alignment = .center
-        urlField.textColor = NSColor(white: 0.55, alpha: 1.0)
+        urlField.alignment = .left
+        urlField.textColor = chromeMutedTint
 
         if let url = storedURL {
-            lockIcon.isHidden = url.scheme != "https"
+            if url.scheme == "https" {
+                setAddressBarIcon(symbol: "lock.fill", tint: NSColor.white.withAlphaComponent(0.45))
+            } else {
+                setAddressBarIcon(symbol: "globe", tint: NSColor.white.withAlphaComponent(0.42))
+            }
             if let host = url.host {
                 urlField.stringValue = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
             } else {
                 urlField.stringValue = url.absoluteString
             }
         } else {
-            lockIcon.isHidden = true
+            setAddressBarIcon(symbol: "magnifyingglass", tint: NSColor.white.withAlphaComponent(0.36))
             urlField.stringValue = ""
         }
 
@@ -567,7 +853,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     }
 
     private func showFullURL() {
-        lockIcon.isHidden = true
+        setAddressBarIcon(symbol: "magnifyingglass", tint: NSColor.white.withAlphaComponent(0.46))
         urlPill.layer?.backgroundColor = editBg.cgColor
 
         let fullURL = storedURL?.absoluteString ?? ""
@@ -576,18 +862,18 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
             editor.string = fullURL
             editor.setSelectedRange(NSRange(location: 0, length: fullURL.count))
             editor.alignment = .left
-            editor.textColor = NSColor(white: 0.9, alpha: 1.0)
+            editor.textColor = chromeTint
         } else {
             // Editor not yet active (e.g. double-click before editing starts) —
             // set the value directly and select all on next run loop when editor exists
             urlField.stringValue = fullURL
             urlField.alignment = .left
-            urlField.textColor = NSColor(white: 0.9, alpha: 1.0)
+            urlField.textColor = chromeTint
             DispatchQueue.main.async { [weak self] in
                 if let editor = self?.urlField.currentEditor() as? NSTextView {
                     editor.setSelectedRange(NSRange(location: 0, length: fullURL.count))
                     editor.alignment = .left
-                    editor.textColor = NSColor(white: 0.9, alpha: 1.0)
+                    editor.textColor = NSColor(white: 1.0, alpha: 0.72)
                 }
             }
         }
@@ -606,7 +892,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
 
     private func updateBookmarkButton() {
         guard let url = storedURL?.absoluteString else {
-            bookmarkButton.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+            bookmarkButton.contentTintColor = chromeTint
             setBookmarkIcon(filled: false)
             return
         }
@@ -614,7 +900,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         setBookmarkIcon(filled: isBookmarked)
         bookmarkButton.contentTintColor = isBookmarked
             ? NSColor.systemYellow
-            : NSColor(white: 0.55, alpha: 1.0)
+            : chromeTint
     }
 
     private func setBookmarkIcon(filled: Bool) {
@@ -646,6 +932,21 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
             .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
             .foregroundColor: NSColor(white: 0.5, alpha: 1.0),
         ]
+
+        let startPageItem = NSMenuItem(title: "Show Start Page", action: #selector(showStartPageFromChrome), keyEquivalent: "")
+        startPageItem.target = self
+        menu.addItem(startPageItem)
+
+        let importItem = NSMenuItem(title: "Import Browser Data…", action: #selector(importBrowserDataFromMenu), keyEquivalent: "")
+        importItem.target = self
+        menu.addItem(importItem)
+
+        let popupItem = NSMenuItem(title: popupsAllowed ? "Block Popups" : "Allow Popups", action: #selector(togglePopups), keyEquivalent: "")
+        popupItem.target = self
+        menu.addItem(popupItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         bookmarksHeader.attributedTitle = NSAttributedString(string: "BOOKMARKS", attributes: headerAttr)
         menu.addItem(bookmarksHeader)
 
@@ -725,14 +1026,16 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         menu.addItem(sourceMenuItem)
 
         // Position below the menu button
-        let point = menuButton.convert(NSPoint(x: 0, y: menuButton.bounds.height), to: nil)
-        let screenPoint = window?.convertPoint(toScreen: point) ?? .zero
         menu.popUp(positioning: nil, at: NSPoint(x: menuButton.frame.minX, y: menuButton.frame.minY), in: menuButton.superview)
     }
 
     @objc private func openBookmark(_ sender: NSMenuItem) {
         guard let url = sender.representedObject as? String else { return }
         loadURL(url)
+    }
+
+    @objc private func importBrowserDataFromMenu() {
+        BrowserImportWindowController.show()
     }
 
     @objc private func openHistoryItem(_ sender: NSMenuItem) {
@@ -803,22 +1106,12 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
             isUrlFocused = true
             showFullURL()
         }
+        showAutocomplete(for: currentAddressBarText())
     }
 
 
     func controlTextDidChange(_ obj: Notification) {
-        let query: String
-        // Read from field editor if active, otherwise from stringValue
-        if let editor = urlField.currentEditor() {
-            query = editor.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        } else {
-            query = urlField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        if query.isEmpty {
-            dismissAutocomplete()
-            return
-        }
-        showAutocomplete(for: query)
+        showAutocomplete(for: currentAddressBarText())
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {
@@ -836,9 +1129,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
             // If autocomplete has a selection, use it
             if let popup = autocompletePopup, popup.selectedIndex >= 0, popup.selectedIndex < popup.suggestions.count {
                 let suggestion = popup.suggestions[popup.selectedIndex]
-                dismissAutocomplete()
-                loadURL(suggestion.url)
-                window?.makeFirstResponder(webView)
+                activateSuggestion(suggestion)
                 return true
             }
             let text = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -848,6 +1139,14 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
             }
             window?.makeFirstResponder(webView)
             return true
+        }
+        if commandSelector == #selector(insertTab(_:)) {
+            if let popup = autocompletePopup, popup.selectedIndex >= 0, popup.selectedIndex < popup.suggestions.count {
+                let suggestion = popup.suggestions[popup.selectedIndex]
+                activateSuggestion(suggestion)
+                return true
+            }
+            return false
         }
         if commandSelector == #selector(moveDown(_:)) {
             autocompletePopup?.moveSelection(down: true)
@@ -873,33 +1172,89 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     // MARK: - Autocomplete
 
     private func showAutocomplete(for query: String) {
-        let lowerQuery = query.lowercased()
-
-        // Search history and bookmarks
         var suggestions: [URLSuggestion] = []
         var seen = Set<String>()
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // History matches (most recent first, already sorted)
-        for entry in BookmarkManager.shared.history {
-            guard suggestions.count < 8 else { break }
-            if entry.url.lowercased().contains(lowerQuery) || entry.title.lowercased().contains(lowerQuery) {
-                let key = entry.url.lowercased()
-                if !seen.contains(key) {
-                    seen.insert(key)
-                    suggestions.append(URLSuggestion(title: entry.title, url: entry.url, isBookmark: false))
-                }
-            }
-        }
-
-        // Bookmark matches
-        for bookmark in BookmarkManager.shared.bookmarks {
-            guard suggestions.count < 10 else { break }
-            if bookmark.url.lowercased().contains(lowerQuery) || bookmark.title.lowercased().contains(lowerQuery) {
+        if trimmedQuery.isEmpty {
+            for bookmark in BookmarkManager.shared.bookmarks.suffix(5).reversed() {
                 let key = bookmark.url.lowercased()
-                if !seen.contains(key) {
-                    seen.insert(key)
-                    suggestions.append(URLSuggestion(title: bookmark.title, url: bookmark.url, isBookmark: true))
+                guard !seen.contains(key) else { continue }
+                seen.insert(key)
+                suggestions.append(URLSuggestion(
+                    title: bookmark.title.isEmpty ? cleanedDisplayURL(bookmark.url) : bookmark.title,
+                    subtitle: cleanedDisplayURL(bookmark.url),
+                    value: bookmark.url,
+                    kind: .bookmark
+                ))
+            }
+
+            for entry in BookmarkManager.shared.recentHistory(limit: 6, dedupeByHost: false) {
+                let key = entry.url.lowercased()
+                guard !seen.contains(key) else { continue }
+                seen.insert(key)
+                suggestions.append(URLSuggestion(
+                    title: entry.title.isEmpty ? cleanedDisplayURL(entry.url) : entry.title,
+                    subtitle: "\(cleanedDisplayURL(entry.url))  •  \(relativeTimeString(for: entry.date))",
+                    value: entry.url,
+                    kind: .history
+                ))
+            }
+        } else {
+            suggestions.append(URLSuggestion(
+                title: looksLikeDirectNavigation(trimmedQuery) ? "Open \(cleanedDisplayURL(trimmedQuery))" : "Try \(trimmedQuery) as a website",
+                subtitle: "Navigate directly from the address bar",
+                value: trimmedQuery,
+                kind: .directNavigation
+            ))
+            suggestions.append(URLSuggestion(
+                title: "Search Google for “\(trimmedQuery)”",
+                subtitle: "Use the address bar as search",
+                value: trimmedQuery,
+                kind: .search
+            ))
+
+            var rankedMatches: [(Int, URLSuggestion)] = []
+
+            for bookmark in BookmarkManager.shared.bookmarks {
+                let score = scoreAutocompleteMatch(query: trimmedQuery, title: bookmark.title, url: bookmark.url, isBookmark: true)
+                guard score > 0 else { continue }
+                rankedMatches.append((
+                    score,
+                    URLSuggestion(
+                        title: bookmark.title.isEmpty ? cleanedDisplayURL(bookmark.url) : bookmark.title,
+                        subtitle: cleanedDisplayURL(bookmark.url),
+                        value: bookmark.url,
+                        kind: .bookmark
+                    )
+                ))
+            }
+
+            for entry in BookmarkManager.shared.history {
+                let score = scoreAutocompleteMatch(query: trimmedQuery, title: entry.title, url: entry.url, isBookmark: false)
+                guard score > 0 else { continue }
+                rankedMatches.append((
+                    score,
+                    URLSuggestion(
+                        title: entry.title.isEmpty ? cleanedDisplayURL(entry.url) : entry.title,
+                        subtitle: "\(cleanedDisplayURL(entry.url))  •  \(relativeTimeString(for: entry.date))",
+                        value: entry.url,
+                        kind: .history
+                    )
+                ))
+            }
+
+            for suggestion in rankedMatches.sorted(by: { lhs, rhs in
+                if lhs.0 == rhs.0 {
+                    return lhs.1.title.localizedCaseInsensitiveCompare(rhs.1.title) == .orderedAscending
                 }
+                return lhs.0 > rhs.0
+            }).map(\.1) {
+                let key = suggestion.value.lowercased()
+                guard !seen.contains(key) else { continue }
+                seen.insert(key)
+                suggestions.append(suggestion)
+                if suggestions.count >= 10 { break }
             }
         }
 
@@ -913,9 +1268,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         if autocompletePopup == nil {
             let popup = URLAutocompletePopup()
             popup.onSelect = { [weak self] suggestion in
-                self?.dismissAutocomplete()
-                self?.loadURL(suggestion.url)
-                self?.window?.makeFirstResponder(self?.webView)
+                self?.activateSuggestion(suggestion)
             }
             autocompletePopup = popup
         }
@@ -943,6 +1296,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     // MARK: - Navigation
 
     func loadURL(_ url: URL) {
+        startPageView?.isHidden = true
         webView.load(URLRequest(url: url))
     }
 
@@ -966,15 +1320,19 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     }
 
     @objc private func goBack() {
-        webView.goBack()
+        navigateBack()
     }
 
     @objc private func goForward() {
-        webView.goForward()
+        navigateForward()
     }
 
     @objc private func reload() {
-        webView.reload()
+        reloadPage()
+    }
+
+    @objc private func showStartPageFromChrome() {
+        showStartPage()
     }
 
     // MARK: - WKNavigationDelegate
@@ -989,8 +1347,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         if let pageTitle = finishedWebView.title, !pageTitle.isEmpty {
             title = pageTitle
         }
-        backButton.isEnabled = finishedWebView.canGoBack
-        forwardButton.isEnabled = finishedWebView.canGoForward
+        updateNavigationButtons()
         fetchFavicon()
 
         // Track in history
@@ -1038,6 +1395,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         guard webView === self.webView else { return }
         setLoadingState(true)
         setURL(webView.url)
+        updateNavigationButtons()
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
@@ -1111,22 +1469,49 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         isPageLoading = loading
 
         if loading {
-            loadingBar.isHidden = false
-            loadingBar.startAnimation(nil)
             reloadButton.contentTintColor = activeAccent
+            // Reset to a small head-start so the line is immediately visible.
+            loadingBarFillWidth.constant = 0
+            loadingBar.layoutSubtreeIfNeeded()
             NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.18
+                ctx.duration = 0.15
                 loadingBar.animator().alphaValue = 1
             }
         } else {
-            reloadButton.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+            reloadButton.contentTintColor = chromeTint
+            // Snap to full, then fade out.
             NSAnimationContext.runAnimationGroup({ ctx in
-                ctx.duration = 0.2
-                loadingBar.animator().alphaValue = 0
+                ctx.duration = 0.18
+                ctx.allowsImplicitAnimation = true
+                loadingBarFillWidth.constant = loadingBar.bounds.width
+                loadingBar.layoutSubtreeIfNeeded()
             }, completionHandler: { [weak self] in
-                self?.loadingBar.stopAnimation(nil)
-                self?.loadingBar.isHidden = true
+                guard let self = self else { return }
+                NSAnimationContext.runAnimationGroup({ ctx in
+                    ctx.duration = 0.22
+                    self.loadingBar.animator().alphaValue = 0
+                }, completionHandler: {
+                    self.loadingBarFillWidth.constant = 0
+                })
             })
+        }
+    }
+
+    private func updateLoadingProgress(_ progress: CGFloat) {
+        guard isPageLoading else { return }
+        let total = loadingBar.bounds.width
+        guard total > 0 else { return }
+        // Minimum 6% so the bar is always perceptible at load start.
+        let clamped = max(0.06, min(progress, 1.0))
+        let target = total * clamped
+        // Only animate forward — never shrink.
+        guard target > loadingBarFillWidth.constant else { return }
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.25
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            ctx.allowsImplicitAnimation = true
+            loadingBarFillWidth.constant = target
+            loadingBar.layoutSubtreeIfNeeded()
         }
     }
 
@@ -1390,7 +1775,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
         if popupsAllowed {
             popupToggleButton.image = NSImage(systemSymbolName: "macwindow.badge.plus", accessibilityDescription: "Popups allowed")?.withSymbolConfiguration(cfg)
-            popupToggleButton.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+            popupToggleButton.contentTintColor = chromeTint
             popupToggleButton.toolTip = "Popups allowed — click to block"
         } else {
             popupToggleButton.image = NSImage(systemSymbolName: "xmark.rectangle", accessibilityDescription: "Popups blocked")?.withSymbolConfiguration(cfg)
@@ -1601,18 +1986,15 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
 
     // MARK: - Keyboard Shortcuts
 
-    override func keyDown(with event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-
-        // ⌥⌘U — View Source
-        if flags == [.option, .command] && event.charactersIgnoringModifiers == "u" {
-            viewPageSource()
-            return
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if handleKeyEquivalent(event) {
+            return true
         }
+        return super.performKeyEquivalent(with: event)
+    }
 
-        // ⌥⌘I — Inspect Element (Web Inspector)
-        if flags == [.option, .command] && event.charactersIgnoringModifiers == "i" {
-            openWebInspector()
+    override func keyDown(with event: NSEvent) {
+        if handleKeyEquivalent(event) {
             return
         }
 
@@ -1728,6 +2110,447 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
 
 // MARK: - URLBarTextField
 
+@MainActor
+final class BrowserChromeButton: NSButton {
+    var baseBackgroundColor = NSColor(white: 1.0, alpha: 0.035) { didSet { updateAppearance() } }
+    var hoverBackgroundColor = NSColor(white: 1.0, alpha: 0.08)
+    var borderColor = NSColor(white: 1.0, alpha: 0.08) { didSet { updateAppearance() } }
+
+    private var trackingAreaRef: NSTrackingArea?
+    private var isHovering = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 10
+        layer?.cornerCurve = .continuous
+        updateAppearance()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) not supported")
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingAreaRef {
+            removeTrackingArea(trackingAreaRef)
+        }
+        let newTrackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(newTrackingArea)
+        trackingAreaRef = newTrackingArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+        updateAppearance()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+        updateAppearance()
+    }
+
+    private func updateAppearance() {
+        layer?.backgroundColor = (isHovering ? hoverBackgroundColor : baseBackgroundColor).cgColor
+        layer?.borderColor = borderColor.cgColor
+        layer?.borderWidth = 1
+    }
+}
+
+@MainActor
+final class BrowserStartCardButton: NSButton {
+    var payloadURL: String?
+
+    private let iconView = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let subtitleLabel = NSTextField(labelWithString: "")
+    private var trackingAreaRef: NSTrackingArea?
+    private var isHovering = false
+
+    private let baseBackgroundColor = NSColor(white: 1.0, alpha: 0.035)
+    private let hoverBackgroundColor = NSColor(white: 1.0, alpha: 0.075)
+    private let borderColor = NSColor(white: 1.0, alpha: 0.08)
+
+    init(title: String, subtitle: String, icon: String, compact: Bool = false) {
+        super.init(frame: .zero)
+        self.title = ""
+        translatesAutoresizingMaskIntoConstraints = false
+        isBordered = false
+        wantsLayer = true
+        layer?.cornerRadius = compact ? 12 : 16
+        layer?.cornerCurve = .continuous
+        layer?.borderWidth = 1
+        setButtonType(.momentaryPushIn)
+
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        let config = NSImage.SymbolConfiguration(pointSize: compact ? 12 : 13, weight: .medium)
+        iconView.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        iconView.contentTintColor = NSColor(white: 1.0, alpha: 0.66)
+        addSubview(iconView)
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = .systemFont(ofSize: compact ? 12 : 13, weight: .semibold)
+        titleLabel.textColor = NSColor(white: 1.0, alpha: 0.92)
+        titleLabel.stringValue = title
+        titleLabel.lineBreakMode = .byTruncatingTail
+        addSubview(titleLabel)
+
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        subtitleLabel.font = .systemFont(ofSize: compact ? 11 : 12, weight: .regular)
+        subtitleLabel.textColor = NSColor(white: 1.0, alpha: 0.46)
+        subtitleLabel.stringValue = subtitle
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+        addSubview(subtitleLabel)
+
+        NSLayoutConstraint.activate([
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: compact ? 14 : 16),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: compact ? 16 : 18),
+            iconView.heightAnchor.constraint(equalToConstant: compact ? 16 : 18),
+
+            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: compact ? 10 : 12),
+            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: compact ? 11 : 15),
+
+            subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            subtitleLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 3),
+        ])
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: compact ? 54 : 72),
+        ])
+
+        updateAppearance()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) not supported")
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingAreaRef {
+            removeTrackingArea(trackingAreaRef)
+        }
+        let newTrackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(newTrackingArea)
+        trackingAreaRef = newTrackingArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+        updateAppearance()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+        updateAppearance()
+    }
+
+    private func updateAppearance() {
+        layer?.backgroundColor = (isHovering ? hoverBackgroundColor : baseBackgroundColor).cgColor
+        layer?.borderColor = borderColor.cgColor
+    }
+}
+
+@MainActor
+final class BrowserStartPageView: NSView {
+    var onOpenURL: ((String) -> Void)?
+    var onFocusAddressBar: (() -> Void)?
+    var onImportBrowserData: (() -> Void)?
+    var onClearHistory: (() -> Void)?
+
+    private let scrollView = NSScrollView()
+    private let contentView = NSView()
+    private let stackView = NSStackView()
+    private let savedSitesStack = NSStackView()
+    private let recentSitesStack = NSStackView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor(red: 0.075, green: 0.078, blue: 0.095, alpha: 1.0).cgColor
+
+        let topGlow = NSView()
+        topGlow.translatesAutoresizingMaskIntoConstraints = false
+        topGlow.wantsLayer = true
+        topGlow.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.12).cgColor
+        topGlow.layer?.cornerRadius = 180
+        addSubview(topGlow)
+
+        let sideGlow = NSView()
+        sideGlow.translatesAutoresizingMaskIntoConstraints = false
+        sideGlow.wantsLayer = true
+        sideGlow.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.05).cgColor
+        sideGlow.layer?.cornerRadius = 140
+        addSubview(sideGlow)
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        addSubview(scrollView)
+
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = contentView
+
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        stackView.orientation = .vertical
+        stackView.alignment = .leading
+        stackView.spacing = 28
+        contentView.addSubview(stackView)
+
+        let heroStack = NSStackView()
+        heroStack.translatesAutoresizingMaskIntoConstraints = false
+        heroStack.orientation = .vertical
+        heroStack.alignment = .leading
+        heroStack.spacing = 8
+
+        let eyebrow = NSTextField(labelWithString: "START PAGE")
+        eyebrow.font = .systemFont(ofSize: 11, weight: .semibold)
+        eyebrow.textColor = NSColor(white: 1.0, alpha: 0.34)
+        heroStack.addArrangedSubview(eyebrow)
+
+        let titleLabel = NSTextField(labelWithString: "Minimal browsing, faster access.")
+        titleLabel.font = .systemFont(ofSize: 30, weight: .semibold)
+        titleLabel.textColor = NSColor(white: 1.0, alpha: 0.96)
+        heroStack.addArrangedSubview(titleLabel)
+
+        let subtitleLabel = NSTextField(labelWithString: "Saved sites and recently opened pages stay one click away.")
+        subtitleLabel.font = .systemFont(ofSize: 14, weight: .regular)
+        subtitleLabel.textColor = NSColor(white: 1.0, alpha: 0.52)
+        heroStack.addArrangedSubview(subtitleLabel)
+
+        let actionRow = NSStackView()
+        actionRow.translatesAutoresizingMaskIntoConstraints = false
+        actionRow.orientation = .horizontal
+        actionRow.alignment = .centerY
+        actionRow.spacing = 10
+
+        let locationButton = makeActionButton(title: "Open Address Bar", icon: "command")
+        locationButton.target = self
+        locationButton.action = #selector(focusAddressBarAction)
+        actionRow.addArrangedSubview(locationButton)
+
+        let importButton = makeActionButton(title: "Import Browser Data", icon: "arrow.down.circle")
+        importButton.target = self
+        importButton.action = #selector(importBrowserDataAction)
+        actionRow.addArrangedSubview(importButton)
+
+        let clearButton = makeActionButton(title: "Clear History", icon: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+        clearButton.target = self
+        clearButton.action = #selector(clearHistoryAction)
+        actionRow.addArrangedSubview(clearButton)
+
+        heroStack.addArrangedSubview(actionRow)
+        stackView.addArrangedSubview(heroStack)
+
+        let savedSection = makeSection(title: "Saved Sites", subtitle: "Pages you intentionally keep around.", contentStack: savedSitesStack)
+        stackView.addArrangedSubview(savedSection)
+
+        let recentSection = makeSection(title: "Recently Opened", subtitle: "Quickly jump back into pages you used last.", contentStack: recentSitesStack)
+        stackView.addArrangedSubview(recentSection)
+
+        NSLayoutConstraint.activate([
+            topGlow.widthAnchor.constraint(equalToConstant: 360),
+            topGlow.heightAnchor.constraint(equalToConstant: 360),
+            topGlow.topAnchor.constraint(equalTo: topAnchor, constant: -180),
+            topGlow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: 140),
+
+            sideGlow.widthAnchor.constraint(equalToConstant: 280),
+            sideGlow.heightAnchor.constraint(equalToConstant: 280),
+            sideGlow.topAnchor.constraint(equalTo: topAnchor, constant: 120),
+            sideGlow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: -120),
+
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            contentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            contentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            contentView.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor),
+            contentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+
+            stackView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 28),
+            stackView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -28),
+            stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 34),
+            stackView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -28),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) not supported")
+    }
+
+    func reloadContent(bookmarks: [BookmarkManager.Bookmark], history: [BookmarkManager.HistoryEntry]) {
+        rebuildSavedSites(bookmarks)
+        rebuildRecentSites(history)
+    }
+
+    @objc private func focusAddressBarAction() {
+        onFocusAddressBar?()
+    }
+
+    @objc private func importBrowserDataAction() {
+        onImportBrowserData?()
+    }
+
+    @objc private func clearHistoryAction() {
+        onClearHistory?()
+    }
+
+    @objc private func openURLFromButton(_ sender: NSButton) {
+        guard let button = sender as? BrowserStartCardButton, let url = button.payloadURL else { return }
+        onOpenURL?(url)
+    }
+
+    private func rebuildSavedSites(_ bookmarks: [BookmarkManager.Bookmark]) {
+        clearArrangedSubviews(in: savedSitesStack)
+        let items = Array(bookmarks.prefix(6))
+
+        guard !items.isEmpty else {
+            savedSitesStack.addArrangedSubview(makeEmptyState("Nothing saved yet. Use the star in the address bar to keep a site here."))
+            return
+        }
+
+        for chunk in stride(from: 0, to: items.count, by: 2) {
+            let row = NSStackView()
+            row.orientation = .horizontal
+            row.spacing = 12
+            row.distribution = .fillEqually
+
+            for bookmark in items[chunk..<min(chunk + 2, items.count)] {
+                let button = BrowserStartCardButton(
+                    title: bookmark.title.isEmpty ? simplifiedTitle(for: bookmark.url) : bookmark.title,
+                    subtitle: simplifiedSubtitle(for: bookmark.url),
+                    icon: "star.fill"
+                )
+                button.payloadURL = bookmark.url
+                button.target = self
+                button.action = #selector(openURLFromButton(_:))
+                row.addArrangedSubview(button)
+            }
+
+            if row.arrangedSubviews.count == 1 {
+                row.addArrangedSubview(NSView())
+            }
+
+            savedSitesStack.addArrangedSubview(row)
+        }
+    }
+
+    private func rebuildRecentSites(_ history: [BookmarkManager.HistoryEntry]) {
+        clearArrangedSubviews(in: recentSitesStack)
+
+        guard !history.isEmpty else {
+            recentSitesStack.addArrangedSubview(makeEmptyState("Your recent pages show up here once you start browsing."))
+            return
+        }
+
+        for entry in history {
+            let button = BrowserStartCardButton(
+                title: entry.title.isEmpty ? simplifiedTitle(for: entry.url) : entry.title,
+                subtitle: "\(simplifiedSubtitle(for: entry.url))  •  \(relativeTime(for: entry.date))",
+                icon: "clock",
+                compact: true
+            )
+            button.payloadURL = entry.url
+            button.target = self
+            button.action = #selector(openURLFromButton(_:))
+            recentSitesStack.addArrangedSubview(button)
+        }
+    }
+
+    private func makeSection(title: String, subtitle: String, contentStack: NSStackView) -> NSView {
+        contentStack.orientation = .vertical
+        contentStack.spacing = 12
+        contentStack.alignment = .leading
+
+        let section = NSStackView()
+        section.orientation = .vertical
+        section.alignment = .leading
+        section.spacing = 12
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 18, weight: .semibold)
+        titleLabel.textColor = NSColor(white: 1.0, alpha: 0.92)
+        section.addArrangedSubview(titleLabel)
+
+        let subtitleLabel = NSTextField(labelWithString: subtitle)
+        subtitleLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        subtitleLabel.textColor = NSColor(white: 1.0, alpha: 0.44)
+        section.addArrangedSubview(subtitleLabel)
+        section.addArrangedSubview(contentStack)
+
+        return section
+    }
+
+    private func makeActionButton(title: String, icon: String) -> BrowserChromeButton {
+        let button = BrowserChromeButton()
+        button.title = title
+        button.font = .systemFont(ofSize: 12, weight: .medium)
+        button.contentTintColor = NSColor(white: 1.0, alpha: 0.76)
+        button.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)
+        button.imagePosition = .imageLeading
+        button.imageHugsTitle = true
+        button.setButtonType(.momentaryPushIn)
+        button.isBordered = false
+        button.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        return button
+    }
+
+    private func makeEmptyState(_ message: String) -> NSView {
+        let label = NSTextField(wrappingLabelWithString: message)
+        label.font = .systemFont(ofSize: 13, weight: .regular)
+        label.textColor = NSColor(white: 1.0, alpha: 0.42)
+        return label
+    }
+
+    private func clearArrangedSubviews(in stack: NSStackView) {
+        for view in stack.arrangedSubviews {
+            stack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+    }
+
+    private func simplifiedTitle(for urlString: String) -> String {
+        guard let url = URL(string: urlString), let host = url.host, !host.isEmpty else {
+            return urlString
+        }
+        return host.replacingOccurrences(of: "www.", with: "")
+    }
+
+    private func simplifiedSubtitle(for urlString: String) -> String {
+        guard let url = URL(string: urlString) else { return urlString }
+        var parts: [String] = []
+        if let host = url.host {
+            parts.append(host.replacingOccurrences(of: "www.", with: ""))
+        }
+        if !url.path.isEmpty, url.path != "/" {
+            parts.append(url.path)
+        }
+        return parts.joined(separator: "")
+    }
+
+    private func relativeTime(for date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
 // MARK: - ClomeWebView (Context Menu)
 
 /// WKWebView subclass that provides a custom right-click context menu.
@@ -1762,6 +2585,13 @@ final class ClomeWebView: WKWebView {
             insertIdx += 1
         }
     }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if browserPanel?.handleKeyEquivalent(event) == true {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 /// Custom NSTextField subclass that notifies when it becomes first responder (gains focus).
@@ -1770,6 +2600,7 @@ final class ClomeWebView: WKWebView {
 /// when the user clicks or tabs into the field, before any text selection.
 @MainActor
 final class URLBarTextField: NSTextField {
+    weak var browserPanel: BrowserPanel?
     var onBecomeFirstResponder: (() -> Void)?
 
     override func becomeFirstResponder() -> Bool {
@@ -1782,5 +2613,11 @@ final class URLBarTextField: NSTextField {
         }
         return result
     }
-}
 
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if browserPanel?.handleKeyEquivalent(event) == true {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+}

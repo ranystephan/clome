@@ -1,5 +1,9 @@
 import Foundation
 
+extension Notification.Name {
+    static let browserDataDidChange = Notification.Name("clomeBrowserDataDidChange")
+}
+
 /// Simple JSON-backed bookmark and history manager.
 /// Stores at ~/.config/clome/bookmarks.json and ~/.config/clome/history.json
 @MainActor
@@ -79,6 +83,26 @@ class BookmarkManager {
         saveHistory()
     }
 
+    func recentHistory(limit: Int, dedupeByHost: Bool = true) -> [HistoryEntry] {
+        guard dedupeByHost else {
+            return Array(history.prefix(limit))
+        }
+
+        var results: [HistoryEntry] = []
+        var seenHosts = Set<String>()
+
+        for entry in history {
+            guard let url = URL(string: entry.url) else { continue }
+            let key = (url.host ?? entry.url).lowercased()
+            guard !seenHosts.contains(key) else { continue }
+            seenHosts.insert(key)
+            results.append(entry)
+            if results.count >= limit { break }
+        }
+
+        return results
+    }
+
     // MARK: - Persistence
 
     private func loadBookmarks() {
@@ -91,6 +115,7 @@ class BookmarkManager {
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(bookmarks) else { return }
         try? data.write(to: bookmarksFile, options: .atomic)
+        NotificationCenter.default.post(name: .browserDataDidChange, object: self)
     }
 
     private func loadHistory() {
@@ -103,5 +128,6 @@ class BookmarkManager {
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(history) else { return }
         try? data.write(to: historyFile, options: .atomic)
+        NotificationCenter.default.post(name: .browserDataDidChange, object: self)
     }
 }
