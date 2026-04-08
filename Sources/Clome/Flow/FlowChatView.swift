@@ -51,9 +51,9 @@ struct FlowChatView: View {
     private var mainChatView: some View {
         VStack(spacing: 0) {
             chatHeader
-            Divider().background(FlowTokens.border)
+            Rectangle().fill(FlowTokens.border).frame(height: FlowTokens.hairline)
             messageList
-            Divider().background(FlowTokens.border)
+            Rectangle().fill(FlowTokens.border).frame(height: FlowTokens.hairline)
             inputBar
         }
     }
@@ -66,16 +66,18 @@ struct FlowChatView: View {
                 withAnimation(.flowSpring) { showConversationList.toggle() }
             } label: {
                 Image(systemName: "sidebar.left")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(showConversationList ? FlowTokens.accent : FlowTokens.textHint)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(showConversationList ? FlowTokens.textPrimary : FlowTokens.textTertiary)
+                    .frame(width: 24, height: 24)
+                    .flowControl(isActive: showConversationList)
             }
             .buttonStyle(.plain)
             .help("Chat history")
 
             if let conv = store.activeConversation {
                 Text(conv.title)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(FlowTokens.textSecondary)
+                    .flowFont(.bodyMedium)
+                    .foregroundColor(FlowTokens.textPrimary)
                     .lineLimit(1)
             }
 
@@ -83,7 +85,7 @@ struct FlowChatView: View {
 
             if let conv = store.activeConversation, !conv.messages.isEmpty {
                 Text("\(conv.messages.count) msg\(conv.messages.count == 1 ? "" : "s")")
-                    .font(.system(size: 9, design: .monospaced))
+                    .flowFont(.timestamp)
                     .foregroundColor(FlowTokens.textMuted)
             }
 
@@ -92,15 +94,17 @@ struct FlowChatView: View {
                 showConversationList = false
             } label: {
                 Image(systemName: "square.and.pencil")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(FlowTokens.textHint)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(FlowTokens.textTertiary)
+                    .frame(width: 24, height: 24)
+                    .flowControl()
             }
             .buttonStyle(.plain)
             .help("New chat")
         }
-        .padding(.horizontal, 10)
-        .frame(height: 28)
-        .background(FlowTokens.bg1)
+        .padding(.horizontal, FlowTokens.spacingLG)
+        .padding(.vertical, FlowTokens.spacingSM + 2)
+        .background(FlowTokens.bg0)
     }
 
     // MARK: - Conversation List Panel
@@ -125,7 +129,7 @@ struct FlowChatView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, FlowTokens.spacingMD)
 
-            Divider().background(FlowTokens.border)
+            Rectangle().fill(FlowTokens.border).frame(height: FlowTokens.hairline)
 
             ScrollView {
                 LazyVStack(spacing: 0) {
@@ -148,7 +152,7 @@ struct FlowChatView: View {
                 }
             }
 
-            Divider().background(FlowTokens.border)
+            Rectangle().fill(FlowTokens.border).frame(height: FlowTokens.hairline)
 
             if !store.conversations(forWorkspace: workspaceID).isEmpty {
                 Button {
@@ -167,12 +171,12 @@ struct FlowChatView: View {
                 .buttonStyle(.plain)
             }
         }
-        .frame(width: 220)
+        .frame(width: 240)
         .background(FlowTokens.bg0)
         .overlay(alignment: .trailing) {
             Rectangle()
                 .fill(FlowTokens.border)
-                .frame(width: 0.5)
+                .frame(width: FlowTokens.hairline)
         }
     }
 
@@ -467,7 +471,7 @@ struct FlowChatView: View {
                 }
 
                 if let result = result {
-                    Divider().background(FlowTokens.border).padding(.horizontal, FlowTokens.spacingSM)
+                    Rectangle().fill(FlowTokens.border).frame(height: FlowTokens.hairline).padding(.horizontal, FlowTokens.spacingSM)
                     HStack(spacing: FlowTokens.spacingSM) {
                         Image(systemName: result.icon)
                             .font(.system(size: 9))
@@ -488,7 +492,7 @@ struct FlowChatView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: FlowTokens.radiusMedium, style: .continuous)
-                .stroke(FlowTokens.border, lineWidth: 0.5)
+                .stroke(FlowTokens.border, lineWidth: FlowTokens.hairline)
         )
     }
 
@@ -690,7 +694,7 @@ struct FlowChatView: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: FlowTokens.radiusMedium, style: .continuous)
-                    .stroke(FlowTokens.border, lineWidth: 0.5)
+                    .stroke(FlowTokens.border, lineWidth: FlowTokens.hairline)
             )
         }
         .buttonStyle(.plain)
@@ -704,12 +708,12 @@ struct FlowChatView: View {
             contextIndicator
 
             HStack(spacing: FlowTokens.spacingMD) {
-                TextField("Ask Clome Flow...", text: $inputText, axis: .vertical)
+                TextField("Ask Clome Flow…", text: $inputText, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12))
+                    .flowFont(.body)
                     .foregroundColor(FlowTokens.textPrimary)
                     .focused($isInputFocused)
-                    .lineLimit(1...3)
+                    .lineLimit(1...5)
                     .onSubmit { sendMessage() }
 
                 if isProcessing {
@@ -721,17 +725,18 @@ struct FlowChatView: View {
                         sendMessage()
                     } label: {
                         Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 16))
+                            .font(.system(size: 18, weight: .regular))
                             .foregroundColor(inputText.isEmpty ? FlowTokens.textDisabled : FlowTokens.accent)
                     }
                     .buttonStyle(.plain)
                     .disabled(inputText.isEmpty)
                 }
             }
-            .padding(.horizontal, 10)
+            .flowInput(isFocused: isInputFocused)
+            .padding(.horizontal, FlowTokens.spacingLG)
             .padding(.vertical, FlowTokens.spacingMD)
         }
-        .background(FlowTokens.bg1)
+        .background(FlowTokens.bg0)
     }
 
     private var contextIndicator: some View {

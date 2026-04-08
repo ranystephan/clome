@@ -17,87 +17,106 @@ struct FlowAuthView: View {
             ProgressView()
                 .scaleEffect(0.7)
         } else {
-            VStack(spacing: 16) {
+            VStack(spacing: 0) {
                 Spacer()
 
-                // Icon
-                ZStack(alignment: .bottomTrailing) {
-                    Image(systemName: "square.grid.3x3.fill")
-                        .font(.system(size: 28))
-                        .foregroundColor(.white.opacity(0.15))
-                    Image(systemName: "music.note")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.25))
-                        .offset(x: 4, y: 4)
-                }
+                VStack(spacing: FlowTokens.spacingXL) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: FlowTokens.radiusSheet, style: .continuous)
+                            .fill(FlowTokens.bg2)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: FlowTokens.radiusSheet, style: .continuous)
+                                    .strokeBorder(FlowTokens.border, lineWidth: FlowTokens.hairline)
+                            )
+                            .frame(width: 56, height: 56)
 
-                Text("Sign in to Clome Flow")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.white.opacity(0.70))
-
-                Text("Connect your Clome Flow account to access\ntodos, calendar, and AI chat.")
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.35))
-                    .multilineTextAlignment(.center)
-
-                VStack(spacing: 8) {
-                    // Sign in with Apple
-                    SignInWithAppleButton(.signIn) { request in
-                        request.requestedScopes = [.email, .fullName]
-                    } onCompletion: { result in
-                        handleAppleSignIn(result)
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundColor(FlowTokens.accent)
                     }
-                    .signInWithAppleButtonStyle(.white)
-                    .frame(width: 220, height: 32)
-                    .cornerRadius(4)
 
-                    // Sign in with Google
-                    Button {
-                        signInWithGoogle()
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "g.circle.fill")
-                                .font(.system(size: 14, weight: .medium))
-                            Text("Sign in with Google")
-                                .font(.system(size: 13, weight: .medium))
+                    VStack(spacing: FlowTokens.spacingSM) {
+                        Text("Sign in to Clome Flow")
+                            .flowFont(.title1)
+                            .foregroundColor(FlowTokens.textPrimary)
+
+                        Text("Sync todos, calendar, notes, and chat across Clome.")
+                            .flowFont(.caption)
+                            .foregroundColor(FlowTokens.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 280)
+                    }
+
+                    VStack(spacing: FlowTokens.spacingSM + 2) {
+                        SignInWithAppleButton(.signIn) { request in
+                            request.requestedScopes = [.email, .fullName]
+                        } onCompletion: { result in
+                            handleAppleSignIn(result)
                         }
-                        .foregroundColor(.black)
-                        .frame(width: 220, height: 32)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .fill(Color.white)
-                        )
+                        .signInWithAppleButtonStyle(.white)
+                        .frame(width: 256, height: 38)
+                        .clipShape(RoundedRectangle(cornerRadius: FlowTokens.radiusCard, style: .continuous))
+
+                        Button {
+                            signInWithGoogle()
+                        } label: {
+                            HStack(spacing: FlowTokens.spacingSM) {
+                                Image(systemName: "g.circle.fill")
+                                    .font(.system(size: 15, weight: .medium))
+                                Text("Sign in with Google")
+                                    .flowFont(.bodyBold)
+                                Spacer(minLength: 0)
+                            }
+                            .foregroundColor(.black)
+                            .padding(.horizontal, FlowTokens.spacingLG - 2)
+                            .frame(width: 256, height: 38)
+                            .background(
+                                RoundedRectangle(cornerRadius: FlowTokens.radiusCard, style: .continuous)
+                                    .fill(Color.white)
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            skipAuth()
+                        } label: {
+                            Text("Continue without account")
+                                .flowFont(.caption)
+                                .foregroundColor(FlowTokens.textMuted)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, FlowTokens.spacingXS)
                     }
-                    .buttonStyle(.plain)
 
-                    // Continue without account
-                    Button {
-                        skipAuth()
-                    } label: {
-                        Text("Continue without account")
-                            .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.35))
+                    if isSigningIn {
+                        ProgressView()
+                            .scaleEffect(0.7)
                     }
-                    .buttonStyle(.plain)
-                    .padding(.top, 4)
-                }
 
-                if isSigningIn {
-                    ProgressView()
-                        .scaleEffect(0.7)
+                    if let error = errorMessage {
+                        Text(error)
+                            .flowFont(.caption)
+                            .foregroundColor(FlowTokens.error)
+                            .padding(.horizontal, FlowTokens.spacingLG)
+                            .multilineTextAlignment(.center)
+                    }
                 }
-
-                if let error = errorMessage {
-                    Text(error)
-                        .font(.system(size: 10))
-                        .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.4))
-                        .padding(.horizontal, 20)
-                        .multilineTextAlignment(.center)
-                }
+                .padding(.horizontal, FlowTokens.spacingXXL + 4)
+                .padding(.vertical, FlowTokens.spacingXXXL)
+                .background(
+                    RoundedRectangle(cornerRadius: FlowTokens.radiusSheet + 4, style: .continuous)
+                        .fill(FlowTokens.bg1)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: FlowTokens.radiusSheet + 4, style: .continuous)
+                        .strokeBorder(FlowTokens.border, lineWidth: FlowTokens.hairline)
+                )
 
                 Spacer()
             }
-            .frame(maxWidth: .infinity)
+            .padding(FlowTokens.spacingXXL)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(FlowTokens.bg0)
             .onAppear {
                 errorMessage = nil
                 let user = Auth.auth().currentUser
@@ -134,7 +153,7 @@ struct FlowAuthView: View {
         if isKeychainError(error) {
             // Firebase may have authenticated the user in-memory even though
             // persisting the token to the keychain failed.
-            if Auth.auth().currentUser != nil {
+            if let user = Auth.auth().currentUser, !user.isAnonymous {
                 NSLog("[FlowAuth] Keychain persistence failed but user IS authenticated in-memory — proceeding")
                 isAuthenticated = true
                 onAuthenticated?()
