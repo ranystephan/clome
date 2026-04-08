@@ -20,6 +20,7 @@ struct BlockInspector: View {
     @State private var title: String = ""
     @State private var notes: String = ""
     @State private var now = Date()
+    @State private var openCanvasID: UUID?
     @FocusState private var titleFocused: Bool
     @FocusState private var notesFocused: Bool
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -49,6 +50,15 @@ struct BlockInspector: View {
         .onAppear(perform: sync)
         .onChange(of: block.id) { _, _ in sync() }
         .onReceive(ticker) { now = $0 }
+        .sheet(isPresented: Binding(
+            get: { openCanvasID != nil },
+            set: { if !$0 { openCanvasID = nil } }
+        )) {
+            if let id = openCanvasID, let doc = CanvasStore.shared.load(id) {
+                CanvasView(doc: doc) { openCanvasID = nil }
+                    .frame(minWidth: 900, minHeight: 600)
+            }
+        }
     }
 
     // MARK: - Run control
@@ -328,6 +338,21 @@ struct BlockInspector: View {
             HStack {
                 sectionHeader("ATTACHMENTS")
                 Spacer()
+                if isNative {
+                    Button(action: addCanvasAttachment) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "rectangle.dashed")
+                                .font(.system(size: 9, weight: .semibold))
+                            Text("New canvas")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundColor(FlowTokens.textSecondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(FlowTokens.bg2.opacity(0.7)))
+                    }
+                    .buttonStyle(.plain)
+                }
                 Text("\(block.attachments.count)")
                     .font(.system(size: 9, weight: .semibold, design: .monospaced))
                     .foregroundColor(FlowTokens.textTertiary)
@@ -423,9 +448,18 @@ struct BlockInspector: View {
             NSWorkspace.shared.open(URL(fileURLWithPath: path))
         case .url(let url):
             NSWorkspace.shared.open(url)
+        case .canvas(let id, _):
+            openCanvasID = id
         default:
             break
         }
+    }
+
+    private func addCanvasAttachment() {
+        guard let nid = store.nativeID(for: block.id) else { return }
+        let doc = CanvasStore.shared.createBlank(title: block.title.isEmpty ? "Canvas" : "\(block.title) · canvas")
+        store.addAttachment(.canvas(id: doc.id, title: doc.title), toNativeID: nid)
+        openCanvasID = doc.id
     }
 
     // MARK: - Notes
