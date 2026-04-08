@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Week view — M1 rewrite. Renders Blocks from `BlockStore` (which merges
 /// native blocks with EventKit events, todos, deadlines, and reminders).
@@ -21,6 +22,8 @@ struct CalendarWeekView: View {
     @State private var editingID: String?
     @State private var editingTitle: String = ""
     @State private var hoveredID: String?
+    @State private var dropTargetedDay: Date?
+    @State private var pendingDropY: CGFloat = 0
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     struct CreateDraft: Equatable {
@@ -47,6 +50,11 @@ struct CalendarWeekView: View {
             )
 
             CalendarAllDayStrip(days: days, blocks: store.blocks.filter { $0.isAllDay })
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(FlowTokens.border).frame(height: FlowTokens.hairline)
+                }
+
+            PinnedStrip(days: days, blocks: store.blocks)
                 .overlay(alignment: .bottom) {
                     Rectangle().fill(FlowTokens.border).frame(height: FlowTokens.hairline)
                 }
@@ -134,12 +142,38 @@ struct CalendarWeekView: View {
         }
         let slots = CalendarOverlapLayout.layout(timed.map(BlockLayoutItem.init))
 
+        let isTargeted = dropTargetedDay.map { cal.isDate($0, inSameDayAs: day) } ?? false
+
         return ZStack(alignment: .topLeading) {
             Color.clear
                 .contentShape(Rectangle())
                 .onTapGesture(coordinateSpace: .local) { location in
                     handleBackgroundTap(day: day, y: location.y)
                 }
+                .onDrop(
+                    of: [.fileURL, .url, .text],
+                    delegate: TimeGridDropDelegate(
+                        day: day,
+                        onTargeted: { isIn, y in
+                            dropTargetedDay = isIn ? day : nil
+                            pendingDropY = y
+                        },
+                        onDrop: { providers, y in
+                            handleTimeGridDrop(providers: providers, day: day, y: y)
+                        }
+                    )
+                )
+
+            if isTargeted {
+                // Subtle accent wash + horizontal line showing the snap point.
+                Rectangle()
+                    .fill(FlowTokens.accent.opacity(0.06))
+                    .frame(maxHeight: .infinity)
+                Rectangle()
+                    .fill(FlowTokens.accent.opacity(0.55))
+                    .frame(height: 1)
+                    .offset(y: snappedDropY(pendingDropY))
+            }
 
             if !isDay && index < 6 {
                 Rectangle()
@@ -255,6 +289,54 @@ struct CalendarWeekView: View {
         editingID = nil
     }
 
+    // MARK: - Time-grid drop
+
+    private func snappedDropY(_ y: CGFloat) -> CGFloat {
+        let slot = CalendarGridGeometry.hourHeight / 4  // 15-min slots
+        return (y / slot).rounded() * slot
+    }
+
+    private func handleTimeGridDrop(providers: [NSItemProvider], day: Date, y: CGFloat) -> Bool {
+        let start = CalendarGridGeometry.time(forY: y, onDay: day)
+        let end = start.addingTimeInterval(60 * 60)
+        var handled = false
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                handled = true
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
+                    guard let data = data as? Data,
+                          let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+                    Task { @MainActor in
+                        store.create(
+                            title: url.lastPathComponent,
+                            start: start, end: end,
+                            kind: .focus,
+                            attachments: [.file(path: url.path)]
+                        )
+                    }
+                }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
+                handled = true
+                provider.loadItem(forTypeIdentifier: UTType.url.identifier) { data, _ in
+                    var url: URL?
+                    if let d = data as? Data { url = URL(dataRepresentation: d, relativeTo: nil) }
+                    else if let u = data as? URL { url = u }
+                    guard let u = url else { return }
+                    Task { @MainActor in
+                        store.create(
+                            title: u.host ?? u.absoluteString,
+                            start: start, end: end,
+                            kind: .focus,
+                            attachments: [.url(u)]
+                        )
+                    }
+                }
+            }
+        }
+        dropTargetedDay = nil
+        return handled
+    }
+
     // MARK: - Now line
 
     private func nowLine(width: CGFloat, colW: CGFloat) -> some View {
@@ -286,6 +368,34 @@ struct CalendarWeekView: View {
                 .offset(y: y)
             }
         }
+    }
+}
+
+// MARK: - Drop delegate with location
+
+/// DropDelegate that tracks the drop point's Y coordinate so the week view
+/// can create the dropped block at the exact snapped time.
+private struct TimeGridDropDelegate: DropDelegate {
+    let day: Date
+    let onTargeted: (Bool, CGFloat) -> Void
+    let onDrop: ([NSItemProvider], CGFloat) -> Bool
+
+    func dropEntered(info: DropInfo) {
+        onTargeted(true, info.location.y)
+    }
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        onTargeted(true, info.location.y)
+        return DropProposal(operation: .copy)
+    }
+    func dropExited(info: DropInfo) {
+        onTargeted(false, info.location.y)
+    }
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [.fileURL, .url, .text])
+    }
+    func performDrop(info: DropInfo) -> Bool {
+        let providers = info.itemProviders(for: [.fileURL, .url, .text])
+        return onDrop(providers, info.location.y)
     }
 }
 

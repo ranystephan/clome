@@ -129,7 +129,8 @@ final class BlockStore: ObservableObject {
     func create(title: String, start: Date, end: Date,
                 kind: BlockKind = .focus,
                 isPinned: Bool = false,
-                color: Color? = nil) -> UUID {
+                color: Color? = nil,
+                attachments: [BlockAttachment] = []) -> UUID {
         let id = UUID()
         let block = Block(
             source: .native(id),
@@ -142,13 +143,81 @@ final class BlockStore: ObservableObject {
             color: color ?? kind.defaultColor,
             status: .planned,
             notes: "",
-            attachments: [],
+            attachments: attachments,
             isCompleted: false
         )
         nativeBlocks[id] = block
         persist(block)
+        persistAttachments(id: id, attachments: attachments)
         recompute()
         return id
+    }
+
+    // MARK: - Attachments
+
+    /// Appends an attachment to a native block and persists.
+    func addAttachment(_ attachment: BlockAttachment, toNativeID id: UUID) {
+        guard var block = nativeBlocks[id] else { return }
+        block.attachments.append(attachment)
+        nativeBlocks[id] = block
+        persistAttachments(id: id, attachments: block.attachments)
+        recompute()
+    }
+
+    /// Removes an attachment at a position from a native block.
+    func removeAttachment(at index: Int, fromNativeID id: UUID) {
+        guard var block = nativeBlocks[id], index < block.attachments.count else { return }
+        block.attachments.remove(at: index)
+        nativeBlocks[id] = block
+        persistAttachments(id: id, attachments: block.attachments)
+        recompute()
+    }
+
+    private func persistAttachments(id: UUID, attachments: [BlockAttachment]) {
+        guard db != nil else { return }
+        // Replace the whole list (simpler than diff for M2).
+        var del: OpaquePointer?
+        if sqlite3_prepare_v2(db, "DELETE FROM block_attachments WHERE block_id = ?", -1, &del, nil) == SQLITE_OK {
+            sqlite3_bind_text(del, 1, (id.uuidString as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_step(del)
+            sqlite3_finalize(del)
+        }
+        let encoder = JSONEncoder()
+        for (pos, att) in attachments.enumerated() {
+            guard let data = try? encoder.encode(att),
+                  let json = String(data: data, encoding: .utf8) else { continue }
+            var stmt: OpaquePointer?
+            let sql = "INSERT INTO block_attachments (block_id, position, payload) VALUES (?, ?, ?)"
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, (id.uuidString as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int(stmt, 2, Int32(pos))
+                sqlite3_bind_text(stmt, 3, (json as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_step(stmt)
+                sqlite3_finalize(stmt)
+            }
+        }
+    }
+
+    private func loadAttachments(for id: UUID) -> [BlockAttachment] {
+        guard db != nil else { return [] }
+        let sql = "SELECT payload FROM block_attachments WHERE block_id = ? ORDER BY position"
+        var stmt: OpaquePointer?
+        var out: [BlockAttachment] = []
+        let decoder = JSONDecoder()
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (id.uuidString as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let ptr = sqlite3_column_text(stmt, 0) {
+                    let json = String(cString: ptr)
+                    if let data = json.data(using: .utf8),
+                       let att = try? decoder.decode(BlockAttachment.self, from: data) {
+                        out.append(att)
+                    }
+                }
+            }
+            sqlite3_finalize(stmt)
+        }
+        return out
     }
 
     /// Updates a native block. Silently ignores non-native ids — callers
@@ -284,6 +353,7 @@ final class BlockStore: ObservableObject {
             let notes = sqlite3_column_text(stmt, 9).map { String(cString: $0) } ?? ""
             let isCompleted = sqlite3_column_int(stmt, 10) != 0
 
+            let atts = loadAttachments(for: id)
             let block = Block(
                 source: .native(id),
                 title: title,
@@ -295,7 +365,7 @@ final class BlockStore: ObservableObject {
                 color: color,
                 status: status,
                 notes: notes,
-                attachments: [],
+                attachments: atts,
                 isCompleted: isCompleted
             )
             nativeBlocks[id] = block
