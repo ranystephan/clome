@@ -36,6 +36,17 @@ final class RemoteSessionHandler: @unchecked Sendable {
     private var receiveBuffer = Data()
     private var isActive = true
 
+    /// Last time we received any data from the remote client on this session.
+    /// Used by RemoteServer's liveness sweep to drop sessions whose underlying
+    /// transport (TCP, MC, or cloud) has gone silent.
+    fileprivate(set) var lastActivityAt: Date = .now
+    fileprivate var transportKind: String {
+        if nwConnection != nil { return "network" }
+        if mcSession != nil { return "multipeer" }
+        if cloudSender != nil { return "cloud" }
+        return "unknown"
+    }
+
     enum Transport {
         case network(NWConnection)
         case multipeer(MCSession, MCPeerID)
@@ -93,6 +104,7 @@ final class RemoteSessionHandler: @unchecked Sendable {
             Task { @MainActor in
                 guard let self, self.isActive else { return }
                 if let data = content {
+                    self.lastActivityAt = .now
                     self.receiveBuffer.append(data)
                     self.processBuffer()
                 }
@@ -110,8 +122,14 @@ final class RemoteSessionHandler: @unchecked Sendable {
     /// Called from MultipeerConnectivity delegate when data arrives for this peer.
     func receivedMultipeerData(_ data: Data) {
         guard isActive else { return }
+        lastActivityAt = .now
         receiveBuffer.append(data)
         processBuffer()
+    }
+
+    /// Called by RemoteServer when an envelope arrives over the cloud transport.
+    func noteCloudActivity() {
+        lastActivityAt = .now
     }
 
     private func processBuffer() {
@@ -206,6 +224,9 @@ final class RemoteServer: NSObject, @unchecked Sendable {
     private var pendingPairingPresentationTasks: [String: Task<Void, Never>] = [:]
     private var cloudAuthHandle: AuthStateDidChangeListenerHandle?
     private var cloudHostsHeartbeatTimer: Timer?
+    private var sessionLivenessTimer: Timer?
+    /// Sessions with no inbound activity for longer than this are considered dead.
+    private static let sessionStaleTimeout: TimeInterval = 60
     private var cloudSessionsListener: ListenerRegistration?
     private var cloudClientMessageListeners: [String: ListenerRegistration] = [:]
     private var processedCloudClientMessageIds: [String: Set<String>] = [:]
@@ -281,6 +302,7 @@ final class RemoteServer: NSObject, @unchecked Sendable {
 
         startMultipeerAdvertiser()
         configureCloudRemoteHosting()
+        startSessionLivenessSweep()
         isRunning = true
 
         // Wire up workspace state broadcasting
@@ -341,6 +363,8 @@ final class RemoteServer: NSObject, @unchecked Sendable {
         mcAdvertiser = nil
         mcSession?.disconnect()
         mcSession = nil
+        sessionLivenessTimer?.invalidate()
+        sessionLivenessTimer = nil
         stopCloudRemoteHosting(markOffline: true)
 
         let allSessions = Array(sessions.values)
@@ -473,6 +497,12 @@ final class RemoteServer: NSObject, @unchecked Sendable {
             ], merge: true)
     }
 
+    /// Only freshly-requested sessions should be accepted. A session older than
+    /// this window was almost certainly abandoned (client killed, network lost,
+    /// host restarted) and must not be resurrected — otherwise ghost sessions
+    /// accumulate and Clome reports "always connected" with no real client.
+    private static let cloudSessionFreshnessWindow: TimeInterval = 120
+
     private func handleCloudSessionsSnapshot(snapshot: QuerySnapshot?, error: Error?) {
         if let error {
             print("[RemoteServer] Cloud session listener error: \(error.localizedDescription)")
@@ -480,35 +510,82 @@ final class RemoteServer: NSObject, @unchecked Sendable {
         }
         guard let snapshot, let userId = cloudRegisteredUserId else { return }
 
-        for document in snapshot.documents {
+        // Process only actual changes — iterating all documents every time
+        // causes write amplification and makes status updates we sent ourselves
+        // (e.g. "connected") feed back into this handler.
+        let freshnessThreshold = Date().addingTimeInterval(-Self.cloudSessionFreshnessWindow)
+        let myDeviceId = getOrCreateDeviceId()
+        var sawStaleDocs: [String] = []
+
+        for change in snapshot.documentChanges {
+            let document = change.document
             let data = document.data()
             guard let hostDeviceId = data["hostDeviceId"] as? String,
-                  hostDeviceId == getOrCreateDeviceId() else {
+                  hostDeviceId == myDeviceId else {
                 continue
             }
 
             let sessionId = document.documentID
             let status = data["status"] as? String ?? "requested"
+            let createdAt = (data["createdAt"] as? Timestamp)?.dateValue() ?? .distantPast
+            let updatedAt = (data["updatedAt"] as? Timestamp)?.dateValue() ?? createdAt
 
             switch status {
-            case "requested", "connecting", "connected":
-                if !cloudSessionIds.contains(sessionId) {
-                    acceptCloudSession(sessionId: sessionId, userId: userId, data: data)
+            case "requested":
+                if cloudSessionIds.contains(sessionId) { break }
+                // Reject stale "requested" docs — these are leftovers from a
+                // previous client run that never got cleaned up.
+                guard updatedAt >= freshnessThreshold else {
+                    sawStaleDocs.append(sessionId)
+                    break
                 }
+                acceptCloudSession(sessionId: sessionId, userId: userId, data: data)
+
+            case "connecting":
+                // Ignore — only we transition a session to "connected".
+                break
+
+            case "connected":
+                // We're the only writer of "connected". If we already have this
+                // session locally, it's an echo of our own write — ignore. If we
+                // DON'T have it locally, it's a leftover from a previous run of
+                // this host: sweep it so activeSessionCount doesn't stay inflated.
+                if !cloudSessionIds.contains(sessionId) {
+                    sawStaleDocs.append(sessionId)
+                }
+
             case "ended", "cancelled", "rejected":
                 if cloudSessionIds.contains(sessionId) {
                     if let handler = sessions[sessionId] {
                         handler.disconnect()
                     } else {
-                        // Handler is gone (e.g. host was restarted) but the
-                        // sessionId is still tracked — clean it up directly so
-                        // the presence count doesn't stay inflated.
                         endCloudSession(sessionId, reason: "remote_ended")
                     }
                 }
             default:
                 break
             }
+        }
+
+        // Best-effort sweep of stale docs in one batch. Marking them "ended"
+        // clears the client's discovery list and stops the freshness check on
+        // the next snapshot.
+        if !sawStaleDocs.isEmpty {
+            let db = Firestore.firestore()
+            for staleId in sawStaleDocs {
+                db.collection("users")
+                    .document(userId)
+                    .collection("remoteSessions")
+                    .document(staleId)
+                    .setData([
+                        "status": "ended",
+                        "endedBy": "host",
+                        "endedReason": "stale_on_host_startup",
+                        "updatedAt": Date()
+                    ], merge: true)
+            }
+            // Presence count may have been inflated by ghost docs — refresh it.
+            updateCloudPresenceDocument()
         }
     }
 
@@ -601,6 +678,7 @@ final class RemoteServer: NSObject, @unchecked Sendable {
                         }
 
                         self.processedCloudClientMessageIds[sessionId, default: []].insert(document.documentID)
+                        handler.noteCloudActivity()
                         self.handleMessage(envelope, from: handler)
                         document.reference.delete()
                     }
@@ -627,17 +705,36 @@ final class RemoteServer: NSObject, @unchecked Sendable {
                     "payloadBase64": payload.base64EncodedString()
                 ])
 
-            Firestore.firestore()
-                .collection("users")
-                .document(userId)
-                .collection("remoteSessions")
-                .document(sessionId)
-                .setData([
-                    "status": "connected",
-                    "updatedAt": Date()
-                ], merge: true)
+            // Intentionally do NOT touch the session document on every send.
+            // Writing "status: connected" here causes the session listener to
+            // re-fire on every message, producing write amplification and
+            // Remote Anywhere flicker. The status is set once in
+            // acceptCloudSession() and that is enough.
         } catch {
             print("[RemoteServer] Cloud send encode error: \(error)")
+        }
+    }
+
+    /// Periodically drop sessions whose underlying transport has gone silent.
+    /// Without this, a client that vanishes (phone locked, network dropped,
+    /// process killed) leaves the server reporting "connected" indefinitely
+    /// because neither TCP FIN nor Firestore tells us the peer is gone.
+    private func startSessionLivenessSweep() {
+        sessionLivenessTimer?.invalidate()
+        sessionLivenessTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.sweepDeadSessions()
+            }
+        }
+    }
+
+    private func sweepDeadSessions() {
+        let now = Date()
+        let threshold = now.addingTimeInterval(-Self.sessionStaleTimeout)
+        let dead = sessions.values.filter { $0.lastActivityAt < threshold }
+        for handler in dead {
+            print("[RemoteServer] Session \(handler.id.prefix(8)) (\(handler.transportKind), device '\(handler.deviceName)') is stale — last activity \(Int(now.timeIntervalSince(handler.lastActivityAt)))s ago, dropping")
+            handler.disconnect()
         }
     }
 
@@ -1703,8 +1800,18 @@ extension RemoteServer: MCSessionDelegate {
     nonisolated func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
         let peerName = peerID.displayName
         let stateValue = state
+        // Capture the session pointer so we can ignore callbacks from a
+        // previously-replaced MCSession instance (can happen when the advertiser
+        // is restarted, e.g. via disconnectAllClients()).
+        // MCSession isn't Sendable; we only use it for identity comparison on
+        // the main actor, so marking the capture nonisolated(unsafe) is safe.
+        nonisolated(unsafe) let callbackSession = session
         Task { @MainActor [weak self] in
             guard let self else { return }
+            guard self.mcSession === callbackSession else {
+                print("[RemoteServer] Ignoring MCSession state from stale session instance for peer \(peerName)")
+                return
+            }
             switch stateValue {
             case .connected:
                 self.handleMultipeerConnected(peerName: peerName)
@@ -1721,8 +1828,10 @@ extension RemoteServer: MCSessionDelegate {
     nonisolated func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
         let peerName = peerID.displayName
         let receivedData = data
+        nonisolated(unsafe) let callbackSession = session
         Task { @MainActor [weak self] in
             guard let self else { return }
+            guard self.mcSession === callbackSession else { return }
             if let handler = self.sessions.values.first(where: { $0.deviceName == peerName }) {
                 handler.receivedMultipeerData(receivedData)
                 return
