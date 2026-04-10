@@ -300,10 +300,10 @@ final class RemoteServer: NSObject, @unchecked Sendable {
             return
         }
 
+        isRunning = true
         startMultipeerAdvertiser()
         configureCloudRemoteHosting()
         startSessionLivenessSweep()
-        isRunning = true
 
         // Wire up workspace state broadcasting
         if let manager = workspaceManager {
@@ -395,9 +395,19 @@ final class RemoteServer: NSObject, @unchecked Sendable {
     }
 
     private func refreshCloudRemoteHosting() {
-        guard isRunning else { return }
+        guard isRunning else {
+            print("[RemoteServer] Cloud hosting skipped — server not running yet")
+            return
+        }
 
-        guard isCloudHostingEnabled, let user = Auth.auth().currentUser else {
+        guard isCloudHostingEnabled else {
+            print("[RemoteServer] Cloud hosting disabled by user setting")
+            stopCloudRemoteHosting(markOffline: true)
+            return
+        }
+
+        guard let user = Auth.auth().currentUser else {
+            print("[RemoteServer] Cloud hosting unavailable — not signed into Firebase Auth")
             stopCloudRemoteHosting(markOffline: true)
             return
         }
@@ -407,6 +417,7 @@ final class RemoteServer: NSObject, @unchecked Sendable {
             cloudRegisteredUserId = user.uid
         }
 
+        print("[RemoteServer] Publishing cloud presence for \(user.email ?? user.uid)")
         updateCloudPresenceDocument()
 
         if cloudHostsHeartbeatTimer == nil {
@@ -480,21 +491,28 @@ final class RemoteServer: NSObject, @unchecked Sendable {
         }
 
         cloudRegisteredUserId = userId
+        let devId = getOrCreateDeviceId()
+        let devName = Host.current().localizedName ?? "Clome"
 
+        print("[RemoteServer] Cloud heartbeat → users/\(userId)/remoteHosts/\(devId) (\(devName))")
         Firestore.firestore()
             .collection("users")
             .document(userId)
             .collection("remoteHosts")
-            .document(getOrCreateDeviceId())
+            .document(devId)
             .setData([
-                "deviceId": getOrCreateDeviceId(),
-                "deviceName": Host.current().localizedName ?? "Clome",
+                "deviceId": devId,
+                "deviceName": devName,
                 "platform": "macOS",
                 "status": "online",
                 "updatedAt": Date(),
                 "activeSessionCount": cloudSessionIds.count,
                 "pairedDeviceCount": pairingManager.pairedDevices.count
-            ], merge: true)
+            ], merge: true) { error in
+                if let error {
+                    print("[RemoteServer] Cloud heartbeat FAILED: \(error.localizedDescription)")
+                }
+            }
     }
 
     /// Only freshly-requested sessions should be accepted. A session older than

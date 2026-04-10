@@ -1,6 +1,7 @@
 import AppKit
 import Firebase
 import FirebaseAuth
+import FirebaseFirestore
 import GoogleSignIn
 import GTMAppAuth
 import Security
@@ -8,6 +9,14 @@ import Security
 // Configure Firebase before anything else can access Auth.auth().
 if Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist") != nil {
     FirebaseApp.configure()
+
+    // Use memory-only Firestore cache to avoid LevelDB lock conflicts with
+    // other processes (e.g. a previous Clome instance, or Clome Flow macOS
+    // target) that share the same Firebase project cache directory.
+    let settings = Firestore.firestore().settings
+    settings.cacheSettings = MemoryCacheSettings()
+    Firestore.firestore().settings = settings
+
     do {
         try Auth.auth().useUserAccessGroup(nil)
         NSLog("[FlowAuth] Firebase Auth configured to use the private keychain access group")
