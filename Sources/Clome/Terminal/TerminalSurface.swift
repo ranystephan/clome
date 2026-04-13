@@ -1214,7 +1214,9 @@ class TerminalSurface: NSView {
     
 
     deinit {
-        destroySurface()
+        MainActor.assumeIsolated {
+            destroySurface()
+        }
     }
 }
 
