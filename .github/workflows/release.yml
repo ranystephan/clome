@@ -75,7 +75,6 @@ jobs:
           xcodebuild -project Clome.xcodeproj -scheme Clome \
             -configuration Release \
             -derivedDataPath build/DerivedData \
-            SWIFT_VERSION=5 \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
             build
