@@ -501,51 +501,6 @@ class SessionState {
         return paths
     }
 
-    // MARK: - Appearance
-
-    struct SavedAppearance {
-        let backgroundColor: NSColor
-        let backgroundOpacity: CGFloat
-    }
-
-    func saveAppearance(backgroundColor: NSColor, backgroundOpacity: CGFloat) {
-        guard db != nil else { return }
-        guard beginTransaction() else { return }
-        upsert(key: "bg_color", value: colorToHex(backgroundColor))
-        upsert(key: "bg_opacity", value: "\(backgroundOpacity)")
-        commitTransaction()
-    }
-
-    func restoreAppearance() -> SavedAppearance? {
-        guard db != nil else { return nil }
-        guard let bc = getValue(key: "bg_color") else { return nil }
-        let bo = getValue(key: "bg_opacity").flatMap { CGFloat(Double($0) ?? -1) } ?? 0.92
-        return SavedAppearance(
-            backgroundColor: hexToColor(bc),
-            backgroundOpacity: bo
-        )
-    }
-
-    private func colorToHex(_ color: NSColor) -> String {
-        let c = color.usingColorSpace(.sRGB) ?? color
-        let r = Int(c.redComponent * 255)
-        let g = Int(c.greenComponent * 255)
-        let b = Int(c.blueComponent * 255)
-        return String(format: "%02x%02x%02x", r, g, b)
-    }
-
-    private func hexToColor(_ hex: String) -> NSColor {
-        var h = hex
-        if h.hasPrefix("#") { h = String(h.dropFirst()) }
-        guard h.count == 6, let val = UInt64(h, radix: 16) else {
-            return NSColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1.0)
-        }
-        let r = CGFloat((val >> 16) & 0xFF) / 255.0
-        let g = CGFloat((val >> 8) & 0xFF) / 255.0
-        let b = CGFloat(val & 0xFF) / 255.0
-        return NSColor(red: r, green: g, blue: b, alpha: 1.0)
-    }
-
     // MARK: - Terminal Scrollback Persistence
 
     /// Directory where terminal scrollback files are stored.

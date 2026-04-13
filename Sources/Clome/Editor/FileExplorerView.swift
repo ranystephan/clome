@@ -15,12 +15,12 @@ class FileExplorerRowView: NSTableRowView {
 
     override func drawBackground(in dirtyRect: NSRect) {
         if isActiveFile {
-            NSColor(white: 1.0, alpha: 0.10).setFill()
+            ClomeMacColor.border.withAlphaComponent(0.5).setFill()
             let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 1), xRadius: 4, yRadius: 4)
             path.fill()
 
             // Left accent bar
-            NSColor(red: 0.45, green: 0.65, blue: 0.90, alpha: 0.7).setFill()
+            ClomeMacColor.accent.withAlphaComponent(0.7).setFill()
             let accent = NSRect(x: 2, y: bounds.minY + 4, width: 2, height: bounds.height - 8)
             NSBezierPath(roundedRect: accent, xRadius: 1, yRadius: 1).fill()
         }
@@ -132,7 +132,7 @@ class FileExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.attributedStringValue = NSAttributedString(string: "EXPLORER", attributes: [
             .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
-            .foregroundColor: NSColor(white: 1.0, alpha: 0.45),
+            .foregroundColor: ClomeMacColor.textTertiary,
             .kern: 1.2,
         ])
         headerBar.addSubview(titleLabel)
@@ -144,7 +144,7 @@ class FileExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         newFileBtn.bezelStyle = .texturedRounded
         newFileBtn.isBordered = false
         newFileBtn.image = NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: "New File")?.withSymbolConfiguration(iconCfg)
-        newFileBtn.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+        newFileBtn.contentTintColor = ClomeMacColor.textTertiary
         newFileBtn.target = self
         newFileBtn.action = #selector(newFileClicked(_:))
         newFileBtn.toolTip = "New File"
@@ -155,7 +155,7 @@ class FileExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         newFolderBtn.bezelStyle = .texturedRounded
         newFolderBtn.isBordered = false
         newFolderBtn.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "New Folder")?.withSymbolConfiguration(iconCfg)
-        newFolderBtn.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+        newFolderBtn.contentTintColor = ClomeMacColor.textTertiary
         newFolderBtn.target = self
         newFolderBtn.action = #selector(newFolderClicked(_:))
         newFolderBtn.toolTip = "New Folder"
@@ -166,7 +166,7 @@ class FileExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         refreshBtn.bezelStyle = .texturedRounded
         refreshBtn.isBordered = false
         refreshBtn.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh")?.withSymbolConfiguration(iconCfg)
-        refreshBtn.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+        refreshBtn.contentTintColor = ClomeMacColor.textTertiary
         refreshBtn.target = self
         refreshBtn.action = #selector(refreshClicked(_:))
         refreshBtn.toolTip = "Refresh"
@@ -227,8 +227,8 @@ class FileExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         scrollView.hasVerticalScroller = true
         scrollView.scrollerStyle = .overlay
         scrollView.autohidesScrollers = true
+        scrollView.verticalScroller?.alphaValue = 0
         scrollView.borderType = .noBorder
-        scrollView.scrollerKnobStyle = .light
         scrollView.contentInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
         if let scroller = scrollView.verticalScroller {
             scroller.controlSize = .small
@@ -526,10 +526,17 @@ class FileExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
             self?.gitTracker.refresh(for: path)
             DispatchQueue.main.async {
                 // Don't reload while user is typing a new file/folder name
-                guard self?.pendingCreation == nil else { return }
-                self?.outlineView.reloadData()
-                if let root = self?.rootNode {
-                    self?.outlineView.expandItem(root)
+                guard let self, self.pendingCreation == nil else { return }
+                // Only redraw visible rows to update git status colors.
+                // Avoids the expensive full reloadData + re-expand cycle
+                // that destroys and recreates the entire view hierarchy.
+                let visibleRows = self.outlineView.rows(in: self.outlineView.visibleRect)
+                if visibleRows.length > 0 {
+                    let columns = IndexSet(integersIn: 0..<max(1, self.outlineView.numberOfColumns))
+                    self.outlineView.reloadData(
+                        forRowIndexes: IndexSet(integersIn: visibleRows.location..<(visibleRows.location + visibleRows.length)),
+                        columnIndexes: columns
+                    )
                 }
             }
         }
@@ -763,7 +770,7 @@ class FileExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
                 cell.imageView?.contentTintColor = NSColor(red: 0.45, green: 0.65, blue: 0.85, alpha: 0.7)
             } else {
                 cell.imageView?.image = NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
-                cell.imageView?.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+                cell.imageView?.contentTintColor = ClomeMacColor.textTertiary
             }
             cell.textField?.stringValue = ""
             cell.textField?.placeholderString = node.isDirectory ? "folder name" : "filename.ext"
@@ -778,11 +785,11 @@ class FileExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         cell.textField?.isEditable = false
         cell.textField?.drawsBackground = false
         cell.textField?.textColor = node.isDirectory
-            ? NSColor(white: 0.67, alpha: 1.0)
-            : (isActive ? NSColor(white: 0.95, alpha: 1.0) : NSColor(white: 0.78, alpha: 1.0))
+            ? ClomeMacColor.textSecondary
+            : (isActive ? ClomeMacColor.textPrimary : ClomeMacColor.textSecondary)
 
         // Icon
-        let useColorful = AppearanceSettings.shared.colorfulFileIcons
+        let useColorful = ClomeSettings.shared.colorfulFileIcons
         let colorIcon: NSImage? = useColorful && !node.isDirectory
             ? (node.fileExtension.flatMap { FileTypeIconProvider.shared.icon(forExtension: $0) }
                ?? FileTypeIconProvider.shared.icon(forFilename: node.name))

@@ -24,10 +24,11 @@ class WorkspaceTabBar: NSView {
     weak var delegate: WorkspaceTabBarDelegate?
 
     private let stackView = NSStackView()
+    private let accessoryCluster = NSView()
     private let addMenuContainer: AddTabMenuView
-    private let splitHButton: NSButton
-    private let splitVButton: NSButton
-    private let splitQuadButton: NSButton
+    private let splitHButton: ToolbarIconButton
+    private let splitVButton: ToolbarIconButton
+    private let splitQuadButton: ToolbarIconButton
 
     private let barHeight: CGFloat = ClomeMacMetric.toolbarHeight
     private let bgColor = ClomeMacColor.chromeSurface
@@ -45,14 +46,15 @@ class WorkspaceTabBar: NSView {
 
     override init(frame: NSRect = .zero) {
         addMenuContainer = AddTabMenuView()
-        splitHButton = NSButton()
-        splitVButton = NSButton()
-        splitQuadButton = NSButton()
+        splitHButton = ToolbarIconButton()
+        splitVButton = ToolbarIconButton()
+        splitQuadButton = ToolbarIconButton()
         super.init(frame: frame)
         wantsLayer = true
         layer?.cornerRadius = ClomeMacMetric.panelRadius
         layer?.cornerCurve = .continuous
         layer?.backgroundColor = bgColor.cgColor
+        NotificationCenter.default.addObserver(self, selector: #selector(settingsDidChange), name: .clomeSettingsChanged, object: nil)
         addMenuContainer.onNewTerminal = { [weak self] in
             guard let self else { return }
             self.delegate?.tabBarDidRequestNewTerminal(self)
@@ -80,9 +82,10 @@ class WorkspaceTabBar: NSView {
 
     private func setupUI() {
         stackView.orientation = .horizontal
-        stackView.spacing = 6
+        stackView.spacing = 4
         stackView.alignment = .centerY
         stackView.translatesAutoresizingMaskIntoConstraints = false
+
         addSubview(stackView)
 
         // Split buttons
@@ -90,17 +93,26 @@ class WorkspaceTabBar: NSView {
         configureSplitButton(splitVButton, symbol: "rectangle.split.1x2", tooltip: "Split Down (⌘⇧D)", action: #selector(splitVTapped))
         configureSplitButton(splitQuadButton, symbol: "rectangle.split.2x2", tooltip: "Split into 4 Panes", action: #selector(splitQuadTapped))
 
+        accessoryCluster.translatesAutoresizingMaskIntoConstraints = false
+        accessoryCluster.wantsLayer = true
+        accessoryCluster.layer?.cornerRadius = 10
+        accessoryCluster.layer?.cornerCurve = .continuous
+        accessoryCluster.layer?.backgroundColor = ClomeMacColor.buttonSurface.cgColor
+        accessoryCluster.layer?.borderWidth = 1
+        accessoryCluster.layer?.borderColor = ClomeMacColor.border.withAlphaComponent(0.45).cgColor
+        accessoryCluster.setContentHuggingPriority(.required, for: .horizontal)
+        accessoryCluster.setContentCompressionResistancePriority(.required, for: .horizontal)
+        addSubview(accessoryCluster)
+
         // Add tab menu (hover-expandable)
         addMenuContainer.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(addMenuContainer)
 
         // Right-side button group: [splitH] [splitV] [quad] | [+]
         let buttonGroup = NSStackView(views: [splitHButton, splitVButton, splitQuadButton])
         buttonGroup.translatesAutoresizingMaskIntoConstraints = false
         buttonGroup.orientation = .horizontal
-        buttonGroup.spacing = 4
+        buttonGroup.spacing = 1
         buttonGroup.alignment = .centerY
-        addSubview(buttonGroup)
 
         let border = NSView()
         border.translatesAutoresizingMaskIntoConstraints = false
@@ -112,8 +124,14 @@ class WorkspaceTabBar: NSView {
         let separator = NSView()
         separator.translatesAutoresizingMaskIntoConstraints = false
         separator.wantsLayer = true
-        separator.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.08).cgColor
-        addSubview(separator)
+        separator.layer?.backgroundColor = borderColor.withAlphaComponent(0.55).cgColor
+
+        let accessoryStack = NSStackView(views: [buttonGroup, separator, addMenuContainer])
+        accessoryStack.translatesAutoresizingMaskIntoConstraints = false
+        accessoryStack.orientation = .horizontal
+        accessoryStack.spacing = 4
+        accessoryStack.alignment = .centerY
+        accessoryCluster.addSubview(accessoryStack)
 
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: barHeight),
@@ -122,24 +140,24 @@ class WorkspaceTabBar: NSView {
                 stackLeadingConstraint = stackView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: defaultLeadingInset)
                 return stackLeadingConstraint
             }(),
-            stackView.topAnchor.constraint(equalTo: topAnchor, constant: 5),
-            stackView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
-            stackView.trailingAnchor.constraint(lessThanOrEqualTo: buttonGroup.leadingAnchor, constant: -8),
+            stackView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            stackView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            stackView.trailingAnchor.constraint(lessThanOrEqualTo: accessoryCluster.leadingAnchor, constant: -10),
 
-            // Split button group
-            buttonGroup.centerYAnchor.constraint(equalTo: centerYAnchor),
-            buttonGroup.trailingAnchor.constraint(equalTo: separator.leadingAnchor, constant: -6),
+            accessoryCluster.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            accessoryCluster.centerYAnchor.constraint(equalTo: centerYAnchor),
+            accessoryCluster.heightAnchor.constraint(equalToConstant: 28),
 
-            // Separator
-            separator.trailingAnchor.constraint(equalTo: addMenuContainer.leadingAnchor, constant: -6),
-            separator.centerYAnchor.constraint(equalTo: centerYAnchor),
+            accessoryStack.leadingAnchor.constraint(equalTo: accessoryCluster.leadingAnchor, constant: 3),
+            accessoryStack.trailingAnchor.constraint(equalTo: accessoryCluster.trailingAnchor, constant: -3),
+            accessoryStack.topAnchor.constraint(equalTo: accessoryCluster.topAnchor, constant: 3),
+            accessoryStack.bottomAnchor.constraint(equalTo: accessoryCluster.bottomAnchor, constant: -3),
+
             separator.widthAnchor.constraint(equalToConstant: 1),
-            separator.heightAnchor.constraint(equalToConstant: 16),
+            separator.heightAnchor.constraint(equalToConstant: 10),
 
             // Add tab menu (rightmost)
-            addMenuContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            addMenuContainer.centerYAnchor.constraint(equalTo: centerYAnchor),
-            addMenuContainer.heightAnchor.constraint(equalToConstant: 28),
+            addMenuContainer.heightAnchor.constraint(equalToConstant: 24),
 
             border.leadingAnchor.constraint(equalTo: leadingAnchor),
             border.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -150,24 +168,19 @@ class WorkspaceTabBar: NSView {
 
     private func configureSplitButton(_ button: NSButton, symbol: String, tooltip: String, action: Selector) {
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.bezelStyle = .texturedRounded
+        button.bezelStyle = .regularSquare
         button.isBordered = false
         button.title = ""
-        let cfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
+        let cfg = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)?.withSymbolConfiguration(cfg)
         button.contentTintColor = ClomeMacColor.textSecondary
-        button.wantsLayer = true
-        button.layer?.cornerRadius = ClomeMacMetric.compactRadius
-        button.layer?.cornerCurve = .continuous
-        button.layer?.backgroundColor = ClomeMacColor.chromeSurfaceAlt.cgColor
         button.target = self
         button.action = action
         button.toolTip = tooltip
-        addSubview(button)
 
         NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: 28),
-            button.heightAnchor.constraint(equalToConstant: 28),
+            button.widthAnchor.constraint(equalToConstant: 20),
+            button.heightAnchor.constraint(equalToConstant: 20),
         ])
     }
 
@@ -249,6 +262,25 @@ class WorkspaceTabBar: NSView {
             }
             stackView.addArrangedSubview(tabView)
         }
+    }
+
+    @objc private func settingsDidChange() {
+        NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
+            self.layer?.backgroundColor = self.bgColor.cgColor
+            self.accessoryCluster.layer?.backgroundColor = ClomeMacColor.buttonSurface.cgColor
+            self.accessoryCluster.layer?.borderColor = ClomeMacColor.border.withAlphaComponent(0.45).cgColor
+            for btn in [self.splitHButton, self.splitVButton, self.splitQuadButton] {
+                btn.refreshAppearance()
+            }
+            self.addMenuContainer.refreshAppearance()
+            // Update tab items
+            for view in self.stackView.arrangedSubviews {
+                if let tabItem = view as? WorkspaceTabItem {
+                    tabItem.refreshAppearance()
+                }
+            }
+        }
+        needsDisplay = true
     }
 
     // MARK: - Split Actions
@@ -421,21 +453,40 @@ class AddTabMenuView: NSView {
     private var collapseTimer: Timer?
 
     private let collapsedWidth: CGFloat = 22
-    private let expandedWidth: CGFloat = 102 // 4 buttons * 22 + 3 gaps * 2 + padding
+    private let expandedWidth: CGFloat = 106
 
     override init(frame: NSRect = .zero) {
         plusIcon = NSImageView()
         expandedStack = NSStackView()
         super.init(frame: frame)
         wantsLayer = true
-        layer?.cornerRadius = ClomeMacMetric.compactRadius
+        layer?.cornerRadius = 8
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
-        layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
+        layer?.backgroundColor = NSColor.clear.cgColor
         setupUI()
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    func refreshAppearance() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            self.layer?.backgroundColor = self.isExpanded
+                ? ClomeMacColor.buttonSurfaceHover.cgColor
+                : NSColor.clear.cgColor
+            self.plusIcon.contentTintColor = self.isExpanded
+                ? ClomeMacColor.textPrimary
+                : ClomeMacColor.textSecondary
+            for case let button as ToolbarIconButton in self.expandedStack.arrangedSubviews {
+                button.refreshAppearance()
+            }
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshAppearance()
+    }
 
     private func setupUI() {
         // Plus icon (shown when collapsed)
@@ -448,7 +499,7 @@ class AddTabMenuView: NSView {
         // Expanded button stack
         expandedStack.translatesAutoresizingMaskIntoConstraints = false
         expandedStack.orientation = .horizontal
-        expandedStack.spacing = 4
+        expandedStack.spacing = 2
         expandedStack.alignment = .centerY
         expandedStack.alphaValue = 0
 
@@ -460,12 +511,12 @@ class AddTabMenuView: NSView {
         ]
 
         for item in items {
-            let btn = NSButton()
+            let btn = ToolbarIconButton()
             btn.translatesAutoresizingMaskIntoConstraints = false
-            btn.bezelStyle = .texturedRounded
+            btn.bezelStyle = .regularSquare
             btn.isBordered = false
             btn.title = ""
-            let btnCfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
+            let btnCfg = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
             btn.image = NSImage(systemSymbolName: item.symbol, accessibilityDescription: item.tooltip)?.withSymbolConfiguration(btnCfg)
             btn.contentTintColor = ClomeMacColor.textSecondary
             btn.target = self
@@ -477,9 +528,6 @@ class AddTabMenuView: NSView {
                 btnWidth,
                 btn.heightAnchor.constraint(equalToConstant: 22),
             ])
-            // Hover highlight per button
-            let area = NSTrackingArea(rect: .zero, options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect], owner: btn)
-            btn.addTrackingArea(area)
             expandedStack.addArrangedSubview(btn)
         }
 
@@ -536,8 +584,9 @@ class AddTabMenuView: NSView {
             self.widthConstraint.animator().constant = self.expandedWidth
             self.plusIcon.animator().alphaValue = 0
             self.expandedStack.animator().alphaValue = 1
-            self.layer?.backgroundColor = ClomeMacColor.chromeSurfaceAlt.cgColor
+            self.layer?.backgroundColor = ClomeMacColor.buttonSurfaceHover.cgColor
         }
+        plusIcon.contentTintColor = ClomeMacColor.textPrimary
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -559,8 +608,9 @@ class AddTabMenuView: NSView {
             self.widthConstraint.animator().constant = self.collapsedWidth
             self.plusIcon.animator().alphaValue = 1
             self.expandedStack.animator().alphaValue = 0
-            self.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
+            self.layer?.backgroundColor = NSColor.clear.cgColor
         }
+        plusIcon.contentTintColor = ClomeMacColor.textSecondary
     }
 
     // MARK: - Actions
@@ -586,8 +636,8 @@ class WorkspaceTabItem: NSView {
     var onDragEnded: ((Int, NSPoint) -> Void)?
     var contextMenuProvider: ((Int) -> NSMenu)?
 
-    private let activeColor = ClomeMacColor.elevatedSurface
-    private let hoverColor = ClomeMacColor.chromeSurfaceAlt
+    private let activeColor = ClomeMacColor.buttonSurface
+    private let hoverColor = ClomeMacColor.hoverFill
     private let selectedTextColor = ClomeMacColor.textPrimary
     private let unselectedTextColor = ClomeMacColor.textSecondary
     private var closeButton: NSButton!
@@ -608,9 +658,11 @@ class WorkspaceTabItem: NSView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.cornerRadius = ClomeMacMetric.compactRadius
+        layer?.cornerRadius = 8
         layer?.cornerCurve = .continuous
         layer?.backgroundColor = isSelected ? activeColor.cgColor : NSColor.clear.cgColor
+        layer?.borderWidth = isSelected ? 1 : 0
+        layer?.borderColor = ClomeMacColor.border.withAlphaComponent(0.5).cgColor
 
         let textColor = isSelected ? selectedTextColor : unselectedTextColor
 
@@ -663,20 +715,20 @@ class WorkspaceTabItem: NSView {
         closeButton.bezelStyle = .texturedRounded
         closeButton.isBordered = false
         closeButton.title = ""
-        let closeCfg = NSImage.SymbolConfiguration(pointSize: 8, weight: .bold)
+        let closeCfg = NSImage.SymbolConfiguration(pointSize: 7, weight: .bold)
         closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")?.withSymbolConfiguration(closeCfg)
         closeButton.contentTintColor = ClomeMacColor.textTertiary
         closeButton.target = self
         closeButton.action = #selector(closeTapped)
-        closeButton.alphaValue = isSelected ? 0.8 : 0.0
+        closeButton.alphaValue = isSelected ? 0.65 : 0.0
         addSubview(closeButton)
 
         // Blue indicator line (always created, hidden when not selected)
         let indicator = NSView()
         indicator.translatesAutoresizingMaskIntoConstraints = false
         indicator.wantsLayer = true
-        indicator.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        indicator.layer?.cornerRadius = 1
+        indicator.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.9).cgColor
+        indicator.layer?.cornerRadius = 0.75
         indicator.isHidden = !isSelected
         addSubview(indicator)
         indicatorView = indicator
@@ -691,7 +743,7 @@ class WorkspaceTabItem: NSView {
         NSLayoutConstraint.activate([
             widthAnchor.constraint(greaterThanOrEqualToConstant: 112),
             widthAnchor.constraint(lessThanOrEqualToConstant: 200),
-            heightAnchor.constraint(equalToConstant: 30),
+            heightAnchor.constraint(equalToConstant: 28),
 
             iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -709,8 +761,8 @@ class WorkspaceTabItem: NSView {
 
             indicator.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
             indicator.centerXAnchor.constraint(equalTo: centerXAnchor),
-            indicator.widthAnchor.constraint(equalToConstant: 16),
-            indicator.heightAnchor.constraint(equalToConstant: 2),
+            indicator.widthAnchor.constraint(equalToConstant: 12),
+            indicator.heightAnchor.constraint(equalToConstant: 1.5),
         ])
     }
 
@@ -729,13 +781,20 @@ class WorkspaceTabItem: NSView {
     private func applySelectionStyle() {
         let textColor = isSelected ? selectedTextColor : unselectedTextColor
         layer?.backgroundColor = isSelected ? activeColor.cgColor : NSColor.clear.cgColor
+        layer?.borderWidth = isSelected ? 1 : 0
+        layer?.borderColor = ClomeMacColor.border.withAlphaComponent(0.5).cgColor
         titleLabel.textColor = textColor
         titleLabel.font = ClomeMacFont.captionMedium
         if !hasFavicon {
             iconView.contentTintColor = textColor
         }
-        closeButton.alphaValue = isSelected ? 0.8 : 0.0
+        closeButton.alphaValue = isSelected ? 0.65 : 0.0
         indicatorView?.isHidden = !isSelected
+    }
+
+    /// Re-resolve dynamic colors after an appearance change.
+    func refreshAppearance() {
+        applySelectionStyle()
     }
 
     /// Update icon when terminal program changes (e.g. Claude Code detected)
@@ -824,11 +883,75 @@ class WorkspaceTabItem: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         if !isSelected { layer?.backgroundColor = hoverColor.cgColor }
-        closeButton.alphaValue = 0.8
+        closeButton.alphaValue = 0.7
     }
 
     override func mouseExited(with event: NSEvent) {
         if !isSelected { layer?.backgroundColor = NSColor.clear.cgColor }
         if !isSelected { closeButton.alphaValue = 0.0 }
+    }
+}
+
+class ToolbarIconButton: NSButton {
+    private var isHovered = false
+    private var isPressed = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        isBordered = false
+        imageScaling = .scaleProportionallyDown
+        refreshAppearance()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach { removeTrackingArea($0) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self
+        ))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        refreshAppearance()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        isPressed = false
+        refreshAppearance()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        isPressed = true
+        refreshAppearance()
+        super.mouseDown(with: event)
+        isPressed = false
+        refreshAppearance()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshAppearance()
+    }
+
+    func refreshAppearance() {
+        layer?.cornerRadius = 7
+        layer?.cornerCurve = .continuous
+        let fill: NSColor
+        if isPressed {
+            fill = ClomeMacColor.buttonSurfacePressed
+        } else if isHovered {
+            fill = ClomeMacColor.buttonSurfaceHover
+        } else {
+            fill = NSColor.clear
+        }
+        layer?.backgroundColor = fill.cgColor
+        contentTintColor = (isHovered || isPressed) ? ClomeMacColor.textPrimary : ClomeMacColor.textSecondary
     }
 }

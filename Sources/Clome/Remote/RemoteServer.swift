@@ -239,6 +239,15 @@ final class RemoteServer: NSObject, @unchecked Sendable {
     private let streamEngine = TerminalStreamEngine()
     private let systemPromptMonitor = SystemPromptMonitor()
 
+    // New feature components
+    private let fileHandler = RemoteFileHandler()
+    private let sessionRecorder = SessionRecorder()
+    private let statsProvider = SystemStatsProvider()
+    private let tunnelManager = RemoteTunnelManager()
+    private let notificationTrigger = NotificationTriggerEngine()
+    private var clipboardChangeCount: Int = 0
+    private var clipboardPollTimer: Timer?
+
     /// Set by AppDelegate after window creation.
     weak var workspaceManager: WorkspaceManager?
 
@@ -319,9 +328,13 @@ final class RemoteServer: NSObject, @unchecked Sendable {
             for session in self?.sessions.values ?? [:].values {
                 session.send(envelope)
             }
+            // Also capture for session recording
+            self?.sessionRecorder.captureScreen(screen)
         }
         streamEngine.onDelta = { [weak self] delta in
             self?.broadcastTerminalDelta(delta)
+            // Also capture for session recording
+            self?.sessionRecorder.captureDelta(delta)
         }
         streamEngine.start()
 
@@ -333,6 +346,30 @@ final class RemoteServer: NSObject, @unchecked Sendable {
             self?.broadcastSystemPrompt(prompt)
         }
         systemPromptMonitor.start()
+
+        // Wire up smart notification engine
+        notificationTrigger.onNotification = { [weak self] notification in
+            self?.broadcastNotification(notification)
+        }
+
+        // Start clipboard change polling (2s interval)
+        clipboardChangeCount = NSPasteboard.general.changeCount
+        clipboardPollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let current = NSPasteboard.general.changeCount
+                if current != self.clipboardChangeCount {
+                    self.clipboardChangeCount = current
+                    let text = NSPasteboard.general.string(forType: .string)
+                    let content = ClipboardContent(text: text, hasImage: false, changeCount: current)
+                    if let env = try? RemoteEnvelope(type: MessageType.clipboardContent, payload: content) {
+                        for session in self.sessions.values {
+                            session.send(env)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Registers the currently active terminal surfaces with the stream engine.
@@ -365,6 +402,10 @@ final class RemoteServer: NSObject, @unchecked Sendable {
         mcSession = nil
         sessionLivenessTimer?.invalidate()
         sessionLivenessTimer = nil
+        clipboardPollTimer?.invalidate()
+        clipboardPollTimer = nil
+        if sessionRecorder.isRecording { sessionRecorder.stopRecording() }
+        tunnelManager.closeAllTunnels(forSession: "")  // close all on shutdown
         stopCloudRemoteHosting(markOffline: true)
 
         let allSessions = Array(sessions.values)
@@ -500,15 +541,27 @@ final class RemoteServer: NSObject, @unchecked Sendable {
             .document(userId)
             .collection("remoteHosts")
             .document(devId)
-            .setData([
-                "deviceId": devId,
-                "deviceName": devName,
-                "platform": "macOS",
-                "status": "online",
-                "updatedAt": Date(),
-                "activeSessionCount": cloudSessionIds.count,
-                "pairedDeviceCount": pairingManager.pairedDevices.count
-            ], merge: true) { error in
+            .setData({
+                var data: [String: Any] = [
+                    "deviceId": devId,
+                    "deviceName": devName,
+                    "platform": "macOS",
+                    "status": "online",
+                    "updatedAt": Date(),
+                    "activeSessionCount": cloudSessionIds.count,
+                    "pairedDeviceCount": pairingManager.pairedDevices.count
+                ]
+                // Include system stats for Multi-Mac Dashboard
+                let stats = statsProvider.collectStats()
+                data["cpuUsagePercent"] = stats.cpuUsagePercent
+                data["memoryUsedGB"] = stats.memoryUsedGB
+                data["memoryTotalGB"] = stats.memoryTotalGB
+                data["diskUsedGB"] = stats.diskUsedGB
+                data["diskTotalGB"] = stats.diskTotalGB
+                data["activeProcesses"] = stats.activeProcesses
+                data["uptimeSeconds"] = stats.uptimeSeconds
+                return data
+            }(), merge: true) { error in
                 if let error {
                     print("[RemoteServer] Cloud heartbeat FAILED: \(error.localizedDescription)")
                 }
@@ -911,6 +964,32 @@ final class RemoteServer: NSObject, @unchecked Sendable {
         case MessageType.ping:
             let pong = try? RemoteEnvelope(type: MessageType.pong, id: envelope.id, payload: EmptyPayload())
             if let pong { session.send(pong) }
+
+        // Clipboard sync
+        case MessageType.clipboardPush:
+            if let content = try? envelope.decode(ClipboardContent.self), let text = content.text {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            }
+        case MessageType.clipboardPull:
+            let text = NSPasteboard.general.string(forType: .string)
+            let content = ClipboardContent(text: text, hasImage: false, changeCount: NSPasteboard.general.changeCount)
+            if let env = try? RemoteEnvelope(type: MessageType.clipboardContent, payload: content) {
+                session.send(env)
+            }
+
+        // Port forwarding: HTTP proxy request
+        case MessageType.tunnelHTTPRequest:
+            if let req = try? envelope.decode(TunnelHTTPRequest.self) {
+                Task { [weak self, weak session] in
+                    guard let self, let session else { return }
+                    let response = await self.tunnelManager.handleHTTPRequest(req)
+                    if let env = try? RemoteEnvelope(type: MessageType.tunnelHTTPResponse, payload: response) {
+                        session.send(env)
+                    }
+                }
+            }
+
         default:
             break
         }
@@ -1385,6 +1464,80 @@ final class RemoteServer: NSObject, @unchecked Sendable {
             if let pong = try? RemoteEnvelope(type: MessageType.pong, id: envelope.id, payload: EmptyPayload()) {
                 session.send(pong)
             }
+
+        // Clipboard
+        case .clipboardPush(let content):
+            if let text = content.text {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            }
+            sendCommandResponse(success: true, id: envelope.id, to: session)
+
+        case .clipboardPull:
+            let text = NSPasteboard.general.string(forType: .string)
+            let content = ClipboardContent(text: text, hasImage: false, changeCount: NSPasteboard.general.changeCount)
+            if let env = try? RemoteEnvelope(type: MessageType.clipboardContent, payload: content) {
+                session.send(env)
+            }
+            sendCommandResponse(success: true, id: envelope.id, to: session)
+
+        // File browser
+        case .fileList(let path, let includeHidden):
+            let response = fileHandler.listDirectory(path: path, includeHidden: includeHidden)
+            if let env = try? RemoteEnvelope(type: MessageType.fileListResponse, payload: response) {
+                session.send(env)
+            }
+            sendCommandResponse(success: response.error == nil, error: response.error, id: envelope.id, to: session)
+
+        case .fileRead(let path):
+            let response = fileHandler.readFile(path: path)
+            if let env = try? RemoteEnvelope(type: MessageType.fileReadResponse, payload: response) {
+                session.send(env)
+            }
+            sendCommandResponse(success: response.error == nil, error: response.error, id: envelope.id, to: session)
+
+        case .fileWrite(let path, let content):
+            let response = fileHandler.writeFile(path: path, content: content)
+            if let env = try? RemoteEnvelope(type: MessageType.fileWriteResponse, payload: response) {
+                session.send(env)
+            }
+            sendCommandResponse(success: response.success, error: response.error, id: envelope.id, to: session)
+
+        // Session recording
+        case .recordingStart(let name):
+            let id = sessionRecorder.startRecording(name: name)
+            sendCommandResponse(success: true, id: envelope.id, to: session)
+            print("[Remote] Recording started: \(id)")
+
+        case .recordingStop:
+            sessionRecorder.stopRecording()
+            sendCommandResponse(success: true, id: envelope.id, to: session)
+
+        case .recordingList:
+            let list = sessionRecorder.listRecordings()
+            if let env = try? RemoteEnvelope(type: MessageType.recordingListResponse, payload: list) {
+                session.send(env)
+            }
+            sendCommandResponse(success: true, id: envelope.id, to: session)
+
+        case .recordingPlayback(let recordingId, let fromTimestamp):
+            let chunk = sessionRecorder.playback(recordingId: recordingId, from: fromTimestamp)
+            if let env = try? RemoteEnvelope(type: MessageType.recordingData, payload: chunk) {
+                session.send(env)
+            }
+            sendCommandResponse(success: true, id: envelope.id, to: session)
+
+        // Port forwarding
+        case .tunnelOpen(let port, let label):
+            let response = tunnelManager.openTunnel(port: port, label: label, sessionId: session.id)
+            if let env = try? RemoteEnvelope(type: MessageType.tunnelOpened, payload: response) {
+                session.send(env)
+            }
+            sendCommandResponse(success: response.success, error: response.error, id: envelope.id, to: session)
+
+        case .tunnelClose(let tunnelId):
+            tunnelManager.closeTunnel(tunnelId: tunnelId)
+            sendCommandResponse(success: true, id: envelope.id, to: session)
         }
     }
 

@@ -2,39 +2,124 @@ import AppKit
 import SwiftUI
 import ClomeDesign
 
+/// Cached accent — updated whenever settings change.
+/// Avoids accessing @MainActor ClomeSettings from inside NSColor(name:nil) closures.
+nonisolated(unsafe) private var _cachedDarkAccent: Color = ClomeAccentTheme.graphite.darkAccent
+nonisolated(unsafe) private var _cachedLightAccent: Color = ClomeAccentTheme.graphite.lightAccent
+
 @MainActor
 enum ClomeMacTheme {
     static func palette(for appearance: NSAppearance? = nil) -> ClomePalette {
         let resolved = appearance ?? NSApp.effectiveAppearance
         let isDark = resolved.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return isDark ? .dark() : .light()
+        let accent = ClomeSettings.shared.accentTheme
+        return isDark
+            ? .dark(accent: accent.darkAccent)
+            : .light(accent: accent.lightAccent)
+    }
+
+    static func windowTint(opacity requestedOpacity: CGFloat, appearance: NSAppearance? = nil) -> NSColor {
+        let palette = palette(for: appearance)
+        let resolvedOpacity = palette.isDark
+            ? requestedOpacity
+            : max(requestedOpacity, palette.windowTintOpacity)
+        return NSColor(palette.windowBackground).withAlphaComponent(resolvedOpacity)
+    }
+
+    static func windowMaterial(for appearance: NSAppearance? = nil) -> NSVisualEffectView.Material {
+        let palette = palette(for: appearance)
+        return palette.isDark ? .windowBackground : .contentBackground
+    }
+
+    /// Apply the user's selected theme to NSApp.appearance and update cached accent.
+    /// Call on launch and whenever themeMode or accentTheme changes.
+    static func applyTheme() {
+        let settings = ClomeSettings.shared
+        switch settings.themeMode {
+        case .system:
+            NSApp.appearance = nil
+        case .light:
+            NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark:
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+        // Update cached accent for dynamic color closures
+        _cachedDarkAccent = settings.accentTheme.darkAccent
+        _cachedLightAccent = settings.accentTheme.lightAccent
     }
 }
 
 @MainActor
 enum ClomeMacColor {
-    static let windowBackground = dynamic { $0.bg }
-    static let sidebarSurface = dynamic { $0.bg }
-    static let chromeSurface = dynamic { $0.surface }
-    static let chromeSurfaceAlt = dynamic { $0.surfaceAlt }
-    static let elevatedSurface = dynamic { palette in
-        palette.isDark ? ClomeColor.surfaceElevated : ClomeColor.lightSurfaceAlt
+    static let windowBackground = dynamic { $0.windowBackground }
+    static let sidebarSurface = dynamic { $0.sidebarSurface }
+    static let chromeSurface = dynamic { $0.chromeSurface }
+    static let chromeSurfaceAlt = dynamic { $0.chromeSurfaceAlt }
+    static let elevatedSurface = dynamic { $0.elevated }
+    static let buttonSurface = dynamic { palette in
+        palette.isDark ? ClomeColor.surfaceHighest.opacity(0.38) : Color.white.opacity(0.80)
+    }
+    static let buttonSurfaceHover = dynamic { palette in
+        palette.isDark ? ClomeColor.surfaceHighest.opacity(0.60) : Color.white.opacity(0.96)
+    }
+    static let buttonSurfacePressed = dynamic { palette in
+        palette.isDark ? ClomeColor.surfaceHighest.opacity(0.82) : ClomeColor.paperWarm
+    }
+    static let hoverFill = dynamic { palette in
+        palette.isDark ? ClomeColor.borderStrong.opacity(0.18) : ClomeColor.accentSoft
+    }
+    static let currentLineFill = dynamic { palette in
+        palette.isDark ? ClomeColor.textPrimary.opacity(0.03) : ClomeColor.ink.opacity(0.035)
+    }
+    static let inputBackground = dynamic { palette in
+        palette.isDark ? ClomeColor.surfaceHighest.opacity(0.72) : Color.white.opacity(0.92)
     }
     static let border = dynamic { $0.dark }
     static let borderStrong = dynamic { palette in
-        palette.isDark ? ClomeColor.borderStrong : ClomeColor.lightTextTertiary.opacity(0.2)
+        palette.isDark ? ClomeColor.borderStrong : ClomeColor.ruleStrong
     }
     static let textPrimary = dynamic { $0.bright }
     static let textSecondary = dynamic { $0.text }
     static let textTertiary = dynamic { $0.dim }
     static let accent = dynamic { $0.accent }
+    static let info = dynamic { palette in
+        ClomeColor.info(dark: palette.isDark)
+    }
+    static let infoWash = dynamic { palette in
+        ClomeColor.info(dark: palette.isDark).opacity(palette.isDark ? 0.18 : 0.10)
+    }
     static let success = dynamic { $0.green }
     static let warning = dynamic { $0.yellow }
     static let error = dynamic { $0.red }
+    static let diffContextText = dynamic { palette in
+        palette.isDark ? ClomeColor.textSecondary : ClomeColor.inkSecondary
+    }
+    static let diffAdditionText = dynamic { palette in
+        palette.isDark ? ClomeColor.success(dark: true) : Color(red: 0.149, green: 0.431, blue: 0.306)
+    }
+    static let diffDeletionText = dynamic { palette in
+        palette.isDark ? ClomeColor.error(dark: true) : Color(red: 0.624, green: 0.235, blue: 0.227)
+    }
+    static let diffAdditionBackground = dynamic { palette in
+        palette.isDark
+            ? ClomeColor.success(dark: true).opacity(0.16)
+            : ClomeColor.success(dark: false).opacity(0.12)
+    }
+    static let diffDeletionBackground = dynamic { palette in
+        palette.isDark
+            ? ClomeColor.error(dark: true).opacity(0.16)
+            : ClomeColor.error(dark: false).opacity(0.12)
+    }
 
+    /// Creates a dynamic NSColor that resolves based on current appearance.
+    /// Uses cached accent to avoid @MainActor access from the color closure.
     private static func dynamic(_ transform: @escaping (ClomePalette) -> Color) -> NSColor {
         NSColor(name: nil) { appearance in
-            NSColor(transform(ClomeMacTheme.palette(for: appearance)))
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let palette = isDark
+                ? ClomePalette.dark(accent: _cachedDarkAccent)
+                : ClomePalette.light(accent: _cachedLightAccent)
+            return NSColor(transform(palette))
         }
     }
 }

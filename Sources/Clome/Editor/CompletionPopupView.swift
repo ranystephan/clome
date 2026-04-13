@@ -70,8 +70,8 @@ class CompletionPopupView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.backgroundColor = NSColor(red: 0.10, green: 0.10, blue: 0.13, alpha: 0.98).cgColor
-        layer?.borderColor = NSColor(white: 1.0, alpha: 0.12).cgColor
+        layer?.backgroundColor = ClomeMacColor.elevatedSurface.withAlphaComponent(0.98).cgColor
+        layer?.borderColor = ClomeMacColor.border.cgColor
         layer?.borderWidth = 1
         layer?.cornerRadius = 4
         layer?.shadowColor = NSColor.black.cgColor
@@ -81,6 +81,14 @@ class CompletionPopupView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            self.layer?.backgroundColor = ClomeMacColor.elevatedSurface.withAlphaComponent(0.98).cgColor
+            self.layer?.borderColor = ClomeMacColor.border.cgColor
+        }
+    }
 
     func update(items: [CompletionItem], filter: String) {
         self.items = items
@@ -158,7 +166,7 @@ class CompletionPopupView: NSView {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
 
         // Background
-        context.setFillColor(NSColor(red: 0.10, green: 0.10, blue: 0.13, alpha: 0.98).cgColor)
+        context.setFillColor(ClomeMacColor.elevatedSurface.withAlphaComponent(0.98).cgColor)
         let bgPath = CGPath(roundedRect: bounds, cornerWidth: 4, cornerHeight: 4, transform: nil)
         context.addPath(bgPath)
         context.fillPath()
@@ -171,7 +179,7 @@ class CompletionPopupView: NSView {
 
             // Selection highlight
             if itemIdx == selectedIndex {
-                context.setFillColor(NSColor(red: 0.2, green: 0.35, blue: 0.55, alpha: 0.6).cgColor)
+                context.setFillColor(ClomeMacColor.accent.withAlphaComponent(0.3).cgColor)
                 context.fill(CGRect(x: 2, y: y, width: bounds.width - 4, height: rowHeight))
             }
 
@@ -190,7 +198,7 @@ class CompletionPopupView: NSView {
             // Label
             let labelAttrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
-                .foregroundColor: NSColor(white: 0.9, alpha: 1.0)
+                .foregroundColor: ClomeMacColor.textPrimary
             ]
             let labelStr = item.label as NSString
             labelStr.draw(at: NSPoint(x: 26, y: y + (rowHeight - 14) / 2), withAttributes: labelAttrs)
@@ -199,7 +207,7 @@ class CompletionPopupView: NSView {
             if let detail = item.detail {
                 let detailAttrs: [NSAttributedString.Key: Any] = [
                     .font: NSFont.systemFont(ofSize: 10),
-                    .foregroundColor: NSColor(white: 0.45, alpha: 1.0)
+                    .foregroundColor: ClomeMacColor.textTertiary
                 ]
                 let detailStr = detail as NSString
                 let labelWidth = labelStr.size(withAttributes: labelAttrs).width

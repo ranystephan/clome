@@ -16,7 +16,7 @@ final class TextBuffer {
 
     private var undoStack: [Edit] = []
     private var redoStack: [Edit] = []
-    private let maxUndoHistory = 500
+    private let maxUndoHistory = 100
 
     struct Edit {
         let range: Range<Int>
@@ -385,6 +385,14 @@ final class TextBuffer {
         let start = max(0, offset - radius)
         let end = min(count, offset + radius)
         return (substring(in: start..<end), start)
+    }
+
+    // MARK: - Memory Management
+
+    /// Release cached memory (undo/redo history). Called under memory pressure.
+    func releaseMemory() {
+        undoStack.removeAll()
+        redoStack.removeAll()
     }
 
     // MARK: - Language Detection

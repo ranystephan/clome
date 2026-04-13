@@ -26,7 +26,13 @@ class TabBarView: NSView {
         layer?.cornerRadius = ClomeMacMetric.panelRadius
         layer?.cornerCurve = .continuous
         layer?.backgroundColor = bgColor.cgColor
+        NotificationCenter.default.addObserver(self, selector: #selector(settingsDidChange), name: .clomeSettingsChanged, object: nil)
         setupUI()
+    }
+
+    @objc private func settingsDidChange() {
+        layer?.backgroundColor = bgColor.cgColor
+        needsDisplay = true
     }
 
     required init?(coder: NSCoder) {

@@ -11,6 +11,9 @@ class LSPClient {
     private var pendingRequests: [Int: CheckedContinuation<LSPResponse, Error>] = [:]
     private var readBuffer = Data()
 
+    /// Maximum read buffer size (10 MB) — protects against runaway LSP output.
+    private static let maxReadBufferSize = 10 * 1024 * 1024
+
     let language: String
     let serverCommand: String
     let serverArgs: [String]
@@ -63,7 +66,14 @@ class LSPClient {
         process?.terminate()
         process = nil
         stdin = nil
+        stdout?.readabilityHandler = nil
         stdout = nil
+        readBuffer.removeAll()
+        // Cancel all pending requests
+        for (_, continuation) in pendingRequests {
+            continuation.resume(throwing: LSPError.requestTimeout)
+        }
+        pendingRequests.removeAll()
     }
 
     // MARK: - LSP Methods
@@ -159,6 +169,13 @@ class LSPClient {
         return try await withCheckedThrowingContinuation { continuation in
             pendingRequests[id] = continuation
             sendMessage(message)
+
+            // Timeout: cancel stale requests after 30 seconds to prevent memory leaks
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
+                if let cont = self?.pendingRequests.removeValue(forKey: id) {
+                    cont.resume(throwing: LSPError.requestTimeout)
+                }
+            }
         }
     }
 
@@ -183,6 +200,17 @@ class LSPClient {
 
     private func handleData(_ data: Data) {
         readBuffer.append(data)
+        // Safety valve: if the buffer grows beyond the cap, discard it.
+        // This prevents unbounded memory growth from a misbehaving LSP server.
+        if readBuffer.count > LSPClient.maxReadBufferSize {
+            readBuffer.removeAll()
+            // Cancel all pending requests since the buffer state is lost
+            for (_, continuation) in pendingRequests {
+                continuation.resume(throwing: LSPError.bufferOverflow)
+            }
+            pendingRequests.removeAll()
+            return
+        }
         processBuffer()
     }
 
@@ -283,6 +311,11 @@ class LSPClient {
 }
 
 // MARK: - Types
+
+enum LSPError: Error {
+    case bufferOverflow
+    case requestTimeout
+}
 
 struct LSPResponse: @unchecked Sendable {
     let json: [String: Any]

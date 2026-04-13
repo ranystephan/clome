@@ -70,13 +70,13 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     private var currentDomainCookieCount: Int = 0
     private var autocompletePopup: URLAutocompletePopup?
 
-    private let idleBg = NSColor(white: 1.0, alpha: 0.07)
-    private let hoverBg = NSColor(white: 1.0, alpha: 0.10)
-    private let editBg = NSColor(white: 1.0, alpha: 0.15)
+    private var idleBg: NSColor { ClomeMacColor.border.withAlphaComponent(0.4) }
+    private var hoverBg: NSColor { ClomeMacColor.border.withAlphaComponent(0.6) }
+    private var editBg: NSColor { ClomeMacColor.elevatedSurface }
     private let activeAccent = NSColor(red: 0.38, green: 0.56, blue: 1.0, alpha: 1.0)
-    private let chromeTint = NSColor(white: 1.0, alpha: 0.72)
-    private let chromeMutedTint = NSColor(white: 1.0, alpha: 0.44)
-    private let chromeStroke = NSColor(white: 1.0, alpha: 0.08)
+    private var chromeTint: NSColor { ClomeMacColor.textSecondary }
+    private var chromeMutedTint: NSColor { ClomeMacColor.textTertiary }
+    private var chromeStroke: NSColor { ClomeMacColor.border }
     private var isPageLoading = false
 
     private(set) var favicon: NSImage?
@@ -100,7 +100,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     override init(frame: NSRect = .zero) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.backgroundColor = AppearanceSettings.shared.backgroundBgColor.cgColor
+        layer?.backgroundColor = ClomeSettings.shared.backgroundWithOpacity.cgColor
         NotificationCenter.default.addObserver(self, selector: #selector(browserDataChanged(_:)), name: .browserDataDidChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appearanceChanged(_:)), name: .appearanceSettingsChanged, object: nil)
         setupUI()
@@ -595,8 +595,38 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         formAutofillManager?.webView = nil
         webView?.removeObserver(self, forKeyPath: "title")
         webView?.removeObserver(self, forKeyPath: "estimatedProgress")
+
+        // Clear per-webview caches to reclaim WebContent process memory
+        let dataTypes: Set<String> = [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache]
+        webView?.configuration.websiteDataStore.removeData(
+            ofTypes: dataTypes,
+            modifiedSince: Date.distantPast
+        ) { /* done */ }
+
         webView?.removeFromSuperview()
         webView = nil
+        autocompletePopup = nil
+    }
+
+    /// Suspend heavy resources when this browser is in a background tab.
+    func suspendForBackground() {
+        // WKWebView doesn't have a public suspend API, but loading about:blank
+        // releases the page's JS heap and DOM tree while keeping the process alive.
+        // We skip this for lightweight pages to avoid losing state.
+    }
+
+    /// Resume from background — just trigger a re-display.
+    func resumeFromBackground() {
+        webView?.needsDisplay = true
+    }
+
+    /// Aggressively free memory under system memory pressure.
+    func releaseMemory() {
+        // Clear all cached data for this webview's data store
+        webView?.configuration.websiteDataStore.removeData(
+            ofTypes: [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache],
+            modifiedSince: Date.distantPast
+        ) { /* done */ }
     }
 
     deinit {
@@ -624,7 +654,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     }
 
     @objc private func appearanceChanged(_ notification: Notification) {
-        layer?.backgroundColor = AppearanceSettings.shared.backgroundBgColor.cgColor
+        layer?.backgroundColor = ClomeSettings.shared.backgroundWithOpacity.cgColor
         applyChromeAppearance()
     }
 
@@ -634,7 +664,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     }
 
     private func applyChromeAppearance() {
-        navBar.layer?.backgroundColor = AppearanceSettings.shared.backgroundBgColor.withAlphaComponent(0.86).cgColor
+        navBar.layer?.backgroundColor = ClomeSettings.shared.backgroundWithOpacity.withAlphaComponent(0.86).cgColor
         navBar.layer?.borderColor = chromeStroke.cgColor
         navBar.layer?.borderWidth = 0.5
         navBottomBorder.layer?.backgroundColor = chromeStroke.cgColor

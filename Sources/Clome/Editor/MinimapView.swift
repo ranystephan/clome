@@ -95,12 +95,24 @@ class MinimapView: NSView {
         context.strokePath()
     }
 
-    /// Maximum lines to render in the minimap. Beyond this, we sample lines.
-    private static let maxRenderedLines = 5000
+    /// Maximum lines to render in the minimap bitmap. Beyond this, we sample lines.
+    private static let maxRenderedLines = 3000
+
+    /// Maximum cached image memory (~4 MB cap at 2x scale for 80px wide minimap).
+    private static let maxCachedImageBytes = 4 * 1024 * 1024
 
     private func renderMinimap(editor: EditorView, totalLines: Int, scale: CGFloat) -> NSImage {
         let size = bounds.size
-        let image = NSImage(size: size)
+        guard size.width > 0 && size.height > 0 else {
+            return NSImage(size: NSSize(width: 1, height: 1))
+        }
+
+        // Cap image dimensions to prevent excessive memory usage.
+        // An 80x2000 image at 2x = 640KB; 80x8000 at 2x = 2.5MB.
+        let maxHeight: CGFloat = 4000
+        let clampedSize = NSSize(width: size.width, height: min(size.height, maxHeight))
+
+        let image = NSImage(size: clampedSize)
         image.lockFocus()
 
         guard let context = NSGraphicsContext.current?.cgContext else {
@@ -127,13 +139,13 @@ class MinimapView: NSView {
 
         var lineIdx = 0
         while lineIdx < totalLines {
-            let y = size.height - CGFloat(lineIdx + 1) * scaledLineHeight
+            let y = clampedSize.height - CGFloat(lineIdx + 1) * scaledLineHeight
 
             // Skip lines that are off-screen
             if y < -scaledLineHeight {
                 break
             }
-            if y > size.height {
+            if y > clampedSize.height {
                 lineIdx += stride
                 continue
             }
@@ -163,7 +175,7 @@ class MinimapView: NSView {
             let textLen = trimmed.count
 
             let x = CGFloat(indent) * charWidth + 4
-            let width = min(CGFloat(textLen) * charWidth, bounds.width - x - 4)
+            let width = min(CGFloat(textLen) * charWidth, clampedSize.width - x - 4)
             let blockHeight = max(scaledLineHeight * CGFloat(stride) - 0.5, 1)
 
             context.setFillColor(color.cgColor)

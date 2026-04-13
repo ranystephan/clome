@@ -17,6 +17,8 @@ class ClomeWindow: NSWindow {
 
     private var sidebarWidthConstraint: NSLayoutConstraint!
     private var sidebarLeadingConstraint: NSLayoutConstraint!
+    private var tabBarTopConstraint: NSLayoutConstraint!
+    private var tabBarIsRevealed: Bool = true
     private var dragSplitTabIndex: Int?
     private var sidebarDragWsIndex: Int?
     private var sidebarDragTabIndex: Int?
@@ -39,6 +41,8 @@ class ClomeWindow: NSWindow {
 
     // Background tint layer (unified for sidebar + main panel)
     private var bgTintLayer: NSView?
+    private var rootEffectView: NSVisualEffectView?
+    private var appearanceObservation: NSKeyValueObservation?
 
     init() {
         let frame = NSRect(x: 0, y: 0, width: 1200, height: 800)
@@ -65,7 +69,14 @@ class ClomeWindow: NSWindow {
         setupHoverTracking()
         workspaceManager.delegate = self
 
+        NotificationCenter.default.addObserver(self, selector: #selector(settingsDidChange), name: .clomeSettingsChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appearanceDidChange), name: .appearanceSettingsChanged, object: nil)
+
+        // Detect system appearance changes (e.g. macOS light/dark toggle while
+        // theme mode is "system") and re-resolve layer backgrounds.
+        appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
+            Task { @MainActor in self?.appearanceDidChange() }
+        }
 
         NotificationCenter.default.addObserver(
             self,
@@ -73,6 +84,11 @@ class ClomeWindow: NSWindow {
             name: .blockRunnerSwitchWorkspace,
             object: nil
         )
+
+        // Apply initial tab bar auto-hide state
+        if ClomeSettings.shared.autoHideTabBar {
+            setTabBarRevealed(false, animated: false)
+        }
     }
 
     @objc private func handleBlockRunnerSwitchWorkspace(_ note: Notification) {
@@ -83,7 +99,51 @@ class ClomeWindow: NSWindow {
     }
 
     @objc private func appearanceDidChange() {
-        bgTintLayer?.layer?.backgroundColor = ClomeMacColor.windowBackground.cgColor
+        rootEffectView?.material = ClomeMacTheme.windowMaterial()
+        // Resolve dynamic NSColors under the new appearance so .cgColor
+        // picks up light/dark correctly (NSAppearance.current may lag behind
+        // the just-applied NSApp.appearance).
+        NSApp.effectiveAppearance.performAsCurrentDrawingAppearance { [self] in
+            bgTintLayer?.layer?.backgroundColor = ClomeSettings.shared.backgroundWithOpacity.cgColor
+            sidebarContainer?.layer?.backgroundColor = ClomeMacColor.sidebarSurface.cgColor
+            mainPanel?.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
+            contentArea?.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
+            if let root = contentView as? NSVisualEffectView {
+                root.layer?.borderColor = ClomeMacColor.border.cgColor
+            }
+        }
+    }
+
+    @objc private func settingsDidChange() {
+        let shouldAutoHide = ClomeSettings.shared.autoHideTabBar
+        if shouldAutoHide && tabBarIsRevealed {
+            setTabBarRevealed(false, animated: true)
+        } else if !shouldAutoHide && !tabBarIsRevealed {
+            setTabBarRevealed(true, animated: true)
+        }
+    }
+
+    // MARK: - Tab Bar Auto-Hide
+
+    private let tabBarHoverEdge: CGFloat = 8 // px from top to trigger reveal
+
+    private func setTabBarRevealed(_ revealed: Bool, animated: Bool = true) {
+        guard revealed != tabBarIsRevealed else { return }
+        tabBarIsRevealed = revealed
+        let targetOffset: CGFloat = revealed ? 0 : -ClomeMacMetric.toolbarHeight
+
+        if animated {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.2
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                ctx.allowsImplicitAnimation = true
+                tabBarTopConstraint.animator().constant = targetOffset
+                tabBarView.animator().alphaValue = revealed ? 1.0 : 0.0
+            }
+        } else {
+            tabBarTopConstraint.constant = targetOffset
+            tabBarView.alphaValue = revealed ? 1.0 : 0.0
+        }
     }
 
     // MARK: - Layout
@@ -95,7 +155,7 @@ class ClomeWindow: NSWindow {
         // Root — unified background with rounded corners
         let root = NSVisualEffectView()
         root.translatesAutoresizingMaskIntoConstraints = false
-        root.material = .windowBackground
+        root.material = ClomeMacTheme.windowMaterial()
         root.blendingMode = .behindWindow
         root.state = .active
         root.wantsLayer = true
@@ -105,12 +165,13 @@ class ClomeWindow: NSWindow {
         root.layer?.borderWidth = 1
         root.layer?.borderColor = ClomeMacColor.border.cgColor
         contentView = root
+        rootEffectView = root
 
         // Background tint overlay — unified color for the entire window
         let tint = NSView()
         tint.translatesAutoresizingMaskIntoConstraints = false
         tint.wantsLayer = true
-        tint.layer?.backgroundColor = ClomeMacColor.windowBackground.cgColor
+        tint.layer?.backgroundColor = ClomeSettings.shared.backgroundWithOpacity.cgColor
         root.addSubview(tint)
         bgTintLayer = tint
         NSLayoutConstraint.activate([
@@ -228,7 +289,10 @@ class ClomeWindow: NSWindow {
             mainPanel.bottomAnchor.constraint(equalTo: inner.bottomAnchor),
 
             // Tab bar
-            tabBarView.topAnchor.constraint(equalTo: mainPanel.topAnchor),
+            {
+                tabBarTopConstraint = tabBarView.topAnchor.constraint(equalTo: mainPanel.topAnchor)
+                return tabBarTopConstraint
+            }(),
             tabBarView.leadingAnchor.constraint(equalTo: mainPanel.leadingAnchor),
             tabBarView.trailingAnchor.constraint(equalTo: mainPanel.trailingAnchor),
 
@@ -308,13 +372,20 @@ class ClomeWindow: NSWindow {
 
     override func mouseMoved(with event: NSEvent) {
         super.mouseMoved(with: event)
-        guard sidebarMode == .hidden else { return }
         guard let cv = contentView else { return }
-
         let point = cv.convert(event.locationInWindow, from: nil)
-        if point.x < hoverEdgeWidth {
-            // Reveal sidebar temporarily
+
+        // Sidebar hover reveal
+        if sidebarMode == .hidden && point.x < hoverEdgeWidth {
             setSidebarMode(.compact)
+        }
+
+        // Tab bar auto-hide hover
+        if ClomeSettings.shared.autoHideTabBar {
+            let mainPanelPoint = mainPanel.convert(event.locationInWindow, from: nil)
+            if mainPanelPoint.y > mainPanel.bounds.height - tabBarHoverEdge {
+                if !tabBarIsRevealed { setTabBarRevealed(true) }
+            }
         }
     }
 
@@ -324,16 +395,32 @@ class ClomeWindow: NSWindow {
         if sidebarMode == .compact {
             setSidebarMode(.hidden)
         }
+        // Hide auto-hidden tab bar when mouse leaves
+        if ClomeSettings.shared.autoHideTabBar && tabBarIsRevealed {
+            setTabBarRevealed(false)
+        }
     }
 
     // Check if mouse moved away from sidebar area
     override func sendEvent(_ event: NSEvent) {
         super.sendEvent(event)
-        if event.type == .mouseMoved && sidebarMode == .compact {
-            guard let cv = contentView else { return }
-            let point = cv.convert(event.locationInWindow, from: nil)
-            if point.x > sidebarWidth + 20 {
-                setSidebarMode(.hidden)
+
+        if event.type == .mouseMoved {
+            if sidebarMode == .compact {
+                guard let cv = contentView else { return }
+                let point = cv.convert(event.locationInWindow, from: nil)
+                if point.x > sidebarWidth + 20 {
+                    setSidebarMode(.hidden)
+                }
+            }
+
+            // Hide tab bar when mouse moves away from it
+            if ClomeSettings.shared.autoHideTabBar && tabBarIsRevealed {
+                let mainPanelPoint = mainPanel.convert(event.locationInWindow, from: nil)
+                let tabBarBottom = mainPanel.bounds.height - ClomeMacMetric.toolbarHeight - 20
+                if mainPanelPoint.y < tabBarBottom {
+                    setTabBarRevealed(false)
+                }
             }
         }
     }
@@ -397,9 +484,10 @@ class ClomeWindow: NSWindow {
             (NSApp.delegate as? ClomeAppDelegate)?.scheduleSave()
         }
 
-        // Lightweight callback — only active tab selection changed.
-        // Update both the top tab bar and the sidebar highlight.
-        // setNeedsReload is safe here because the click originates from the tab bar, not the sidebar.
+        // Lightweight callback — active tab selection changed.
+        // Keep the top tab bar and the sidebar selection in sync. The sidebar
+        // already coalesces reloads, so this remains cheap even during rapid
+        // keyboard tab switching.
         workspace.onActiveTabChanged = { [weak self] in
             guard self?.workspaceManager.activeWorkspace === workspace else { return }
             self?.tabBarView.updateSelection(activeIndex: workspace.activeTabIndex)

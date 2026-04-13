@@ -28,10 +28,18 @@ class FindBarView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.backgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 0.95).cgColor
-        layer?.borderColor = NSColor(white: 1.0, alpha: 0.08).cgColor
+        layer?.backgroundColor = ClomeMacColor.chromeSurfaceAlt.cgColor
+        layer?.borderColor = ClomeMacColor.border.cgColor
         layer?.borderWidth = 1
         setupUI()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            self.layer?.backgroundColor = ClomeMacColor.chromeSurfaceAlt.cgColor
+            self.layer?.borderColor = ClomeMacColor.border.cgColor
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -53,8 +61,8 @@ class FindBarView: NSView {
         searchField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         searchField.placeholderString = "Find"
         searchField.focusRingType = .none
-        searchField.backgroundColor = NSColor(white: 0.15, alpha: 1.0)
-        searchField.textColor = NSColor(white: 0.9, alpha: 1.0)
+        searchField.backgroundColor = ClomeMacColor.elevatedSurface
+        searchField.textColor = ClomeMacColor.textPrimary
         searchField.isBordered = true
         searchField.target = self
         searchField.action = #selector(searchChanged)
@@ -64,7 +72,7 @@ class FindBarView: NSView {
         matchCountLabel = NSTextField(labelWithString: "")
         matchCountLabel.translatesAutoresizingMaskIntoConstraints = false
         matchCountLabel.font = .systemFont(ofSize: 10)
-        matchCountLabel.textColor = NSColor(white: 0.5, alpha: 1.0)
+        matchCountLabel.textColor = ClomeMacColor.textTertiary
         addSubview(matchCountLabel)
 
         // Navigation buttons
@@ -85,8 +93,8 @@ class FindBarView: NSView {
         replaceField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         replaceField.placeholderString = "Replace"
         replaceField.focusRingType = .none
-        replaceField.backgroundColor = NSColor(white: 0.15, alpha: 1.0)
-        replaceField.textColor = NSColor(white: 0.9, alpha: 1.0)
+        replaceField.backgroundColor = ClomeMacColor.elevatedSurface
+        replaceField.textColor = ClomeMacColor.textPrimary
         replaceField.isBordered = true
         replaceField.isHidden = true
         addSubview(replaceField)

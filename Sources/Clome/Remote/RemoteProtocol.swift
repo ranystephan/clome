@@ -199,6 +199,25 @@ enum RemoteCommand: Codable {
     case requestTerminalContent(workspaceIndex: Int, tabIndex: Int)
 
     case ping
+
+    // Clipboard sync
+    case clipboardPush(content: ClipboardContent)
+    case clipboardPull
+
+    // File browser
+    case fileList(path: String, includeHidden: Bool)
+    case fileRead(path: String)
+    case fileWrite(path: String, content: String)
+
+    // Session recording
+    case recordingStart(name: String?)
+    case recordingStop
+    case recordingList
+    case recordingPlayback(recordingId: String, fromTimestamp: TimeInterval?)
+
+    // Port forwarding
+    case tunnelOpen(port: UInt16, label: String?)
+    case tunnelClose(tunnelId: String)
 }
 
 struct TerminalInput: Codable {
@@ -247,6 +266,10 @@ struct RemoteNotification: Codable {
         case claudeNeedsInput
         case agentFileChanged
         case generic
+        case claudeComplete
+        case buildResult
+        case longRunningAlert
+        case terminalError
     }
 }
 
@@ -280,6 +303,37 @@ enum MessageType {
     // Keepalive
     static let ping = "ping"
     static let pong = "pong"
+
+    // Clipboard
+    static let clipboardPush = "clipboard.push"
+    static let clipboardPull = "clipboard.pull"
+    static let clipboardContent = "clipboard.content"
+
+    // File browser
+    static let fileList = "file.list"
+    static let fileListResponse = "file.listResponse"
+    static let fileRead = "file.read"
+    static let fileReadResponse = "file.readResponse"
+    static let fileWrite = "file.write"
+    static let fileWriteResponse = "file.writeResponse"
+
+    // Session recording
+    static let recordingList = "recording.list"
+    static let recordingListResponse = "recording.listResponse"
+    static let recordingPlayback = "recording.playback"
+    static let recordingData = "recording.data"
+
+    // Port forwarding
+    static let tunnelOpen = "tunnel.open"
+    static let tunnelClose = "tunnel.close"
+    static let tunnelData = "tunnel.data"
+    static let tunnelOpened = "tunnel.opened"
+    static let tunnelClosed = "tunnel.closed"
+    static let tunnelHTTPRequest = "tunnel.httpRequest"
+    static let tunnelHTTPResponse = "tunnel.httpResponse"
+
+    // System stats
+    static let systemStats = "system.stats"
 }
 
 // MARK: - System Prompt (macOS dialogs forwarded to iOS)
@@ -306,6 +360,144 @@ struct SystemPromptResponse: Codable {
     let promptId: String
     let selectedButton: String              // label of the button to click
     let buttonIndex: Int                    // 0-based index as fallback
+}
+
+// MARK: - Clipboard Sync
+
+struct ClipboardContent: Codable {
+    let text: String?
+    let hasImage: Bool
+    let changeCount: Int                    // pasteboard change count for dedup
+}
+
+// MARK: - File Browser
+
+struct FileListRequest: Codable {
+    let path: String
+    let includeHidden: Bool
+}
+
+struct FileListResponse: Codable {
+    let path: String
+    let entries: [FileEntry]
+    let error: String?
+}
+
+struct FileEntry: Codable {
+    let name: String
+    let path: String
+    let isDirectory: Bool
+    let size: Int64?
+    let modifiedAt: Date?
+    let gitStatus: String?
+    let iconHint: String?                   // SF Symbol name
+}
+
+struct FileReadRequest: Codable {
+    let path: String
+    let encoding: String?
+}
+
+struct FileReadResponse: Codable {
+    let path: String
+    let content: String?
+    let isBinary: Bool
+    let error: String?
+    let language: String?                   // detected language for syntax highlighting
+}
+
+struct FileWriteRequest: Codable {
+    let path: String
+    let content: String
+}
+
+struct FileWriteResponse: Codable {
+    let path: String
+    let success: Bool
+    let error: String?
+}
+
+// MARK: - Session Recording
+
+struct RecordingInfo: Codable {
+    let id: String
+    let name: String
+    let startedAt: Date
+    let duration: TimeInterval?             // nil if still recording
+    let frameCount: Int
+}
+
+struct RecordingFrame: Codable {
+    let timestamp: TimeInterval             // offset from recording start
+    let screen: TerminalScreenState?        // full frame (keyframe)
+    let delta: TerminalDelta?               // incremental frame
+}
+
+struct RecordingPlaybackRequest: Codable {
+    let recordingId: String
+    let fromTimestamp: TimeInterval?
+}
+
+struct RecordingDataChunk: Codable {
+    let recordingId: String
+    let frames: [RecordingFrame]
+    let isComplete: Bool
+}
+
+// MARK: - Port Forwarding
+
+struct TunnelOpenRequest: Codable {
+    let port: UInt16
+    let label: String?
+}
+
+struct TunnelOpenedResponse: Codable {
+    let tunnelId: String
+    let port: UInt16
+    let success: Bool
+    let error: String?
+}
+
+struct TunnelDataChunk: Codable {
+    let tunnelId: String
+    let requestId: String
+    let data: Data
+    let isRequest: Bool                     // true = iOS→macOS, false = macOS→iOS
+    let isComplete: Bool
+}
+
+struct TunnelCloseRequest: Codable {
+    let tunnelId: String
+}
+
+struct TunnelHTTPRequest: Codable {
+    let tunnelId: String
+    let requestId: String
+    let method: String                      // "GET", "POST", etc.
+    let path: String                        // "/", "/api/foo", etc.
+    let headers: [String: String]
+    let body: Data?
+}
+
+struct TunnelHTTPResponse: Codable {
+    let tunnelId: String
+    let requestId: String
+    let status: Int                         // HTTP status code
+    let headers: [String: String]
+    let body: Data?
+    let error: String?
+}
+
+// MARK: - System Stats (Multi-Mac Dashboard)
+
+struct SystemStats: Codable {
+    let cpuUsagePercent: Double
+    let memoryUsedGB: Double
+    let memoryTotalGB: Double
+    let diskUsedGB: Double
+    let diskTotalGB: Double
+    let activeProcesses: [String]           // top 5 by CPU
+    let uptimeSeconds: TimeInterval
 }
 
 // MARK: - Paired Device Persistence

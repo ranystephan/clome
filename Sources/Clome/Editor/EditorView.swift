@@ -43,35 +43,37 @@ class EditorView: NSView {
     private(set) var isVeryLargeFile = false
 
     // Rendering state
-    let lineHeight: CGFloat = 18
+    private(set) var lineHeight: CGFloat = 18
     private let gutterWidth: CGFloat = 50
     private let textInset: CGFloat = 8
-    let font: NSFont
-    private let boldFont: NSFont
-    private let cachedCharWidth: CGFloat
+    private(set) var font: NSFont
+    private var boldFont: NSFont
+    private var cachedCharWidth: CGFloat
 
     // Scroll
     private(set) var scrollOffset: CGFloat = 0
     private(set) var horizontalScrollOffset: CGFloat = 0
     private(set) var visibleLineRange: Range<Int> = 0..<0
 
-    // Colors
-    private var bgColor: NSColor { AppearanceSettings.shared.backgroundBgColor }
-    private var gutterBgColor: NSColor { AppearanceSettings.shared.backgroundColor.withAlphaComponent(max(0, AppearanceSettings.shared.backgroundOpacity - 0.05)) }
-    private let gutterTextColor = NSColor(white: 0.35, alpha: 1.0)
-    private let textColor = NSColor(white: 0.85, alpha: 1.0)
-    private let cursorColor = NSColor(white: 0.9, alpha: 1.0)
-    private let selectionColor = NSColor(red: 0.2, green: 0.35, blue: 0.55, alpha: 0.5)
-    private let currentLineColor = NSColor(white: 1.0, alpha: 0.03)
+    // Colors (theme-aware via design system)
+    private var bgColor: NSColor { ClomeSettings.shared.backgroundWithOpacity }
+    private var gutterBgColor: NSColor {
+        ClomeMacColor.windowBackground.withAlphaComponent(max(0, ClomeSettings.shared.windowOpacity - 0.05))
+    }
+    private var gutterTextColor: NSColor { ClomeMacColor.textTertiary }
+    private var textColor: NSColor { ClomeMacColor.textPrimary }
+    private var cursorColor: NSColor { ClomeMacColor.textPrimary }
+    private var selectionColor: NSColor { ClomeMacColor.accent.withAlphaComponent(0.3) }
+    private var currentLineColor: NSColor { ClomeMacColor.textPrimary.withAlphaComponent(0.03) }
 
-    // Syntax colors
-    private let keywordColor = NSColor(red: 0.78, green: 0.46, blue: 0.83, alpha: 1.0)
-    private let stringColor = NSColor(red: 0.87, green: 0.56, blue: 0.40, alpha: 1.0)
-    private let commentColor = NSColor(white: 0.45, alpha: 1.0)
-    private let numberColor = NSColor(red: 0.82, green: 0.77, blue: 0.50, alpha: 1.0)
-    private let typeColor = NSColor(red: 0.47, green: 0.75, blue: 0.87, alpha: 1.0)
-    private let functionColor = NSColor(red: 0.40, green: 0.73, blue: 0.42, alpha: 1.0)
-    private let decoratorColor = NSColor(red: 0.82, green: 0.77, blue: 0.50, alpha: 1.0)
+    // Syntax colors (theme-aware)
+    private var keywordColor: NSColor { SyntaxColorScheme.current.keyword }
+    private var stringColor: NSColor { SyntaxColorScheme.current.string }
+    private var commentColor: NSColor { SyntaxColorScheme.current.comment }
+    private var numberColor: NSColor { SyntaxColorScheme.current.number }
+    private var typeColor: NSColor { SyntaxColorScheme.current.type }
+    private var functionColor: NSColor { SyntaxColorScheme.current.function }
+    private var decoratorColor: NSColor { SyntaxColorScheme.current.decorator }
 
     // Auto-closing brackets
     private let pairMap: [Character: Character] = ["(": ")", "[": "]", "{": "}", "\"": "\"", "'": "'"]
@@ -131,8 +133,10 @@ class EditorView: NSView {
 
     init(buffer: TextBuffer = TextBuffer()) {
         self.buffer = buffer
-        self.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        self.boldFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .bold)
+        let settings = ClomeSettings.shared
+        self.font = settings.resolvedFont
+        self.boldFont = settings.resolvedBoldFont
+        self.lineHeight = settings.resolvedLineHeight
         let sample = "M" as NSString
         self.cachedCharWidth = sample.size(withAttributes: [.font: self.font]).width
         super.init(frame: .zero)
@@ -140,6 +144,8 @@ class EditorView: NSView {
         layer?.backgroundColor = bgColor.cgColor
         layer?.masksToBounds = true
         setupCursorBlink()
+
+        NotificationCenter.default.addObserver(self, selector: #selector(settingsDidChange), name: .clomeSettingsChanged, object: nil)
 
         if let lang = buffer.language {
             treeSitter = TreeSitterHighlighter(language: lang)
@@ -176,10 +182,30 @@ class EditorView: NSView {
 
     func cleanup() {
         cursorTimer?.invalidate()
+        cursorTimer = nil
         scrollbarFadeTimer?.invalidate()
+        scrollbarFadeTimer = nil
         fileWatcher?.stop()
+        fileWatcher = nil
         lspClient?.stop()
+        lspClient = nil
         completionPopup?.removeFromSuperview()
+        completionPopup = nil
+        completionTriggerWorkItem?.cancel()
+        completionTriggerWorkItem = nil
+        didChangeWorkItem?.cancel()
+        didChangeWorkItem = nil
+        findMatchRanges.removeAll()
+        diagnostics.removeAll()
+        lineStates.removeAll()
+        minimapView = nil
+        treeSitter = nil
+    }
+
+    /// Clear find match cache (called under memory pressure).
+    func clearFindMatches() {
+        findMatchRanges.removeAll()
+        needsDisplay = true
     }
 
     // MARK: - File I/O
@@ -567,8 +593,9 @@ class EditorView: NSView {
 
     // MARK: - Find & Replace Logic
 
-    /// Maximum find matches to track for very large files
-    private static let maxFindMatches = 100_000
+    /// Maximum find matches to track — keeps memory bounded.
+    /// 10K matches × ~16 bytes each ≈ 160KB, plenty for navigation.
+    private static let maxFindMatches = 10_000
 
     func findMatches() {
         findMatchRanges = []
@@ -1011,7 +1038,7 @@ class EditorView: NSView {
     }
 
     private func fadeOutScrollbar() {
-        // Animate fade out over ~0.3s using a display-link style timer
+        // Animate fade out over ~0.3s — only dirty the scrollbar strip, not the whole view.
         let steps = 6
         let interval = 0.05
         var remaining = steps
@@ -1019,7 +1046,14 @@ class EditorView: NSView {
             guard let self = self else { timer.invalidate(); return }
             remaining -= 1
             self.scrollbarOpacity = CGFloat(remaining) / CGFloat(steps)
-            self.needsDisplay = true
+            // Only invalidate the scrollbar strip (right edge)
+            let scrollbarRect = NSRect(
+                x: self.bounds.width - self.scrollbarWidth - 4,
+                y: 0,
+                width: self.scrollbarWidth + 4,
+                height: self.bounds.height
+            )
+            self.setNeedsDisplay(scrollbarRect)
             if remaining <= 0 {
                 timer.invalidate()
             }
@@ -1251,8 +1285,25 @@ class EditorView: NSView {
         return result
     }
 
+    // MARK: - Regex Cache
+
+    /// Thread-safe cache for compiled regex patterns. Avoids recompiling the same
+    /// pattern+options on every line of every draw (was ~12 compiles × 50 lines × 2/sec).
+    private static var regexCache: [String: NSRegularExpression] = [:]
+    private static let regexCacheLock = NSLock()
+
+    private static func cachedRegex(pattern: String, options: NSRegularExpression.Options = []) -> NSRegularExpression? {
+        let key = "\(pattern)|\(options.rawValue)"
+        regexCacheLock.lock()
+        defer { regexCacheLock.unlock() }
+        if let cached = regexCache[key] { return cached }
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return nil }
+        regexCache[key] = regex
+        return regex
+    }
+
     private func highlightPattern(_ attr: NSMutableAttributedString, pattern: String, color: NSColor, options: NSRegularExpression.Options = []) {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return }
+        guard let regex = EditorView.cachedRegex(pattern: pattern, options: options) else { return }
         let str = attr.string
         let range = NSRange(str.startIndex..., in: str)
         for match in regex.matches(in: str, range: range) {
@@ -1261,7 +1312,7 @@ class EditorView: NSView {
     }
 
     private func highlightCaptureGroup(_ attr: NSMutableAttributedString, pattern: String, color: NSColor, group: Int = 1) {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+        guard let regex = EditorView.cachedRegex(pattern: pattern) else { return }
         let str = attr.string
         let range = NSRange(str.startIndex..., in: str)
         for match in regex.matches(in: str, range: range) {
@@ -2034,11 +2085,52 @@ class EditorView: NSView {
 
     // MARK: - Cursor Blink
 
-    private func setupCursorBlink() {
-        cursorTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.cursorVisible.toggle()
-            self?.needsDisplay = true
+    /// Compute a tight rect around the cursor for targeted invalidation.
+    private func cursorRectForBlink() -> NSRect {
+        let firstVisibleLine = max(0, Int(scrollOffset / lineHeight))
+        let cursorLine = buffer.cursor.line
+        guard cursorLine >= firstVisibleLine && cursorLine < firstVisibleLine + Int(bounds.height / lineHeight) + 2 else {
+            return .zero
         }
+        let cursorX = textX(buffer.cursor.column)
+        let cursorY = bounds.height - CGFloat(cursorLine - firstVisibleLine + 1) * lineHeight
+        // Include some padding around the cursor beam
+        return NSRect(x: cursorX - 2, y: cursorY, width: 6, height: lineHeight)
+    }
+
+    private func setupCursorBlink() {
+        cursorTimer?.invalidate()
+        cursorTimer = nil
+        guard ClomeSettings.shared.cursorBlink else {
+            cursorVisible = true
+            return
+        }
+        cursorTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.cursorVisible.toggle()
+            // Only dirty the cursor rect instead of the entire view.
+            // This avoids re-running syntax highlighting on every blink.
+            let cursorRect = self.cursorRectForBlink()
+            if cursorRect != .zero {
+                self.setNeedsDisplay(cursorRect)
+            } else {
+                self.needsDisplay = true
+            }
+        }
+    }
+
+    @objc private func settingsDidChange() {
+        let settings = ClomeSettings.shared
+        font = settings.resolvedFont
+        boldFont = settings.resolvedBoldFont
+        lineHeight = settings.resolvedLineHeight
+        let sample = "M" as NSString
+        cachedCharWidth = sample.size(withAttributes: [.font: font]).width
+        NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
+            self.layer?.backgroundColor = self.bgColor.cgColor
+        }
+        setupCursorBlink()
+        needsDisplay = true
     }
 
     override func becomeFirstResponder() -> Bool {

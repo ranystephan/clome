@@ -20,12 +20,12 @@ class MultiRootExplorerRowView: NSTableRowView {
 
     override func drawBackground(in dirtyRect: NSRect) {
         if isActiveFile {
-            NSColor(white: 1.0, alpha: 0.10).setFill()
+            ClomeMacColor.hoverFill.withAlphaComponent(0.15).setFill()
             let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 1), xRadius: 4, yRadius: 4)
             path.fill()
 
             // Left accent bar
-            NSColor(red: 0.45, green: 0.65, blue: 0.90, alpha: 0.7).setFill()
+            ClomeMacColor.accent.withAlphaComponent(0.7).setFill()
             let accent = NSRect(x: 2, y: bounds.minY + 4, width: 2, height: bounds.height - 8)
             NSBezierPath(roundedRect: accent, xRadius: 1, yRadius: 1).fill()
         }
@@ -100,12 +100,14 @@ class ExplorerItem: Equatable, Hashable {
 @MainActor
 class MultiRootExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     weak var delegate: MultiRootExplorerDelegate?
+    var onCollapseChange: ((Bool) -> Void)?
 
     private var projectRoots: [ProjectRoot] = []
     private var rootItems: [ExplorerItem] = []
     private let outlineView = NSOutlineView()
     private let scrollView = NSScrollView()
-    private var headerBar: NSView!
+    private let headerView = SidebarSectionHeader(title: "Explorer")
+    private var isExpanded = true
 
     /// Cache of ExplorerItem instances keyed by path for stable NSOutlineView identity.
     private var itemCache: [String: ExplorerItem] = [:]
@@ -167,21 +169,10 @@ class MultiRootExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDeleg
     private func setupUI() {
         wantsLayer = true
 
-        // Header bar
-        headerBar = NSView()
-        headerBar.translatesAutoresizingMaskIntoConstraints = false
-        headerBar.wantsLayer = true
-        headerBar.layer?.backgroundColor = NSColor.clear.cgColor
-        addSubview(headerBar)
-
-        let titleLabel = NSTextField(labelWithString: "")
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.attributedStringValue = NSAttributedString(string: "EXPLORER", attributes: [
-            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
-            .foregroundColor: NSColor(white: 1.0, alpha: 0.45),
-            .kern: 1.2,
-        ])
-        headerBar.addSubview(titleLabel)
+        addSubview(headerView)
+        headerView.onToggle = { [weak self] expanded in
+            self?.setExpanded(expanded)
+        }
 
         let iconCfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
 
@@ -190,43 +181,38 @@ class MultiRootExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDeleg
         addRootBtn.bezelStyle = .texturedRounded
         addRootBtn.isBordered = false
         addRootBtn.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "Add Folder")?.withSymbolConfiguration(iconCfg)
-        addRootBtn.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+        addRootBtn.contentTintColor = ClomeMacColor.textTertiary
         addRootBtn.target = self
         addRootBtn.action = #selector(addRootClicked(_:))
         addRootBtn.toolTip = "Add Project Folder"
-        headerBar.addSubview(addRootBtn)
+        addSubview(addRootBtn)
 
         let refreshBtn = NSButton()
         refreshBtn.translatesAutoresizingMaskIntoConstraints = false
         refreshBtn.bezelStyle = .texturedRounded
         refreshBtn.isBordered = false
         refreshBtn.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh")?.withSymbolConfiguration(iconCfg)
-        refreshBtn.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+        refreshBtn.contentTintColor = ClomeMacColor.textTertiary
         refreshBtn.target = self
         refreshBtn.action = #selector(refreshClicked(_:))
         refreshBtn.toolTip = "Refresh"
-        headerBar.addSubview(refreshBtn)
+        addSubview(refreshBtn)
 
         NSLayoutConstraint.activate([
-            headerBar.topAnchor.constraint(equalTo: topAnchor),
-            headerBar.leadingAnchor.constraint(equalTo: leadingAnchor),
-            headerBar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            headerBar.heightAnchor.constraint(equalToConstant: 32),
+            headerView.topAnchor.constraint(equalTo: topAnchor),
+            headerView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            headerView.trailingAnchor.constraint(equalTo: trailingAnchor),
 
-            titleLabel.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor, constant: 14),
-            titleLabel.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
-
-            refreshBtn.trailingAnchor.constraint(equalTo: headerBar.trailingAnchor, constant: -8),
-            refreshBtn.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            refreshBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            refreshBtn.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
             refreshBtn.widthAnchor.constraint(equalToConstant: 24),
             refreshBtn.heightAnchor.constraint(equalToConstant: 24),
 
             addRootBtn.trailingAnchor.constraint(equalTo: refreshBtn.leadingAnchor, constant: -4),
-            addRootBtn.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            addRootBtn.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
             addRootBtn.widthAnchor.constraint(equalToConstant: 24),
             addRootBtn.heightAnchor.constraint(equalToConstant: 24),
         ])
-
         // Outline view
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("FileTree"))
         col.title = ""
@@ -257,8 +243,8 @@ class MultiRootExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDeleg
         scrollView.hasVerticalScroller = true
         scrollView.scrollerStyle = .overlay
         scrollView.autohidesScrollers = true
+        scrollView.verticalScroller?.alphaValue = 0
         scrollView.borderType = .noBorder
-        scrollView.scrollerKnobStyle = .light
         scrollView.contentInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
         if let scroller = scrollView.verticalScroller {
             scroller.controlSize = .small
@@ -268,9 +254,16 @@ class MultiRootExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDeleg
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: headerBar.bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+    }
+
+    private func setExpanded(_ expanded: Bool) {
+        guard isExpanded != expanded else { return }
+        isExpanded = expanded
+        scrollView.isHidden = !expanded
+        onCollapseChange?(!expanded)
     }
 
     // MARK: - Data
@@ -548,14 +541,14 @@ class MultiRootExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDeleg
         img.imageScaling = .scaleProportionallyDown
         let iconCfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
         img.image = NSImage(systemSymbolName: "folder.fill", accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
-        img.contentTintColor = NSColor(red: 0.45, green: 0.65, blue: 0.85, alpha: 1.0)
+        img.contentTintColor = ClomeMacColor.info
         cell.addSubview(img)
         cell.imageView = img
 
         let txt = NSTextField(labelWithString: item.name)
         txt.translatesAutoresizingMaskIntoConstraints = false
         txt.font = .systemFont(ofSize: 12, weight: .semibold)
-        txt.textColor = NSColor(white: 0.90, alpha: 1.0)
+        txt.textColor = ClomeMacColor.textPrimary
         txt.lineBreakMode = .byTruncatingTail
         cell.addSubview(txt)
         cell.textField = txt
@@ -567,7 +560,7 @@ class MultiRootExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDeleg
         removeBtn.isBordered = false
         let cfg = NSImage.SymbolConfiguration(pointSize: 9, weight: .medium)
         removeBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Remove Root")?.withSymbolConfiguration(cfg)
-        removeBtn.contentTintColor = NSColor(white: 0.40, alpha: 1.0)
+        removeBtn.contentTintColor = ClomeMacColor.textTertiary
         removeBtn.target = self
         removeBtn.action = #selector(removeRootClicked(_:))
         removeBtn.tag = projectRoots.firstIndex(where: { $0 === item.projectRoot }) ?? 0
@@ -632,12 +625,12 @@ class MultiRootExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDeleg
         let isActive = (!node.isDirectory && node.path == activeFilePath)
         cell.textField?.stringValue = node.name
         cell.textField?.textColor = node.isDirectory
-            ? NSColor(white: 0.67, alpha: 1.0)
-            : (isActive ? NSColor(white: 0.95, alpha: 1.0) : NSColor(white: 0.85, alpha: 1.0))
+            ? ClomeMacColor.textTertiary
+            : (isActive ? ClomeMacColor.textPrimary : ClomeMacColor.textSecondary)
         cell.textField?.font = isActive ? .systemFont(ofSize: 12, weight: .medium) : .systemFont(ofSize: 12)
 
         // Icon
-        let useColorful = AppearanceSettings.shared.colorfulFileIcons
+        let useColorful = ClomeSettings.shared.colorfulFileIcons
         let colorIcon: NSImage? = useColorful && !node.isDirectory
             ? (node.fileExtension.flatMap { FileTypeIconProvider.shared.icon(forExtension: $0) }
                ?? FileTypeIconProvider.shared.icon(forFilename: node.name))
@@ -649,8 +642,8 @@ class MultiRootExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDeleg
             let iconCfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
             cell.imageView?.image = NSImage(systemSymbolName: node.iconName, accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
             cell.imageView?.contentTintColor = node.isDirectory
-                ? NSColor(red: 0.45, green: 0.65, blue: 0.85, alpha: 1.0)
-                : NSColor(white: 0.52, alpha: 1.0)
+                ? ClomeMacColor.info
+                : ClomeMacColor.textTertiary
         }
 
         // Git status badge

@@ -1084,6 +1084,22 @@ class NotebookCellView: NSView {
         sourceHeightConstraint?.constant = max(Metrics.minSourceHeight, h)
     }
 
+    // MARK: - Memory Management
+
+    /// Release heavy resources (images, web views, output views) when this cell is being discarded.
+    func releaseResources() {
+        // Remove all output views (which may contain decoded NSImages)
+        for v in outputStackView.arrangedSubviews {
+            outputStackView.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+        // Release the markdown rendering web view
+        renderedWebView?.stopLoading()
+        renderedWebView?.loadHTMLString("", baseURL: nil)
+        renderedWebView?.removeFromSuperview()
+        renderedWebView = nil
+    }
+
     // MARK: - Output Rendering
 
     private func rebuildOutputViews() {

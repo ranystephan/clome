@@ -62,7 +62,8 @@ class TerminalSurface: NSView {
         self.ghosttyApp = ghosttyApp
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = AppearanceSettings.shared.backgroundBgColor.cgColor
+        layer?.backgroundColor = ClomeSettings.shared.backgroundWithOpacity.cgColor
+        NotificationCenter.default.addObserver(self, selector: #selector(settingsDidChange), name: .clomeSettingsChanged, object: nil)
 
         // Register for file/text drag and drop
         registerForDraggedTypes([.fileURL, .URL, .string])
@@ -70,6 +71,10 @@ class TerminalSurface: NSView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) not supported")
+    }
+
+    @objc private func settingsDidChange() {
+        layer?.backgroundColor = ClomeSettings.shared.backgroundWithOpacity.cgColor
     }
 
     override func viewDidMoveToWindow() {

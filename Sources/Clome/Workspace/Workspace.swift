@@ -154,6 +154,9 @@ class Workspace: Identifiable {
     /// The content view that holds the active tab's view
     let contentContainer = NSView()
 
+    /// Animated logo shown when workspace has no tabs
+    private var emptyStateView: EmptyStateView?
+
     /// All tabs in this workspace
     private(set) var tabs: [WorkspaceTab] = []
 
@@ -400,18 +403,23 @@ class Workspace: Identifiable {
         }
         observeTabView(tab.view)
         selectTab(tabs.count - 1)
-        onTabsChanged?()
+        notifyTabsChanged()
     }
 
     func selectTab(_ index: Int) {
         guard index >= 0, index < tabs.count else { return }
+        hideEmptyState()
         let previousIndex = activeTabIndex
         activeTabIndex = index
 
-        // Hide previous tab's container instead of removing it
+        // Hide previous tab's container and suspend heavy resources
         if previousIndex >= 0 && previousIndex < tabs.count {
             tabs[previousIndex].splitContainer.isHidden = true
+            suspendTabResources(tabs[previousIndex])
         }
+
+        // Resume resources for the newly active tab
+        resumeTabResources(tabs[index])
 
         // Show the selected tab's container — add to hierarchy only on first show
         let container = tabs[index].splitContainer
@@ -442,13 +450,13 @@ class Workspace: Identifiable {
             pendingFocusWork = nil
         }
 
-        onActiveTabChanged?()
+        notifyActiveTabChanged()
     }
 
     func closeTab(_ index: Int) {
         guard index >= 0, index < tabs.count else { return }
         let tab = tabs.remove(at: index)
-        // Destroy all terminals and shut down notebook kernels in the split tree
+        // Destroy all surfaces and release resources in the split tree
         for pane in tab.splitContainer.allLeafViews {
             if let terminal = pane as? TerminalSurface {
                 terminal.destroySurface()
@@ -459,12 +467,19 @@ class Workspace: Identifiable {
             if let browser = pane as? BrowserPanel {
                 browser.willClose()
             }
+            if let editor = pane as? EditorPanel {
+                editor.editorView.cleanup()
+            }
+            if let project = pane as? ProjectPanel {
+                project.releaseAllFiles()
+            }
         }
         tab.splitContainer.removeFromSuperview()
 
         if tabs.isEmpty {
             activeTabIndex = -1
             contentContainer.subviews.forEach { $0.removeFromSuperview() }
+            showEmptyState()
         } else if index == activeTabIndex {
             // Closed the active tab — select the nearest remaining tab
             selectTab(min(activeTabIndex, tabs.count - 1))
@@ -473,12 +488,33 @@ class Workspace: Identifiable {
             activeTabIndex -= 1
         }
         // If closed tab was after active, activeTabIndex is still valid — no change needed
-        onTabsChanged?()
+        notifyTabsChanged()
     }
 
     func closeActiveTab() {
         guard activeTabIndex >= 0 else { return }
         closeTab(activeTabIndex)
+    }
+
+    // MARK: - Empty State
+
+    private func showEmptyState() {
+        guard emptyStateView == nil else { return }
+        let view = EmptyStateView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        contentContainer.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            view.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            view.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+        ])
+        emptyStateView = view
+    }
+
+    private func hideEmptyState() {
+        emptyStateView?.removeFromSuperview()
+        emptyStateView = nil
     }
 
     func moveTab(from: Int, to: Int) {
@@ -493,7 +529,7 @@ class Workspace: Identifiable {
         } else if from > activeTabIndex && to <= activeTabIndex {
             activeTabIndex += 1
         }
-        onTabsChanged?()
+        notifyTabsChanged()
     }
 
     /// Toggle a tab's pinned state. Pinned tabs are kept ordered before unpinned ones
@@ -509,14 +545,14 @@ class Workspace: Identifiable {
         if index != target {
             moveTab(from: index, to: target)
         } else {
-            onTabsChanged?()
+            notifyTabsChanged()
         }
     }
 
     func renameTab(_ index: Int, to name: String) {
         guard index >= 0, index < tabs.count else { return }
         tabs[index].title = name
-        onTabsChanged?()
+        notifyTabsChanged()
     }
 
     // MARK: - Claude Session
@@ -591,7 +627,7 @@ class Workspace: Identifiable {
         tab.focusedPane = newTerminal
         tab.splitContainer.focusedPane = newTerminal
         newTerminal.window?.makeFirstResponder(newTerminal)
-        onTabsChanged?()
+        notifyTabsChanged()
     }
 
     /// Split the active tab into a 2x2 grid (4 panes).
@@ -615,7 +651,7 @@ class Workspace: Identifiable {
 
         tab.focusedPane = focused
         tab.splitContainer.focusedPane = focused
-        onTabsChanged?()
+        notifyTabsChanged()
     }
 
     /// Close the focused split pane of the active tab.
@@ -640,7 +676,7 @@ class Workspace: Identifiable {
         if let terminal = nextFocus as? TerminalSurface {
             terminal.window?.makeFirstResponder(terminal)
         }
-        onTabsChanged?()
+        notifyTabsChanged()
     }
 
     /// Close a specific pane view (called from per-pane close button).
@@ -663,7 +699,7 @@ class Workspace: Identifiable {
         if let terminal = nextFocus as? TerminalSurface {
             terminal.window?.makeFirstResponder(terminal)
         }
-        onTabsChanged?()
+        notifyTabsChanged()
     }
 
     /// Split the active tab by moving an existing tab's view into a split pane.
@@ -694,7 +730,7 @@ class Workspace: Identifiable {
         if let terminal = sourceView as? TerminalSurface {
             terminal.window?.makeFirstResponder(terminal)
         }
-        onTabsChanged?()
+        notifyTabsChanged()
     }
 
     /// Detach a pane from a split and make it its own tab.
@@ -765,7 +801,7 @@ class Workspace: Identifiable {
         if let terminal = paneView as? TerminalSurface {
             terminal.window?.makeFirstResponder(terminal)
         }
-        onTabsChanged?()
+        notifyTabsChanged()
     }
 
     // MARK: - Split Navigation
@@ -788,6 +824,59 @@ class Workspace: Identifiable {
                 if activeTabIndex > 0 { selectTab(activeTabIndex - 1) }
             case .right, .down:
                 if activeTabIndex < tabs.count - 1 { selectTab(activeTabIndex + 1) }
+            }
+        }
+    }
+
+    // MARK: - Change Broadcasting
+
+    /// Notify callback + post notification so multiple observers can react.
+    private func notifyTabsChanged() {
+        onTabsChanged?()
+        NotificationCenter.default.post(name: .workspaceTabsChanged, object: self)
+    }
+
+    /// Notify callback + post notification for active tab selection changes.
+    private func notifyActiveTabChanged() {
+        onActiveTabChanged?()
+        NotificationCenter.default.post(name: .workspaceActiveTabChanged, object: self)
+    }
+
+    // MARK: - Memory Management
+
+    /// Suspend heavy resources for a tab that is no longer visible.
+    private func suspendTabResources(_ tab: WorkspaceTab) {
+        for pane in tab.splitContainer.allLeafViews {
+            if let editor = pane as? EditorPanel {
+                editor.suspendForBackground()
+            } else if let browser = pane as? BrowserPanel {
+                browser.suspendForBackground()
+            }
+        }
+    }
+
+    /// Resume resources for a tab that is becoming visible.
+    private func resumeTabResources(_ tab: WorkspaceTab) {
+        for pane in tab.splitContainer.allLeafViews {
+            if let editor = pane as? EditorPanel {
+                editor.resumeFromBackground()
+            } else if let browser = pane as? BrowserPanel {
+                browser.resumeFromBackground()
+            }
+        }
+    }
+
+    /// Called under system memory pressure to aggressively free caches.
+    func handleMemoryPressure() {
+        for (i, tab) in tabs.enumerated() {
+            // Skip active tab — only reclaim from background tabs
+            if i == activeTabIndex { continue }
+            for pane in tab.splitContainer.allLeafViews {
+                if let editor = pane as? EditorPanel {
+                    editor.releaseMemory()
+                } else if let browser = pane as? BrowserPanel {
+                    browser.releaseMemory()
+                }
             }
         }
     }

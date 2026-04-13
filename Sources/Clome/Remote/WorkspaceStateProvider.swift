@@ -247,8 +247,13 @@ final class WorkspaceStateProvider {
             Task { @MainActor in self?.scheduleEmit() }
         }
 
-        // Install workspace-level callbacks for changes that may not post notifications
-        installWorkspaceCallbacks(manager: manager)
+        // Tab structure / selection changes (posted by Workspace)
+        addObserver(center, name: .workspaceTabsChanged) { [weak self] _ in
+            Task { @MainActor in self?.scheduleEmit() }
+        }
+        addObserver(center, name: .workspaceActiveTabChanged) { [weak self] _ in
+            Task { @MainActor in self?.scheduleEmit() }
+        }
     }
 
     /// Stop all observations and cancel pending debounce.
@@ -260,32 +265,7 @@ final class WorkspaceStateProvider {
         notificationTokens.removeAll()
         debounceWorkItem?.cancel()
         debounceWorkItem = nil
-        removeWorkspaceCallbacks()
         observedManager = nil
-    }
-
-    // MARK: - Workspace Callbacks
-
-    /// Install lightweight callbacks on each workspace to catch tab mutations
-    /// that don't always post notifications.
-    private func installWorkspaceCallbacks(manager: WorkspaceManager) {
-        for workspace in manager.workspaces {
-            let weakSelf = Weak(self)
-            workspace.onTabsChanged = { [weakSelf] in
-                weakSelf.value?.scheduleEmit()
-            }
-            workspace.onActiveTabChanged = { [weakSelf] in
-                weakSelf.value?.scheduleEmit()
-            }
-        }
-    }
-
-    private func removeWorkspaceCallbacks() {
-        guard let manager = observedManager else { return }
-        for workspace in manager.workspaces {
-            workspace.onTabsChanged = nil
-            workspace.onActiveTabChanged = nil
-        }
     }
 
     // MARK: - Debounce & Emit
@@ -341,4 +321,9 @@ extension Notification.Name {
     static let workspaceDidAddWorkspace = Notification.Name("workspaceDidAddWorkspace")
     static let workspaceDidRemoveWorkspace = Notification.Name("workspaceDidRemoveWorkspace")
     static let workspaceDidRename = Notification.Name("workspaceDidRename")
+
+    /// Posted by Workspace when tabs are added, removed, or reordered.
+    static let workspaceTabsChanged = Notification.Name("workspaceTabsChanged")
+    /// Posted by Workspace when the active tab selection changes.
+    static let workspaceActiveTabChanged = Notification.Name("workspaceActiveTabChanged")
 }

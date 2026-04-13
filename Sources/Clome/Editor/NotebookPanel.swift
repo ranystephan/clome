@@ -46,12 +46,12 @@ class NotebookPanel: NSView {
     /// The file path of the loaded notebook (nil if none loaded).
     var filePath: String? { store.filePath }
 
-    // MARK: - Design System Colors (derived from AppearanceSettings)
+    // MARK: - Design System Colors
 
-    private var baseBg: NSColor { AppearanceSettings.shared.backgroundBgColor }
+    private var baseBg: NSColor { ClomeSettings.shared.backgroundWithOpacity }
     private var surface2: NSColor {
-        AppearanceSettings.shared.backgroundColor.withAlphaComponent(
-            min(1.0, AppearanceSettings.shared.backgroundOpacity + 0.04)
+        ClomeMacColor.windowBackground.withAlphaComponent(
+            min(1.0, ClomeSettings.shared.windowOpacity + 0.04)
         )
     }
     private let borderSubtle = NSColor(white: 1.0, alpha: 0.08)
@@ -85,6 +85,12 @@ class NotebookPanel: NSView {
     /// Shuts down the kernel bridge subprocess to prevent orphaned processes.
     func willClose() {
         kernelManager.shutdown()
+        // Release all cell views and their potentially heavy output images
+        for cellView in cellViews {
+            cellView.releaseResources()
+        }
+        cellViews.removeAll()
+        stackView?.arrangedSubviews.forEach { $0.removeFromSuperview() }
     }
 
     @objc private func appearanceDidChange() {

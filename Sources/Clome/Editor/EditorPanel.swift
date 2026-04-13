@@ -35,7 +35,7 @@ class EditorPanel: NSView {
     private(set) var minimapView: MinimapView!
     private var minimapWidthConstraint: NSLayoutConstraint!
     private var minimapToggleBtn: NSButton!
-    private var isMinimapVisible: Bool = true
+    private var isMinimapVisible: Bool = ClomeSettings.shared.showMinimap
 
     // Status bar
     private var statusBarView: NSView!
@@ -83,11 +83,13 @@ class EditorPanel: NSView {
         statusBarView = NSView()
         statusBarView.translatesAutoresizingMaskIntoConstraints = false
         statusBarView.wantsLayer = true
-        statusBarView.layer?.backgroundColor = NSColor(white: 0.08, alpha: 1.0).cgColor
+        statusBarView.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
         addSubview(statusBarView)
 
+        NotificationCenter.default.addObserver(self, selector: #selector(settingsDidChange), name: .clomeSettingsChanged, object: nil)
+
         let statusFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        let statusColor = NSColor(white: 0.50, alpha: 1.0)
+        let statusColor = ClomeMacColor.textTertiary
 
         gitBranchLabel = NSTextField(labelWithString: "")
         gitBranchLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -216,6 +218,17 @@ class EditorPanel: NSView {
             lineCountLabel.trailingAnchor.constraint(equalTo: encodingLabel.leadingAnchor, constant: -14),
             lineCountLabel.centerYAnchor.constraint(equalTo: statusBarView.centerYAnchor),
         ])
+    }
+
+    @objc private func settingsDidChange() {
+        NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
+            self.statusBarView?.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
+        }
+        let statusColor = ClomeMacColor.textTertiary
+        for label in [gitBranchLabel, cursorPositionLabel, selectionInfoLabel,
+                      encodingLabel, lineEndingLabel, lineCountLabel, statusLanguageLabel] {
+            label?.textColor = statusColor
+        }
     }
 
     // MARK: - Minimap Toggle
@@ -350,6 +363,26 @@ class EditorPanel: NSView {
         statusLanguageLabel.stringValue = buf.language ?? ""
         updateStatusBar()
         setupCompileButton()
+    }
+
+    // MARK: - Memory Management
+
+    /// Suspend expensive resources when this editor is in a background tab.
+    func suspendForBackground() {
+        minimapView?.invalidateCache()
+    }
+
+    /// Resume resources when becoming visible again.
+    func resumeFromBackground() {
+        minimapView?.invalidateCache()
+        editorView.needsDisplay = true
+    }
+
+    /// Aggressively free memory under system memory pressure.
+    func releaseMemory() {
+        minimapView?.invalidateCache()
+        editorView.buffer.releaseMemory()
+        editorView.clearFindMatches()
     }
 
     // MARK: - LaTeX Compile

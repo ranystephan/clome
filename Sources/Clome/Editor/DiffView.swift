@@ -162,8 +162,6 @@ class DiffView: NSView {
     private func renderDiff() {
         let attributed = NSMutableAttributedString()
         let monoFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        let addColor = NSColor(red: 0.2, green: 0.4, blue: 0.2, alpha: 1.0)
-        let delColor = NSColor(red: 0.4, green: 0.2, blue: 0.2, alpha: 1.0)
         let addBg = NSColor(red: 0.15, green: 0.25, blue: 0.15, alpha: 1.0)
         let delBg = NSColor(red: 0.25, green: 0.15, blue: 0.15, alpha: 1.0)
 

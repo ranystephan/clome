@@ -51,6 +51,7 @@ class ProjectPanel: NSView {
             self, selector: #selector(handleOpenDiffReview(_:)),
             name: .openDiffReview, object: nil
         )
+
     }
 
     @objc private func handleDirtyStateChanged(_ notification: Notification) {
@@ -346,7 +347,14 @@ class ProjectPanel: NSView {
             }
         }
 
-        file.editor?.editorView.cleanup()
+        // Fully clean up the panel's resources
+        if let editor = file.editor {
+            editor.editorView.cleanup()
+        }
+        if let notebook = file.notebook {
+            notebook.willClose()
+        }
+        file.panel.removeFromSuperview()
         openFiles.remove(at: index)
 
         if openFiles.isEmpty {
@@ -357,6 +365,17 @@ class ProjectPanel: NSView {
             selectFile(min(activeFileIndex, openFiles.count - 1))
         }
         rebuildTabBar()
+    }
+
+    /// Release all open file panels. Called when the entire project tab is closed.
+    func releaseAllFiles() {
+        for file in openFiles {
+            file.editor?.editorView.cleanup()
+            file.notebook?.willClose()
+            file.panel.removeFromSuperview()
+        }
+        openFiles.removeAll()
+        activeFileIndex = -1
     }
 
     func saveFileAs(_ index: Int) {
@@ -722,7 +741,7 @@ class TabSeparatorView: NSView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.06).cgColor
+        layer?.backgroundColor = ClomeMacColor.border.cgColor
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: 1),
             heightAnchor.constraint(equalToConstant: 14),

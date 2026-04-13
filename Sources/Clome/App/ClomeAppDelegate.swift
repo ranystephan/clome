@@ -26,6 +26,12 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Firebase is initialized in main.swift before NSApplication.run()
 
+        // Apply user's theme preference (light/dark/system).
+        // The hook ensures NSApp.appearance is set BEFORE the notification fires,
+        // so views re-resolve dynamic colors against the new appearance.
+        ClomeSettings.shared.onThemeWillChange = { ClomeMacTheme.applyTheme() }
+        ClomeMacTheme.applyTheme()
+
         setupMenuBar()
 
         // Initialize the Ghostty terminal backend
@@ -43,9 +49,6 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.workspaceManager.addWorkspace()
         }
 
-        window.makeKeyAndOrderFront(nil)
-        mainWindow = window
-
         // Access to TCC-protected directories (Desktop, Documents, Downloads) is now
         // requested lazily — only when the user actually opens a project in one of them.
         // This avoids bombarding the user with permission prompts on every launch.
@@ -58,6 +61,9 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 window.center()
             }
         }
+        fitWindowToVisibleScreen(window)
+        window.makeKeyAndOrderFront(nil)
+        mainWindow = window
 
         // Start socket server for external automation
         socketServer = SocketServer()
@@ -85,10 +91,39 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Status bar item
         statusBarController = StatusBarController(window: window)
 
+        // Register for system memory pressure notifications
+        setupMemoryPressureHandler()
+
         NSApp.activate(ignoringOtherApps: true)
 
         // Show onboarding on first launch
         OnboardingWindowController.showIfNeeded()
+    }
+
+    // MARK: - Memory Pressure Handling
+
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
+
+    private func setupMemoryPressureHandler() {
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.warning, .critical],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            self?.handleMemoryPressure()
+        }
+        source.resume()
+        memoryPressureSource = source
+    }
+
+    private func handleMemoryPressure() {
+        NSLog("[Clome] System memory pressure detected — releasing caches")
+        guard let window = mainWindow else { return }
+        for workspace in window.workspaceManager.workspaces {
+            workspace.handleMemoryPressure()
+        }
+        // Also clear any global caches
+        URLCache.shared.removeAllCachedResponses()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -174,6 +209,25 @@ class ClomeAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.workspaceManager.workspaces,
             activeIndex: window.workspaceManager.activeWorkspaceIndex
         )
+    }
+
+    private func fitWindowToVisibleScreen(_ window: NSWindow) {
+        let currentFrame = window.frame
+        let screen = window.screen
+            ?? NSScreen.screens.first(where: { $0.visibleFrame.intersects(currentFrame) })
+            ?? NSScreen.main
+        guard let screen else { return }
+
+        let visible = screen.visibleFrame
+        let fittedWidth = min(currentFrame.width, visible.width)
+        let fittedHeight = min(currentFrame.height, visible.height)
+        let fittedX = min(max(currentFrame.minX, visible.minX), visible.maxX - fittedWidth)
+        let fittedY = min(max(currentFrame.minY, visible.minY), visible.maxY - fittedHeight)
+        let fittedFrame = NSRect(x: fittedX, y: fittedY, width: fittedWidth, height: fittedHeight)
+
+        if !NSEqualRects(currentFrame, fittedFrame) {
+            window.setFrame(fittedFrame, display: true)
+        }
     }
 
     // MARK: - Menu Bar

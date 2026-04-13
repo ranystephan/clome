@@ -254,13 +254,13 @@ class PaneHeaderBar: NSView {
     private let iconView = NSImageView()
     let paneView: NSView
 
-    private let bgColor = NSColor(red: 0.1, green: 0.1, blue: 0.115, alpha: 1.0)
-    private let focusBgColor = NSColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 1.0)
+    private var bgColor: NSColor { ClomeMacColor.chromeSurface }
+    private var focusBgColor: NSColor { ClomeMacColor.chromeSurfaceAlt }
 
     var isFocused: Bool = false {
         didSet {
             layer?.backgroundColor = isFocused ? focusBgColor.cgColor : bgColor.cgColor
-            label.textColor = isFocused ? NSColor(white: 0.8, alpha: 1.0) : NSColor(white: 0.5, alpha: 1.0)
+            label.textColor = isFocused ? ClomeMacColor.textSecondary : ClomeMacColor.textTertiary
             iconView.contentTintColor = label.textColor
         }
     }
@@ -285,14 +285,14 @@ class PaneHeaderBar: NSView {
         let (symbolName, titleText) = PaneHeaderBar.info(for: paneView)
         let iconCfg = NSImage.SymbolConfiguration(pointSize: 9, weight: .medium)
         iconView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
-        iconView.contentTintColor = NSColor(white: 0.5, alpha: 1.0)
+        iconView.contentTintColor = ClomeMacColor.textTertiary
         addSubview(iconView)
 
         // Label
         label.translatesAutoresizingMaskIntoConstraints = false
         label.stringValue = titleText
         label.font = .systemFont(ofSize: 10, weight: .medium)
-        label.textColor = NSColor(white: 0.5, alpha: 1.0)
+        label.textColor = ClomeMacColor.textTertiary
         label.lineBreakMode = .byTruncatingTail
         addSubview(label)
 
@@ -303,10 +303,12 @@ class PaneHeaderBar: NSView {
         closeBtn.title = ""
         let closeCfg = NSImage.SymbolConfiguration(pointSize: 8, weight: .bold)
         closeBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Pane")?.withSymbolConfiguration(closeCfg)
-        closeBtn.contentTintColor = NSColor(white: 0.4, alpha: 1.0)
+        closeBtn.contentTintColor = ClomeMacColor.textTertiary
         closeBtn.target = self
         closeBtn.action = #selector(closeTapped)
         addSubview(closeBtn)
+
+        NotificationCenter.default.addObserver(self, selector: #selector(settingsDidChange), name: .clomeSettingsChanged, object: nil)
 
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 26),
@@ -333,6 +335,13 @@ class PaneHeaderBar: NSView {
 
     @objc private func closeTapped() {
         onClose?()
+    }
+
+    @objc private func settingsDidChange() {
+        layer?.backgroundColor = isFocused ? focusBgColor.cgColor : bgColor.cgColor
+        label.textColor = isFocused ? ClomeMacColor.textSecondary : ClomeMacColor.textTertiary
+        iconView.contentTintColor = label.textColor
+        closeBtn.contentTintColor = ClomeMacColor.textTertiary
     }
 
     // MARK: - Drag to re-split / unsplit

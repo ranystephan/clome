@@ -226,7 +226,7 @@ class GhosttyAppManager {
         }
 
         // Check user preference
-        guard AppearanceSettings.shared.openLinksInClomeBrowser else {
+        guard ClomeSettings.shared.openLinksInClomeBrowser else {
             NSWorkspace.shared.open(url)
             return
         }
