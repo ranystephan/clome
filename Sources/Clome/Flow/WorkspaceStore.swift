@@ -209,7 +209,7 @@ final class WorkspaceStore: ObservableObject {
             let personalRef = db.collection("workspaces").document(personal.id)
             let existingPersonal = try await personalRef.getDocument()
             if !existingPersonal.exists {
-                let payload = try Self.encodeWorkspace(personal)
+                nonisolated(unsafe) let payload = try Self.encodeWorkspace(personal)
                 try await firestoreSetData(payload, on: personalRef)
             }
 
@@ -218,7 +218,7 @@ final class WorkspaceStore: ObservableObject {
             let bindingRef = db.collection("workspaces").document(personal.id).collection("calendarBinding").document("default")
             let existingBinding = try await bindingRef.getDocument()
             if !existingBinding.exists {
-                let bindingDict = try Self.encodeBinding(.personalDefault)
+                nonisolated(unsafe) let bindingDict = try Self.encodeBinding(.personalDefault)
                 try await firestoreSetData(bindingDict, on: bindingRef)
             }
 
@@ -229,7 +229,7 @@ final class WorkspaceStore: ObservableObject {
                 pinnedOrder: [personal.id],
                 didMigrate: true
             )
-            let membershipDict = try Self.encodeMembership(newMembership)
+            nonisolated(unsafe) let membershipDict = try Self.encodeMembership(newMembership)
             try await firestoreSetData(membershipDict, on: membershipRef)
 
             NSLog("[WorkspaceStore] Migration complete: Personal workspace \(personal.id)")
@@ -357,11 +357,11 @@ final class WorkspaceStore: ObservableObject {
 
         do {
             // 1. Write the workspace doc.
-            let payload = try Self.encodeWorkspace(workspace)
+            nonisolated(unsafe) let payload = try Self.encodeWorkspace(workspace)
             try await firestoreSetData(payload, on: db.collection("workspaces").document(id))
 
             // 2. Seed an empty calendar binding (defaults to all calendars).
-            let bindingPayload = try Self.encodeBinding(.personalDefault)
+            nonisolated(unsafe) let bindingPayload = try Self.encodeBinding(.personalDefault)
             try await firestoreSetData(bindingPayload, on: Self.bindingDocument(db: db, workspaceId: id))
 
             // 3. Update the membership index — add to workspaceIds and append
@@ -388,7 +388,7 @@ final class WorkspaceStore: ObservableObject {
     /// Persists the membership doc and updates the local published copy.
     private func persistMembership(_ m: WorkspaceMembership) async throws {
         guard let uid = currentUserId else { return }
-        let dict = try Self.encodeMembership(m)
+        nonisolated(unsafe) let dict = try Self.encodeMembership(m)
         try await firestoreSetData(dict, on: db.collection("users").document(uid)
             .collection("membership").document("index"))
         // The listener will update self.membership; mirror locally too so
@@ -708,7 +708,8 @@ final class WorkspaceStore: ObservableObject {
         let wrapper = NotebookWrapper(entries: notes)
         do {
             let json = try JSONEncoder().encode(wrapper)
-            guard let dict = try JSONSerialization.jsonObject(with: json) as? [String: Any] else { return }
+            guard let parsed = try JSONSerialization.jsonObject(with: json) as? [String: Any] else { return }
+            nonisolated(unsafe) let dict = parsed
             try await firestoreSetData(dict, on: Self.notebookDocument(db: db, uid: uid, workspaceId: wsId))
         } catch {
             NSLog("[WorkspaceStore] Notebook upload failed: \(error.localizedDescription)")
@@ -720,7 +721,8 @@ final class WorkspaceStore: ObservableObject {
         let wrapper = TaskStoreWrapper(items: tasks)
         do {
             let json = try JSONEncoder().encode(wrapper)
-            guard let dict = try JSONSerialization.jsonObject(with: json) as? [String: Any] else { return }
+            guard let parsed = try JSONSerialization.jsonObject(with: json) as? [String: Any] else { return }
+            nonisolated(unsafe) let dict = parsed
             try await firestoreSetData(dict, on: Self.tasksDocument(db: db, workspaceId: wsId))
         } catch {
             NSLog("[WorkspaceStore] Tasks upload failed: \(error.localizedDescription)")
@@ -732,7 +734,8 @@ final class WorkspaceStore: ObservableObject {
         let wrapper = DeadlineStoreWrapper(items: deadlines)
         do {
             let json = try JSONEncoder().encode(wrapper)
-            guard let dict = try JSONSerialization.jsonObject(with: json) as? [String: Any] else { return }
+            guard let parsed = try JSONSerialization.jsonObject(with: json) as? [String: Any] else { return }
+            nonisolated(unsafe) let dict = parsed
             try await firestoreSetData(dict, on: Self.deadlinesDocument(db: db, workspaceId: wsId))
         } catch {
             NSLog("[WorkspaceStore] Deadlines upload failed: \(error.localizedDescription)")
@@ -817,7 +820,7 @@ final class WorkspaceStore: ObservableObject {
 
     /// Wraps Firestore setData in a nonisolated context so [String: Any]
     /// bridging to NSDictionary doesn't trigger Swift 6 sending diagnostics.
-    private nonisolated func firestoreSetData(_ dict: sending [String: Any], on ref: DocumentReference) async throws {
+    private nonisolated func firestoreSetData(_ dict: [String: Any], on ref: DocumentReference) async throws {
         try await ref.setData(dict)
     }
 
