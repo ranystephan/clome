@@ -817,7 +817,7 @@ final class WorkspaceStore: ObservableObject {
 
     /// Wraps Firestore setData in a nonisolated context so [String: Any]
     /// bridging to NSDictionary doesn't trigger Swift 6 sending diagnostics.
-    private nonisolated func firestoreSetData(_ dict: [String: Any], on ref: DocumentReference) async throws {
+    private nonisolated func firestoreSetData(_ dict: sending [String: Any], on ref: DocumentReference) async throws {
         try await ref.setData(dict)
     }
 
