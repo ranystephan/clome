@@ -81,7 +81,12 @@ jobs:
 
       - name: Ad-hoc codesign
         run: |
-          codesign --force --deep --sign - build/DerivedData/Build/Products/Release/Clome.app
+          # Sign frameworks first (inside-out), then the app bundle
+          find build/DerivedData/Build/Products/Release/Clome.app/Contents/Frameworks \
+            -name '*.framework' -o -name '*.dylib' | while read fw; do
+            codesign --force --sign - "$fw" 2>/dev/null || true
+          done
+          codesign --force --sign - build/DerivedData/Build/Products/Release/Clome.app
 
       - name: Package DMG and ZIP
         id: package
@@ -122,6 +127,18 @@ jobs:
           name: Clome v${{ steps.package.outputs.version }}
           prerelease: true
           generate_release_notes: true
+          body: |
+            ## Installation
+
+            1. Download the `.dmg` file below
+            2. Open the DMG and drag **Clome** to Applications
+            3. Before opening, run this command in Terminal to remove the quarantine flag:
+               ```
+               xattr -cr /Applications/Clome.app
+               ```
+            4. Open Clome from Applications
+
+            > **Note:** This build is ad-hoc signed (not notarized with Apple). macOS Gatekeeper will block it unless you remove the quarantine attribute with the command above.
           files: |
             ${{ steps.package.outputs.dmg }}
             ${{ steps.package.outputs.zip }}
