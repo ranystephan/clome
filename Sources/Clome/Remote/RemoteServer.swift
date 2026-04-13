@@ -286,16 +286,19 @@ final class RemoteServer: NSObject, @unchecked Sendable {
                 type: Self.serviceType
             )
             nwListener.stateUpdateHandler = { [weak self] state in
+                nonisolated(unsafe) let state = state
                 Task { @MainActor in
                     self?.listenerStateChanged(state)
                 }
             }
             nwListener.serviceRegistrationUpdateHandler = { [weak self] change in
+                nonisolated(unsafe) let change = change
                 Task { @MainActor in
                     self?.serviceRegistrationChanged(change)
                 }
             }
             nwListener.newConnectionHandler = { [weak self] connection in
+                nonisolated(unsafe) let connection = connection
                 Task { @MainActor in
                     self?.handleNewConnection(connection)
                 }
@@ -1079,6 +1082,8 @@ final class RemoteServer: NSObject, @unchecked Sendable {
         print("[RemoteServer] New incoming connection: \(connectionId)")
 
         connection.stateUpdateHandler = { [weak self] state in
+            nonisolated(unsafe) let state = state
+            nonisolated(unsafe) let connection = connection
             Task { @MainActor in
                 switch state {
                 case .ready:
@@ -1139,6 +1144,7 @@ final class RemoteServer: NSObject, @unchecked Sendable {
 
     private func pendingReceiveLoop(connectionId: String, connection: NWConnection) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] content, _, isComplete, error in
+            nonisolated(unsafe) let connection = connection
             Task { @MainActor in
                 guard let self else { return }
                 // Stop the pending receive loop once the connection has been promoted.
@@ -1341,12 +1347,15 @@ final class RemoteServer: NSObject, @unchecked Sendable {
             let serviceName = "Clome-\(macName)-\(suffix)"
             nwListener.service = NWListener.Service(name: serviceName, type: Self.serviceType)
             nwListener.stateUpdateHandler = { [weak self] state in
+                nonisolated(unsafe) let state = state
                 Task { @MainActor in self?.listenerStateChanged(state) }
             }
             nwListener.serviceRegistrationUpdateHandler = { [weak self] change in
+                nonisolated(unsafe) let change = change
                 Task { @MainActor in self?.serviceRegistrationChanged(change) }
             }
             nwListener.newConnectionHandler = { [weak self] connection in
+                nonisolated(unsafe) let connection = connection
                 Task { @MainActor in self?.handleNewConnection(connection) }
             }
             nwListener.start(queue: serverQueue)
