@@ -1,6 +1,6 @@
 import AppKit
 
-protocol TabBarDelegate: AnyObject {
+@MainActor protocol TabBarDelegate: AnyObject {
     func tabBar(_ tabBar: TabBarView, didSelectTabAt index: Int)
     func tabBar(_ tabBar: TabBarView, didCloseTabAt index: Int)
     func tabBarDidRequestNewTab(_ tabBar: TabBarView)
