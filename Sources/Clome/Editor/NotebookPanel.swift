@@ -50,11 +50,9 @@ class NotebookPanel: NSView {
 
     private var baseBg: NSColor { ClomeSettings.shared.backgroundWithOpacity }
     private var surface2: NSColor {
-        ClomeMacColor.windowBackground.withAlphaComponent(
-            min(1.0, ClomeSettings.shared.windowOpacity + 0.04)
-        )
+        ClomeMacTheme.surfaceColor(.chromeAlt)
     }
-    private let borderSubtle = NSColor(white: 1.0, alpha: 0.08)
+    private let borderSubtle = ClomeMacColor.border
 
     init(store: NotebookStore? = nil, projectDirectory: String? = nil) {
         let resolvedStore = store ?? NotebookStore()
@@ -62,7 +60,7 @@ class NotebookPanel: NSView {
         self.projectDirectory = projectDirectory
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = baseBg.cgColor
+        // No layer bg — the scroll view paints the background to avoid double-layering
         kernelManager.delegate = self
         setupUI()
         rebuildCells()

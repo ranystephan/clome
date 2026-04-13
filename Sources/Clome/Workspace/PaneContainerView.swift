@@ -254,8 +254,8 @@ class PaneHeaderBar: NSView {
     private let iconView = NSImageView()
     let paneView: NSView
 
-    private var bgColor: NSColor { ClomeMacColor.chromeSurface }
-    private var focusBgColor: NSColor { ClomeMacColor.chromeSurfaceAlt }
+    private var bgColor: NSColor { ClomeMacTheme.surfaceColor(.chrome) }
+    private var focusBgColor: NSColor { ClomeMacTheme.surfaceColor(.chromeAlt) }
 
     var isFocused: Bool = false {
         didSet {

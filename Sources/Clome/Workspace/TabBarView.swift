@@ -16,7 +16,7 @@ class TabBarView: NSView {
     private(set) var selectedIndex: Int = 0
 
     private let barHeight: CGFloat = 36
-    private let bgColor = ClomeMacColor.chromeSurface
+    private var bgColor: NSColor { ClomeMacTheme.surfaceColor(.chrome) }
     private let borderColor = ClomeMacColor.border
 
     override init(frame: NSRect = .zero) {
@@ -32,11 +32,17 @@ class TabBarView: NSView {
 
     @objc private func settingsDidChange() {
         layer?.backgroundColor = bgColor.cgColor
+        addButton.layer?.backgroundColor = ClomeMacTheme.surfaceColor(.chromeAlt).cgColor
         needsDisplay = true
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) not supported")
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        settingsDidChange()
     }
 
     override var intrinsicContentSize: NSSize {
@@ -73,7 +79,7 @@ class TabBarView: NSView {
         addButton.wantsLayer = true
         addButton.layer?.cornerRadius = ClomeMacMetric.compactRadius
         addButton.layer?.cornerCurve = .continuous
-        addButton.layer?.backgroundColor = ClomeMacColor.chromeSurfaceAlt.cgColor
+        addButton.layer?.backgroundColor = ClomeMacTheme.surfaceColor(.chromeAlt).cgColor
         addButton.target = self
         addButton.action = #selector(addTabTapped)
         addSubview(addButton)

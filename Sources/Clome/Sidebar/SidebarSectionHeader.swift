@@ -4,6 +4,7 @@ import AppKit
 /// Shows title (tracked caps), optional badge count, and optional action buttons.
 @MainActor
 class SidebarSectionHeader: NSView {
+    private let title: String
     var isExpanded: Bool = true {
         didSet { updateDisclosure() }
     }
@@ -17,6 +18,7 @@ class SidebarSectionHeader: NSView {
     private let actionStack = NSStackView()
 
     init(title: String, badge: Int? = nil) {
+        self.title = title
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -31,11 +33,6 @@ class SidebarSectionHeader: NSView {
 
         // Title
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.attributedStringValue = NSAttributedString(string: title.uppercased(), attributes: [
-            .font: ClomeMacFont.sectionLabel,
-            .foregroundColor: ClomeMacColor.textTertiary,
-            .kern: 1.8,
-        ])
         addSubview(titleLabel)
 
         // Badge
@@ -72,6 +69,7 @@ class SidebarSectionHeader: NSView {
 
         // Set initial chevron image
         updateDisclosure()
+        refreshAppearance()
 
         // Click to toggle
         let click = NSClickGestureRecognizer(target: self, action: #selector(headerClicked))
@@ -79,6 +77,19 @@ class SidebarSectionHeader: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    func refreshAppearance() {
+        titleLabel.attributedStringValue = NSAttributedString(string: title.uppercased(), attributes: [
+            .font: ClomeMacFont.sectionLabel,
+            .foregroundColor: ClomeMacColor.textTertiary,
+            .kern: 1.8,
+        ])
+        disclosureIcon.contentTintColor = ClomeMacColor.textTertiary
+        badgeLabel.textColor = ClomeMacColor.textSecondary
+        for case let button as NSButton in actionStack.arrangedSubviews {
+            button.contentTintColor = ClomeMacColor.textTertiary
+        }
+    }
 
     func updateBadge(_ count: Int?) {
         if let count {
@@ -115,10 +126,15 @@ class SidebarSectionHeader: NSView {
 
     @objc private func headerClicked() {
         isExpanded.toggle()
-        layer?.backgroundColor = ClomeMacColor.chromeSurfaceAlt.cgColor
+        layer?.backgroundColor = ClomeMacColor.hoverFill.cgColor
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
             self?.layer?.backgroundColor = NSColor.clear.cgColor
         }
         onToggle?(isExpanded)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshAppearance()
     }
 }

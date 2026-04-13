@@ -71,7 +71,7 @@ final class ClomeSettings {
 
     var windowOpacity: CGFloat {
         didSet {
-            let clamped = min(1.0, max(0.5, windowOpacity))
+            let clamped = min(1.0, max(0.2, windowOpacity))
             if clamped != windowOpacity { windowOpacity = clamped; return }
             defaults.set(Double(windowOpacity), forKey: SettingsKey.windowOpacity); notify()
         }

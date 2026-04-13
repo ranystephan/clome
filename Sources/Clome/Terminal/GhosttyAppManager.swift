@@ -44,6 +44,10 @@ class GhosttyAppManager {
         ]
         // Ensure TERM is set to xterm-ghostty now that we bundle the terminfo
         overrideLines.append("term=xterm-ghostty")
+        // Match ghostty's background opacity to the app's window opacity setting
+        // so the backdrop blur shows through the terminal too
+        let bgOpacity = ClomeSettings.shared.windowOpacity
+        overrideLines.append("background-opacity=\(bgOpacity)")
         let overrideConfig = overrideLines.joined(separator: "\n") + "\n"
         let tmpURL = FileManager.default.temporaryDirectory.appendingPathComponent("clome-ghostty-override.conf")
         try? overrideConfig.write(to: tmpURL, atomically: true, encoding: .utf8)

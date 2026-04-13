@@ -24,7 +24,7 @@ class ClomeWindow: NSWindow {
     private var sidebarDragTabIndex: Int?
     private var paneDragView: NSView?
     private(set) var launcherWindow: LauncherWindow?
-    private let tabBarBgColor = ClomeMacColor.chromeSurface
+    private var tabBarBgColor: NSColor { ClomeMacTheme.surfaceColor(.chrome) }
     private let outerEdgeMargin: CGFloat = 40
     /// Throttle drop zone updates during drag (limit to ~60fps)
     private var lastDropZoneUpdate: CFTimeInterval = 0
@@ -39,8 +39,7 @@ class ClomeWindow: NSWindow {
     private var hoverTrackingArea: NSTrackingArea?
     private let hoverEdgeWidth: CGFloat = 6 // px from left edge to trigger reveal
 
-    // Background tint layer (unified for sidebar + main panel)
-    private var bgTintLayer: NSView?
+    // Root visual effect + appearance tracking
     private var rootEffectView: NSVisualEffectView?
     private var appearanceObservation: NSKeyValueObservation?
 
@@ -100,18 +99,7 @@ class ClomeWindow: NSWindow {
 
     @objc private func appearanceDidChange() {
         rootEffectView?.material = ClomeMacTheme.windowMaterial()
-        // Resolve dynamic NSColors under the new appearance so .cgColor
-        // picks up light/dark correctly (NSAppearance.current may lag behind
-        // the just-applied NSApp.appearance).
-        NSApp.effectiveAppearance.performAsCurrentDrawingAppearance { [self] in
-            bgTintLayer?.layer?.backgroundColor = ClomeSettings.shared.backgroundWithOpacity.cgColor
-            sidebarContainer?.layer?.backgroundColor = ClomeMacColor.sidebarSurface.cgColor
-            mainPanel?.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
-            contentArea?.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
-            if let root = contentView as? NSVisualEffectView {
-                root.layer?.borderColor = ClomeMacColor.border.cgColor
-            }
-        }
+        applyChromeAppearance()
     }
 
     @objc private func settingsDidChange() {
@@ -121,6 +109,7 @@ class ClomeWindow: NSWindow {
         } else if !shouldAutoHide && !tabBarIsRevealed {
             setTabBarRevealed(true, animated: true)
         }
+        applyChromeAppearance()
     }
 
     // MARK: - Tab Bar Auto-Hide
@@ -167,20 +156,6 @@ class ClomeWindow: NSWindow {
         contentView = root
         rootEffectView = root
 
-        // Background tint overlay — unified color for the entire window
-        let tint = NSView()
-        tint.translatesAutoresizingMaskIntoConstraints = false
-        tint.wantsLayer = true
-        tint.layer?.backgroundColor = ClomeSettings.shared.backgroundWithOpacity.cgColor
-        root.addSubview(tint)
-        bgTintLayer = tint
-        NSLayoutConstraint.activate([
-            tint.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            tint.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            tint.topAnchor.constraint(equalTo: root.topAnchor),
-            tint.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-        ])
-
         // Inner container — holds all app content
         let inner = NSView()
         inner.translatesAutoresizingMaskIntoConstraints = false
@@ -191,11 +166,12 @@ class ClomeWindow: NSWindow {
         inner.layer?.backgroundColor = NSColor.clear.cgColor
         root.addSubview(inner)
 
-        // Sidebar container — plain view, transparent (root blur shows through)
+        // Sidebar container — clear (root blur shows through); SidebarView paints its own bg
         let sidebarBox = NSView()
         sidebarBox.translatesAutoresizingMaskIntoConstraints = false
         sidebarBox.wantsLayer = true
-        sidebarBox.layer?.backgroundColor = ClomeMacColor.sidebarSurface.cgColor
+        sidebarBox.layer?.backgroundColor = NSColor.clear.cgColor
+        sidebarBox.layer?.masksToBounds = true
         // No border — the outer window border already frames the whole app and
         // we want the sidebar to flow seamlessly into the main panel.
         sidebarContainer = sidebarBox
@@ -217,12 +193,12 @@ class ClomeWindow: NSWindow {
         }
         sidebarContainer.addSubview(sidebarView)
 
-        // Main panel — rounded on all corners, transparent (root blur shows through)
-        // Uses NonDraggableView to prevent system titlebar drag interception
+        // Main panel — rounded on all corners, clear (root blur shows through);
+        // child views (tab bar, editor, terminal) paint their own backgrounds.
         mainPanel = NonDraggableView()
         mainPanel.translatesAutoresizingMaskIntoConstraints = false
         mainPanel.wantsLayer = true
-        mainPanel.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
+        mainPanel.layer?.backgroundColor = NSColor.clear.cgColor
         mainPanel.layer?.cornerRadius = ClomeMacMetric.panelRadius
         mainPanel.layer?.cornerCurve = .continuous
         mainPanel.layer?.masksToBounds = true
@@ -246,7 +222,7 @@ class ClomeWindow: NSWindow {
         contentArea = NSView()
         contentArea.translatesAutoresizingMaskIntoConstraints = false
         contentArea.wantsLayer = true
-        contentArea.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
+        contentArea.layer?.backgroundColor = NSColor.clear.cgColor
         mainPanel.addSubview(contentArea)
 
         // Split drop zone overlay (for drag-to-split) — frame-based, not constrained
@@ -302,6 +278,22 @@ class ClomeWindow: NSWindow {
             contentArea.trailingAnchor.constraint(equalTo: mainPanel.trailingAnchor),
             contentArea.bottomAnchor.constraint(equalTo: mainPanel.bottomAnchor),
         ])
+
+        applyChromeAppearance()
+    }
+
+    private func applyChromeAppearance() {
+        rootEffectView?.material = ClomeMacTheme.windowMaterial()
+        // Container views (sidebarContainer, mainPanel) are always clear — child views
+        // paint their own semi-transparent backgrounds so the NSVisualEffectView's
+        // backdrop blur shows through at (1 - windowOpacity).
+        tabBarView?.layer?.backgroundColor = tabBarBgColor.cgColor
+        // Border uses a raw dynamic NSColor — resolve inside the appearance context
+        NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
+            if let root = self.contentView as? NSVisualEffectView {
+                root.layer?.borderColor = ClomeMacColor.border.cgColor
+            }
+        }
     }
 
     // MARK: - Sidebar Modes

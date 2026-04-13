@@ -22,6 +22,11 @@ class SourceControlSection: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    func refreshAppearance() {
+        headerView.refreshAppearance()
+        rebuildList()
+    }
+
     private func setupUI() {
         wantsLayer = true
         addSubview(headerView)
@@ -58,7 +63,7 @@ class SourceControlSection: NSView {
             listStack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
             listStack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
             listStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-            listStack.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor),
+            listStack.bottomAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.bottomAnchor),
             listStack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
 
             listHeightConstraint!,
@@ -129,7 +134,7 @@ class SourceControlSection: NSView {
             card.wantsLayer = true
             card.layer?.cornerRadius = ClomeMacMetric.panelRadius
             card.layer?.cornerCurve = .continuous
-            card.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
+            card.layer?.backgroundColor = ClomeMacTheme.surfaceColor(.chrome).cgColor
             card.layer?.borderWidth = 1
             card.layer?.borderColor = ClomeMacColor.border.cgColor
             card.addSubview(emptyLabel)
@@ -176,6 +181,11 @@ class SourceControlSection: NSView {
             layoutSubtreeIfNeeded()
         }
     }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshAppearance()
+    }
 }
 
 // MARK: - Source Control Row
@@ -183,8 +193,13 @@ class SourceControlSection: NSView {
 private class SourceControlRow: NSView {
     var onClick: (() -> Void)?
     private var isHovered = false
+    private let status: GitFileStatus
+    private let statusLabel = NSTextField(labelWithString: "")
+    private let nameLabel = NSTextField(labelWithString: "")
+    private let pathLabel = NSTextField(labelWithString: "")
 
     init(filename: String, relativePath: String, status: GitFileStatus) {
+        self.status = status
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -192,29 +207,26 @@ private class SourceControlRow: NSView {
         layer?.cornerCurve = .continuous
         layer?.borderWidth = 1
         layer?.borderColor = ClomeMacColor.border.cgColor
-        layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
+        layer?.backgroundColor = baseBackgroundColor.cgColor
 
         // Status letter
-        let statusLabel = NSTextField(labelWithString: statusLetter(status))
+        statusLabel.stringValue = statusLetter(status)
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.font = .monospacedSystemFont(ofSize: 10, weight: .semibold)
-        statusLabel.textColor = statusColor(status)
         statusLabel.alignment = .center
         addSubview(statusLabel)
 
         // Filename
-        let nameLabel = NSTextField(labelWithString: filename)
+        nameLabel.stringValue = filename
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.font = ClomeMacFont.bodyMedium
-        nameLabel.textColor = ClomeMacColor.textPrimary
         nameLabel.lineBreakMode = .byTruncatingTail
         addSubview(nameLabel)
 
         // Relative path
-        let pathLabel = NSTextField(labelWithString: relativePath)
+        pathLabel.stringValue = relativePath
         pathLabel.translatesAutoresizingMaskIntoConstraints = false
         pathLabel.font = ClomeMacFont.caption
-        pathLabel.textColor = ClomeMacColor.textTertiary
         pathLabel.lineBreakMode = .byTruncatingMiddle
         addSubview(pathLabel)
 
@@ -236,9 +248,14 @@ private class SourceControlRow: NSView {
 
         let area = NSTrackingArea(rect: .zero, options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect], owner: self)
         addTrackingArea(area)
+        applyAppearance()
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    private var baseBackgroundColor: NSColor { ClomeMacTheme.surfaceColor(.chrome) }
+    private var hoverBackgroundColor: NSColor { ClomeMacTheme.surfaceColor(.chromeAlt) }
+    private var pressedBackgroundColor: NSColor { ClomeMacTheme.surfaceColor(.elevated) }
 
     private func statusLetter(_ status: GitFileStatus) -> String {
         switch status {
@@ -265,20 +282,33 @@ private class SourceControlRow: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         isHovered = true
-        layer?.backgroundColor = ClomeMacColor.chromeSurfaceAlt.cgColor
+        layer?.backgroundColor = hoverBackgroundColor.cgColor
     }
 
     override func mouseExited(with event: NSEvent) {
         isHovered = false
-        layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
+        layer?.backgroundColor = baseBackgroundColor.cgColor
     }
 
     override func mouseDown(with event: NSEvent) {
-        layer?.backgroundColor = ClomeMacColor.elevatedSurface.cgColor
+        layer?.backgroundColor = pressedBackgroundColor.cgColor
     }
 
     override func mouseUp(with event: NSEvent) {
-        layer?.backgroundColor = isHovered ? ClomeMacColor.chromeSurfaceAlt.cgColor : ClomeMacColor.chromeSurface.cgColor
+        layer?.backgroundColor = isHovered ? hoverBackgroundColor.cgColor : baseBackgroundColor.cgColor
         onClick?()
+    }
+
+    private func applyAppearance() {
+        layer?.borderColor = ClomeMacColor.border.cgColor
+        layer?.backgroundColor = (isHovered ? hoverBackgroundColor : baseBackgroundColor).cgColor
+        statusLabel.textColor = statusColor(status)
+        nameLabel.textColor = ClomeMacColor.textPrimary
+        pathLabel.textColor = ClomeMacColor.textTertiary
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyAppearance()
     }
 }

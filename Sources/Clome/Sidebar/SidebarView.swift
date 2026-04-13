@@ -7,7 +7,7 @@ class SidebarView: NSView {
     private let scrollView = NSScrollView()
     private let stackView = NSStackView()
 
-    private var bgColor: NSColor { ClomeMacColor.sidebarSurface }
+    private var bgColor: NSColor { ClomeMacTheme.surfaceColor(.sidebar) }
 
     /// File shelf
     private var bottomBar: NSView!
@@ -98,6 +98,13 @@ class SidebarView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        layer?.backgroundColor = bgColor.cgColor
+        fileShelfView?.refreshAppearance()
+        sourceControlSection?.refreshAppearance()
+    }
 
     private func setupUI() {
         wantsLayer = true
@@ -330,7 +337,7 @@ class SidebarView: NSView {
         btn.wantsLayer = true
         btn.layer?.cornerRadius = ClomeMacMetric.compactRadius
         btn.layer?.cornerCurve = .continuous
-        btn.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
+        btn.layer?.backgroundColor = ClomeMacTheme.surfaceColor(.chromeAlt).cgColor
         btn.layer?.borderWidth = 1
         btn.layer?.borderColor = ClomeMacColor.border.cgColor
         if let action {
@@ -359,6 +366,11 @@ class SidebarView: NSView {
             // Do NOT rebuild the entire sidebar — it destroys hover states and eats clicks.
             // Only rebuild if we detect structural changes (tab count, titles).
             return
+        }
+        if n.name == .appearanceSettingsChanged {
+            layer?.backgroundColor = bgColor.cgColor
+            fileShelfView?.refreshAppearance()
+            sourceControlSection?.refreshAppearance()
         }
         reloadWorkspaces()
     }
@@ -594,7 +606,7 @@ class SidebarView: NSView {
     private func showFileShelf() {
         guard fileShelfView == nil else { return }
         isShelfVisible = true
-        shelfBtn.contentTintColor = NSColor.controlAccentColor
+        shelfBtn.contentTintColor = ClomeMacColor.accent
 
         let shelf = FileShelfView()
         shelf.translatesAutoresizingMaskIntoConstraints = false
@@ -624,14 +636,16 @@ class SidebarView: NSView {
         guard let shelf = fileShelfView else { return }
         isShelfVisible = false
         fileShelfView = nil
-        shelfBtn.contentTintColor = NSColor(white: 1.0, alpha: 0.9)
+        shelfBtn.contentTintColor = ClomeMacColor.textPrimary
 
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.15
             shelf.animator().alphaValue = 0
         }, completionHandler: {
-            shelf.cleanup()
-            shelf.removeFromSuperview()
+            Task { @MainActor in
+                shelf.cleanup()
+                shelf.removeFromSuperview()
+            }
         })
     }
 
@@ -792,7 +806,7 @@ class SidebarView: NSView {
                 view.addSub(plusIcon, trailing: 6, centerY: true, width: 20, height: 20)
             }
 
-            header.bgHover = NSColor(white: 1.0, alpha: 0.04)
+            header.bgHover = ClomeMacColor.hoverFill
             header.cornerRadius = 6
             header.onHoverChange = { hovering in
                 NSAnimationContext.runAnimationGroup { ctx in
@@ -950,7 +964,7 @@ class SidebarView: NSView {
                             let splitGroup = NSView()
                             splitGroup.translatesAutoresizingMaskIntoConstraints = false
                             splitGroup.wantsLayer = true
-                            splitGroup.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.05).cgColor
+                            splitGroup.layer?.backgroundColor = ClomeMacTheme.surfaceColor(.chromeAlt).cgColor
                             splitGroup.layer?.cornerRadius = 8
                             splitGroup.layer?.cornerCurve = .continuous
 
@@ -1010,7 +1024,7 @@ class SidebarView: NSView {
                                         view.addSub(title, leading: 32, centerY: true, trailingOffset: 10)
                                     }
 
-                                    paneRow.bgHover = NSColor(white: 1.0, alpha: 0.04)
+                                    paneRow.bgHover = ClomeMacColor.hoverFill
                                     paneRow.cornerRadius = 6
                                     paneRow.onClick = { _ in focusAction() }
 
@@ -1113,9 +1127,9 @@ class SidebarView: NSView {
                         }
 
                         if isTabActive {
-                            tabRow.bgActive = NSColor(red: 0.0, green: 0.48, blue: 1.0, alpha: 1.0)
+                            tabRow.bgActive = ClomeMacColor.accent
                         }
-                        tabRow.bgHover = NSColor(white: 1.0, alpha: 0.04)
+                        tabRow.bgHover = ClomeMacColor.hoverFill
                         tabRow.cornerRadius = 6
                         tabRow.onHoverChange = { hovering in
                             NSAnimationContext.runAnimationGroup { ctx in
@@ -1326,7 +1340,7 @@ class SidebarView: NSView {
         card.translatesAutoresizingMaskIntoConstraints = false
         card.wantsLayer = true
         if isActive {
-            card.layer?.backgroundColor = NSColor(red: 0.0, green: 0.48, blue: 1.0, alpha: 1.0).cgColor
+            card.layer?.backgroundColor = ClomeMacColor.accent.cgColor
         }
         card.layer?.cornerRadius = 8
         card.layer?.cornerCurve = .continuous
@@ -1953,11 +1967,15 @@ class FooterIconButton: NSButton {
     }
 
     private func refreshFill() {
-        let alpha: CGFloat
-        if isPressed      { alpha = 0.12 }
-        else if isHovered { alpha = 0.06 }
-        else              { alpha = 0.0  }
-        layer?.backgroundColor = NSColor(white: 1.0, alpha: alpha).cgColor
+        let fill: NSColor
+        if isPressed {
+            fill = ClomeMacColor.buttonSurfacePressed
+        } else if isHovered {
+            fill = ClomeMacColor.hoverFill
+        } else {
+            fill = NSColor.clear
+        }
+        layer?.backgroundColor = fill.cgColor
     }
 }
 
@@ -2062,15 +2080,11 @@ class ClickableCardView: NSView {
 class NewTabCard: NSView {
     var onClick: (() -> Void)?
 
-    private static func sidebarIsLight() -> Bool { false }
-    private static var fgWhite: CGFloat { 1.0 }
-
     init(icon: String, label: String) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        let fg = Self.fgWhite
-        layer?.backgroundColor = NSColor(white: fg, alpha: 0.10).cgColor
+        layer?.backgroundColor = ClomeMacColor.buttonSurface.cgColor
         layer?.cornerRadius = 6
         layer?.cornerCurve = .continuous
 
@@ -2078,14 +2092,14 @@ class NewTabCard: NSView {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         let iconCfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
         iconView.image = NSImage(systemSymbolName: icon, accessibilityDescription: label)?.withSymbolConfiguration(iconCfg)
-        iconView.contentTintColor = NSColor(white: fg, alpha: 0.85)
+        iconView.contentTintColor = ClomeMacColor.textPrimary
         iconView.imageScaling = .scaleProportionallyDown
         addSubview(iconView)
 
         let titleLabel = NSTextField(labelWithString: label)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = .systemFont(ofSize: 10, weight: .medium)
-        titleLabel.textColor = NSColor(white: fg, alpha: 0.80)
+        titleLabel.textColor = ClomeMacColor.textPrimary
         titleLabel.alignment = .center
         titleLabel.lineBreakMode = .byTruncatingTail
         addSubview(titleLabel)
@@ -2106,13 +2120,11 @@ class NewTabCard: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func mouseDown(with event: NSEvent) {
-        let fg = Self.fgWhite
-        layer?.backgroundColor = NSColor(white: fg, alpha: 0.20).cgColor
+        layer?.backgroundColor = ClomeMacColor.buttonSurfacePressed.cgColor
     }
 
     override func mouseUp(with event: NSEvent) {
-        let fg = Self.fgWhite
-        layer?.backgroundColor = NSColor(white: fg, alpha: 0.15).cgColor
+        layer?.backgroundColor = ClomeMacColor.buttonSurfaceHover.cgColor
         let point = convert(event.locationInWindow, from: nil)
         if bounds.contains(point) { onClick?() }
     }
@@ -2124,13 +2136,11 @@ class NewTabCard: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        let fg = Self.fgWhite
-        layer?.backgroundColor = NSColor(white: fg, alpha: 0.15).cgColor
+        layer?.backgroundColor = ClomeMacColor.buttonSurfaceHover.cgColor
     }
 
     override func mouseExited(with event: NSEvent) {
-        let fg = Self.fgWhite
-        layer?.backgroundColor = NSColor(white: fg, alpha: 0.10).cgColor
+        layer?.backgroundColor = ClomeMacColor.buttonSurface.cgColor
     }
 }
 
@@ -2323,7 +2333,7 @@ class ExplorerResizeHandle: NSView {
         // Small centered pill indicator
         indicator.translatesAutoresizingMaskIntoConstraints = false
         indicator.wantsLayer = true
-        indicator.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.0).cgColor
+        indicator.layer?.backgroundColor = NSColor.clear.cgColor
         indicator.layer?.cornerRadius = 1.5
         addSubview(indicator)
 
@@ -2350,14 +2360,14 @@ class ExplorerResizeHandle: NSView {
     override func mouseEntered(with event: NSEvent) {
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.15
-            indicator.animator().layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.15).cgColor
+            indicator.animator().layer?.backgroundColor = ClomeMacColor.borderStrong.cgColor
         }
     }
 
     override func mouseExited(with event: NSEvent) {
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.15
-            indicator.animator().layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.0).cgColor
+            indicator.animator().layer?.backgroundColor = NSColor.clear.cgColor
         }
     }
 
@@ -2365,7 +2375,7 @@ class ExplorerResizeHandle: NSView {
         lastY = event.locationInWindow.y
         isDragging = true
         onDragBegan?()
-        indicator.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.20).cgColor
+        indicator.layer?.backgroundColor = ClomeMacColor.hoverFill.cgColor
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -2380,7 +2390,7 @@ class ExplorerResizeHandle: NSView {
         onDragEnded?()
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.15
-            indicator.animator().layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.0).cgColor
+            indicator.animator().layer?.backgroundColor = NSColor.clear.cgColor
         }
     }
 }

@@ -25,6 +25,7 @@ class FileShelfView: NSView, NSTextFieldDelegate {
     private let pinnedTabBtn = NSButton()
     private let downloadsTabBtn = NSButton()
     private let indicatorLine = NSView()
+    private let topSeparator = NSView()
 
     private let listScrollView = NSScrollView()
     private let listStack = NSStackView()
@@ -82,16 +83,15 @@ class FileShelfView: NSView, NSTextFieldDelegate {
 
     private func setupUI() {
         wantsLayer = true
-        layer?.backgroundColor = NSColor(white: 0.08, alpha: 0.97).cgColor
+        layer?.backgroundColor = shelfBackgroundColor.cgColor
         layer?.cornerRadius = 8
         layer?.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
 
         // Top separator
-        let sep = NSView()
-        sep.translatesAutoresizingMaskIntoConstraints = false
-        sep.wantsLayer = true
-        sep.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.08).cgColor
-        addSubview(sep)
+        topSeparator.translatesAutoresizingMaskIntoConstraints = false
+        topSeparator.wantsLayer = true
+        topSeparator.layer?.backgroundColor = ClomeMacColor.border.cgColor
+        addSubview(topSeparator)
 
         // Tab bar
         tabBar.translatesAutoresizingMaskIntoConstraints = false
@@ -104,7 +104,7 @@ class FileShelfView: NSView, NSTextFieldDelegate {
 
         indicatorLine.translatesAutoresizingMaskIntoConstraints = false
         indicatorLine.wantsLayer = true
-        indicatorLine.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        indicatorLine.layer?.backgroundColor = ClomeMacColor.accent.cgColor
         indicatorLine.layer?.cornerRadius = 1
         tabBar.addSubview(indicatorLine)
 
@@ -133,7 +133,7 @@ class FileShelfView: NSView, NSTextFieldDelegate {
         addButton.title = ""
         let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
         addButton.image = NSImage(systemSymbolName: "plus.circle", accessibilityDescription: "Add files")?.withSymbolConfiguration(cfg)
-        addButton.contentTintColor = NSColor(white: 1.0, alpha: 0.6)
+        addButton.contentTintColor = controlTintColor
         addButton.target = self
         addButton.action = #selector(addPinnedFilesTapped)
         addSubview(addButton)
@@ -145,7 +145,7 @@ class FileShelfView: NSView, NSTextFieldDelegate {
         searchButton.title = ""
         let searchCfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
         searchButton.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search files")?.withSymbolConfiguration(searchCfg)
-        searchButton.contentTintColor = NSColor(white: 1.0, alpha: 0.6)
+        searchButton.contentTintColor = controlTintColor
         searchButton.target = self
         searchButton.action = #selector(searchButtonTapped)
         searchButton.isHidden = true
@@ -155,8 +155,8 @@ class FileShelfView: NSView, NSTextFieldDelegate {
         searchField.translatesAutoresizingMaskIntoConstraints = false
         searchField.placeholderString = "Search downloads..."
         searchField.font = .systemFont(ofSize: 11)
-        searchField.textColor = NSColor(white: 1.0, alpha: 0.85)
-        searchField.backgroundColor = NSColor(white: 0.12, alpha: 0.8)
+        searchField.textColor = ClomeMacColor.textPrimary
+        searchField.backgroundColor = ClomeMacTheme.surfaceColor(.chromeAlt)
         searchField.drawsBackground = true
         searchField.isBezeled = true
         searchField.bezelStyle = .roundedBezel
@@ -169,7 +169,7 @@ class FileShelfView: NSView, NSTextFieldDelegate {
         // Empty label
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         emptyLabel.font = .systemFont(ofSize: 11)
-        emptyLabel.textColor = NSColor(white: 1.0, alpha: 0.3)
+        emptyLabel.textColor = ClomeMacColor.textTertiary
         emptyLabel.alignment = .center
         emptyLabel.isHidden = true
         addSubview(emptyLabel)
@@ -178,12 +178,12 @@ class FileShelfView: NSView, NSTextFieldDelegate {
         listScrollViewBottomConstraint = listScrollView.bottomAnchor.constraint(equalTo: addButton.topAnchor, constant: -2)
         
         NSLayoutConstraint.activate([
-            sep.topAnchor.constraint(equalTo: topAnchor),
-            sep.leadingAnchor.constraint(equalTo: leadingAnchor),
-            sep.trailingAnchor.constraint(equalTo: trailingAnchor),
-            sep.heightAnchor.constraint(equalToConstant: 1),
+            topSeparator.topAnchor.constraint(equalTo: topAnchor),
+            topSeparator.leadingAnchor.constraint(equalTo: leadingAnchor),
+            topSeparator.trailingAnchor.constraint(equalTo: trailingAnchor),
+            topSeparator.heightAnchor.constraint(equalToConstant: 1),
 
-            tabBar.topAnchor.constraint(equalTo: sep.bottomAnchor),
+            tabBar.topAnchor.constraint(equalTo: topSeparator.bottomAnchor),
             tabBar.leadingAnchor.constraint(equalTo: leadingAnchor),
             tabBar.trailingAnchor.constraint(equalTo: trailingAnchor),
             tabBar.heightAnchor.constraint(equalToConstant: 32),
@@ -229,13 +229,18 @@ class FileShelfView: NSView, NSTextFieldDelegate {
         updateTabAppearance()
     }
 
+    private var shelfBackgroundColor: NSColor { ClomeMacTheme.surfaceColor(.elevated) }
+    private var activeTabColor: NSColor { ClomeMacColor.textPrimary }
+    private var inactiveTabColor: NSColor { ClomeMacColor.textTertiary }
+    private var controlTintColor: NSColor { ClomeMacColor.textSecondary }
+
     private func configureTabButton(_ btn: NSButton, title: String, action: Selector) {
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.bezelStyle = .texturedRounded
         btn.isBordered = false
         btn.title = title
         btn.font = .systemFont(ofSize: 11, weight: .medium)
-        btn.contentTintColor = NSColor(white: 1.0, alpha: 0.5)
+        btn.contentTintColor = inactiveTabColor
         btn.target = self
         btn.action = action
     }
@@ -261,11 +266,8 @@ class FileShelfView: NSView, NSTextFieldDelegate {
     }
 
     private func updateTabAppearance() {
-        let activeColor = NSColor(white: 1.0, alpha: 0.85)
-        let inactiveColor = NSColor(white: 1.0, alpha: 0.4)
-
-        pinnedTabBtn.contentTintColor = activeTab == .pinned ? activeColor : inactiveColor
-        downloadsTabBtn.contentTintColor = activeTab == .downloads ? activeColor : inactiveColor
+        pinnedTabBtn.contentTintColor = activeTab == .pinned ? activeTabColor : inactiveTabColor
+        downloadsTabBtn.contentTintColor = activeTab == .downloads ? activeTabColor : inactiveTabColor
 
         addButton.isHidden = activeTab != .pinned
         searchButton.isHidden = activeTab != .downloads
@@ -294,6 +296,23 @@ class FileShelfView: NSView, NSTextFieldDelegate {
             indicatorLine.widthAnchor.constraint(equalTo: targetBtn.widthAnchor),
         ])
         needsLayout = true
+    }
+
+    func refreshAppearance() {
+        layer?.backgroundColor = shelfBackgroundColor.cgColor
+        topSeparator.layer?.backgroundColor = ClomeMacColor.border.cgColor
+        indicatorLine.layer?.backgroundColor = ClomeMacColor.accent.cgColor
+        searchField.textColor = ClomeMacColor.textPrimary
+        searchField.backgroundColor = ClomeMacTheme.surfaceColor(.chromeAlt)
+        emptyLabel.textColor = ClomeMacColor.textTertiary
+        updateTabAppearance()
+        searchButton.contentTintColor = isSearchVisible ? ClomeMacColor.accent : controlTintColor
+        if activeTab == .pinned {
+            addButton.contentTintColor = controlTintColor
+        }
+        for case let row as FileShelfRowView in listStack.arrangedSubviews {
+            row.refreshAppearance()
+        }
     }
 
     // MARK: - Selection
@@ -475,7 +494,7 @@ class FileShelfView: NSView, NSTextFieldDelegate {
         isSearchVisible = true
         searchField.isHidden = false
         searchField.alphaValue = 0.0
-        searchButton.contentTintColor = NSColor.controlAccentColor
+        searchButton.contentTintColor = ClomeMacColor.accent
         
         // Update scroll view constraint to make room for search field
         listScrollViewBottomConstraint?.isActive = false
@@ -497,7 +516,7 @@ class FileShelfView: NSView, NSTextFieldDelegate {
     private func hideSearchField() {
         guard isSearchVisible else { return }
         isSearchVisible = false
-        searchButton.contentTintColor = NSColor(white: 1.0, alpha: 0.6)
+        searchButton.contentTintColor = controlTintColor
         
         // Restore scroll view constraint
         listScrollViewBottomConstraint?.isActive = false
@@ -509,12 +528,14 @@ class FileShelfView: NSView, NSTextFieldDelegate {
             searchField.animator().alphaValue = 0.0
             self.layoutSubtreeIfNeeded()
         }, completionHandler: { [weak self] in
-            self?.searchField.isHidden = true
-            self?.searchField.stringValue = ""
-            self?.searchText = ""
-            self?.selectedIndices.removeAll()
-            self?.lastClickedIndex = nil
-            self?.reloadList()
+            Task { @MainActor [weak self] in
+                self?.searchField.isHidden = true
+                self?.searchField.stringValue = ""
+                self?.searchText = ""
+                self?.selectedIndices.removeAll()
+                self?.lastClickedIndex = nil
+                self?.reloadList()
+            }
         })
     }
 
@@ -558,6 +579,11 @@ class FileShelfView: NSView, NSTextFieldDelegate {
         }
         return false
     }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshAppearance()
+    }
 }
 
 // MARK: - FileShelfRowView
@@ -592,9 +618,7 @@ class FileShelfRowView: NSView, NSDraggingSource {
 
     func setSelected(_ selected: Bool) {
         isRowSelected = selected
-        layer?.backgroundColor = selected
-            ? NSColor(calibratedRed: 0.2, green: 0.4, blue: 0.8, alpha: 0.25).cgColor
-            : nil
+        layer?.backgroundColor = selected ? selectedBackgroundColor.cgColor : nil
     }
 
     private func setupRow() {
@@ -609,7 +633,6 @@ class FileShelfRowView: NSView, NSDraggingSource {
         // Filename
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.font = .systemFont(ofSize: 12)
-        nameLabel.textColor = NSColor(white: 1.0, alpha: 0.85)
         nameLabel.lineBreakMode = .byTruncatingMiddle
         nameLabel.stringValue = fileURL.lastPathComponent
         addSubview(nameLabel)
@@ -617,7 +640,6 @@ class FileShelfRowView: NSView, NSDraggingSource {
         // Detail (parent folder)
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
         detailLabel.font = .systemFont(ofSize: 10)
-        detailLabel.textColor = NSColor(white: 1.0, alpha: 0.4)
         detailLabel.lineBreakMode = .byTruncatingHead
         detailLabel.stringValue = fileURL.deletingLastPathComponent().lastPathComponent
         addSubview(detailLabel)
@@ -629,7 +651,6 @@ class FileShelfRowView: NSView, NSDraggingSource {
         removeBtn.title = ""
         let cfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
         removeBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Remove")?.withSymbolConfiguration(cfg)
-        removeBtn.contentTintColor = NSColor(white: 1.0, alpha: 0.4)
         removeBtn.target = self
         removeBtn.action = #selector(removeTapped)
         removeBtn.isHidden = true
@@ -660,6 +681,8 @@ class FileShelfRowView: NSView, NSDraggingSource {
                 removeBtn.heightAnchor.constraint(equalToConstant: 18),
             ])
         }
+
+        refreshAppearance()
     }
 
     @objc private func removeTapped() {
@@ -683,7 +706,7 @@ class FileShelfRowView: NSView, NSDraggingSource {
 
     override func mouseEntered(with event: NSEvent) {
         if !isRowSelected {
-            layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.06).cgColor
+            layer?.backgroundColor = hoverBackgroundColor.cgColor
         }
         if showRemove { removeBtn.isHidden = false }
     }
@@ -720,5 +743,22 @@ class FileShelfRowView: NSView, NSDraggingSource {
 
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
         return .copy
+    }
+
+    private var selectedBackgroundColor: NSColor { ClomeMacColor.accent.withAlphaComponent(0.18) }
+    private var hoverBackgroundColor: NSColor { ClomeMacColor.hoverFill }
+
+    func refreshAppearance() {
+        nameLabel.textColor = ClomeMacColor.textPrimary
+        detailLabel.textColor = ClomeMacColor.textTertiary
+        removeBtn.contentTintColor = ClomeMacColor.textSecondary
+        if isRowSelected {
+            layer?.backgroundColor = selectedBackgroundColor.cgColor
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshAppearance()
     }
 }

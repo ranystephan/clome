@@ -157,7 +157,7 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         // Window
         stack.addArrangedSubview(makeSectionHeader("Window"))
 
-        let opacitySlider = NSSlider(value: Double(settings.windowOpacity), minValue: 0.5, maxValue: 1.0, target: self, action: #selector(opacityChanged(_:)))
+        let opacitySlider = NSSlider(value: Double(settings.windowOpacity), minValue: 0.2, maxValue: 1.0, target: self, action: #selector(opacityChanged(_:)))
         opacitySlider.translatesAutoresizingMaskIntoConstraints = false
         opacitySlider.widthAnchor.constraint(equalToConstant: 160).isActive = true
 

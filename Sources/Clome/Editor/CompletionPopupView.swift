@@ -70,7 +70,7 @@ class CompletionPopupView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.backgroundColor = ClomeMacColor.elevatedSurface.withAlphaComponent(0.98).cgColor
+        layer?.backgroundColor = ClomeMacTheme.surfaceColor(.elevated).cgColor
         layer?.borderColor = ClomeMacColor.border.cgColor
         layer?.borderWidth = 1
         layer?.cornerRadius = 4
@@ -85,7 +85,7 @@ class CompletionPopupView: NSView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            self.layer?.backgroundColor = ClomeMacColor.elevatedSurface.withAlphaComponent(0.98).cgColor
+            self.layer?.backgroundColor = ClomeMacTheme.surfaceColor(.elevated).cgColor
             self.layer?.borderColor = ClomeMacColor.border.cgColor
         }
     }

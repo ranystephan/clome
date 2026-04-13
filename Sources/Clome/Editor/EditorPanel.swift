@@ -83,7 +83,7 @@ class EditorPanel: NSView {
         statusBarView = NSView()
         statusBarView.translatesAutoresizingMaskIntoConstraints = false
         statusBarView.wantsLayer = true
-        statusBarView.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
+        statusBarView.layer?.backgroundColor = ClomeMacTheme.surfaceColor(.chrome).cgColor
         addSubview(statusBarView)
 
         NotificationCenter.default.addObserver(self, selector: #selector(settingsDidChange), name: .clomeSettingsChanged, object: nil)
@@ -222,13 +222,18 @@ class EditorPanel: NSView {
 
     @objc private func settingsDidChange() {
         NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
-            self.statusBarView?.layer?.backgroundColor = ClomeMacColor.chromeSurface.cgColor
+            self.statusBarView?.layer?.backgroundColor = ClomeMacTheme.surfaceColor(.chrome).cgColor
         }
         let statusColor = ClomeMacColor.textTertiary
         for label in [gitBranchLabel, cursorPositionLabel, selectionInfoLabel,
                       encodingLabel, lineEndingLabel, lineCountLabel, statusLanguageLabel] {
             label?.textColor = statusColor
         }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        settingsDidChange()
     }
 
     // MARK: - Minimap Toggle

@@ -9,6 +9,36 @@ nonisolated(unsafe) private var _cachedLightAccent: Color = ClomeAccentTheme.gra
 
 @MainActor
 enum ClomeMacTheme {
+    enum SurfaceRole {
+        case window
+        case sidebar
+        case chrome
+        case chromeAlt
+        case elevated
+
+        fileprivate var opacityOffset: CGFloat {
+            switch self {
+            case .window, .sidebar, .chrome:
+                0
+            case .chromeAlt:
+                0.04
+            case .elevated:
+                0.08
+            }
+        }
+
+        /// Pick the matching surface color from a resolved palette.
+        fileprivate func base(from pal: ClomePalette) -> Color {
+            switch self {
+            case .window:   pal.windowBackground
+            case .sidebar:  pal.sidebarSurface
+            case .chrome:   pal.chromeSurface
+            case .chromeAlt: pal.chromeSurfaceAlt
+            case .elevated: pal.elevated
+            }
+        }
+    }
+
     static func palette(for appearance: NSAppearance? = nil) -> ClomePalette {
         let resolved = appearance ?? NSApp.effectiveAppearance
         let isDark = resolved.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -18,15 +48,30 @@ enum ClomeMacTheme {
             : .light(accent: accent.lightAccent)
     }
 
+    /// Returns a concrete (non-dynamic) NSColor for the given surface role,
+    /// resolved against the specified or current appearance.  Safe to use for
+    /// `layer?.backgroundColor` outside drawing contexts.
+    static func surfaceColor(
+        _ role: SurfaceRole,
+        opacity requestedOpacity: CGFloat? = nil,
+        appearance: NSAppearance? = nil
+    ) -> NSColor {
+        let resolvedOpacity = min(1.0, max(0.0, (requestedOpacity ?? ClomeSettings.shared.windowOpacity) + role.opacityOffset))
+        let pal = palette(for: appearance)
+        return NSColor(role.base(from: pal)).withAlphaComponent(resolvedOpacity)
+    }
+
     static func windowTint(opacity requestedOpacity: CGFloat, appearance: NSAppearance? = nil) -> NSColor {
-        let palette = palette(for: appearance)
-        let resolvedOpacity = palette.isDark
-            ? requestedOpacity
-            : max(requestedOpacity, palette.windowTintOpacity)
-        return NSColor(palette.windowBackground).withAlphaComponent(resolvedOpacity)
+        surfaceColor(.window, opacity: requestedOpacity, appearance: appearance)
     }
 
     static func windowMaterial(for appearance: NSAppearance? = nil) -> NSVisualEffectView.Material {
+        // When the user reduces opacity, use .hudWindow for a lighter, more
+        // glass-like blur that lets the desktop show through clearly.
+        // At full opacity, use the standard heavy materials.
+        if ClomeSettings.shared.windowOpacity < 0.98 {
+            return .hudWindow
+        }
         let palette = palette(for: appearance)
         return palette.isDark ? .windowBackground : .contentBackground
     }

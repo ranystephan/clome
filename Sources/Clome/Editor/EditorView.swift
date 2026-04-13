@@ -58,7 +58,7 @@ class EditorView: NSView {
     // Colors (theme-aware via design system)
     private var bgColor: NSColor { ClomeSettings.shared.backgroundWithOpacity }
     private var gutterBgColor: NSColor {
-        ClomeMacColor.windowBackground.withAlphaComponent(max(0, ClomeSettings.shared.windowOpacity - 0.05))
+        ClomeMacTheme.surfaceColor(.window, opacity: ClomeSettings.shared.windowOpacity - 0.05)
     }
     private var gutterTextColor: NSColor { ClomeMacColor.textTertiary }
     private var textColor: NSColor { ClomeMacColor.textPrimary }
@@ -141,7 +141,8 @@ class EditorView: NSView {
         self.cachedCharWidth = sample.size(withAttributes: [.font: self.font]).width
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = bgColor.cgColor
+        // Don't set layer?.backgroundColor — draw() already fills the background.
+        // Double-layering two semi-transparent fills blocks the backdrop blur.
         layer?.masksToBounds = true
         setupCursorBlink()
 
@@ -2126,9 +2127,7 @@ class EditorView: NSView {
         lineHeight = settings.resolvedLineHeight
         let sample = "M" as NSString
         cachedCharWidth = sample.size(withAttributes: [.font: font]).width
-        NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
-            self.layer?.backgroundColor = self.bgColor.cgColor
-        }
+        // No layer?.backgroundColor — draw() handles the background fill.
         setupCursorBlink()
         needsDisplay = true
     }

@@ -31,7 +31,7 @@ class WorkspaceTabBar: NSView {
     private let splitQuadButton: ToolbarIconButton
 
     private let barHeight: CGFloat = ClomeMacMetric.toolbarHeight
-    private let bgColor = ClomeMacColor.chromeSurface
+    private var bgColor: NSColor { ClomeMacTheme.surfaceColor(.chrome) }
     private let borderColor = ClomeMacColor.border
 
     // Leading inset (adjusted when sidebar hides to clear traffic lights)
@@ -281,6 +281,11 @@ class WorkspaceTabBar: NSView {
             }
         }
         needsDisplay = true
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        settingsDidChange()
     }
 
     // MARK: - Split Actions

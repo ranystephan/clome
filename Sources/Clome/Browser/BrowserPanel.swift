@@ -664,7 +664,7 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
     }
 
     private func applyChromeAppearance() {
-        navBar.layer?.backgroundColor = ClomeSettings.shared.backgroundWithOpacity.withAlphaComponent(0.86).cgColor
+        navBar.layer?.backgroundColor = ClomeMacTheme.surfaceColor(.chrome).cgColor
         navBar.layer?.borderColor = chromeStroke.cgColor
         navBar.layer?.borderWidth = 0.5
         navBottomBorder.layer?.backgroundColor = chromeStroke.cgColor
