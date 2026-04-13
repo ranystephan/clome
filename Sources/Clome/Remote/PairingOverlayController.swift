@@ -103,7 +103,9 @@ final class PairingOverlayController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.dismiss()
+            Task { @MainActor in
+                self?.dismiss()
+            }
         }
     }
 

@@ -499,7 +499,7 @@ indirect enum SplitNode {
         }
     }
 
-    func buildView(showHeaders: Bool = false, onClose: ((NSView) -> Void)? = nil, headerRegistry: inout [NSView: PaneHeaderBar]) -> NSView {
+    @MainActor func buildView(showHeaders: Bool = false, onClose: ((NSView) -> Void)? = nil, headerRegistry: inout [NSView: PaneHeaderBar]) -> NSView {
         switch self {
         case .leaf(let view):
             if showHeaders {

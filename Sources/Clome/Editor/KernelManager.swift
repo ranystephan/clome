@@ -172,7 +172,7 @@ final class KernelManager {
     }
 
     /// Locate a usable system Python 3.
-    private static func findSystemPython() -> String? {
+    nonisolated private static func findSystemPython() -> String? {
         // Check common locations in priority order
         let candidates = [
             "/usr/bin/python3",
@@ -200,7 +200,7 @@ final class KernelManager {
     }
 
     /// Run a process synchronously and capture output.
-    private static func runProcess(executable: String, arguments: [String]) throws -> ProcessResult {
+    nonisolated private static func runProcess(executable: String, arguments: [String]) throws -> ProcessResult {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: executable)
         proc.arguments = arguments

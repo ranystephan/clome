@@ -1034,7 +1034,9 @@ class EditorView: NSView {
         scrollbarOpacity = 1.0
         scrollbarFadeTimer?.invalidate()
         scrollbarFadeTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { [weak self] _ in
-            self?.fadeOutScrollbar()
+            Task { @MainActor in
+                self?.fadeOutScrollbar()
+            }
         }
     }
 
@@ -1044,19 +1046,24 @@ class EditorView: NSView {
         let interval = 0.05
         var remaining = steps
         Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
-            guard let self = self else { timer.invalidate(); return }
-            remaining -= 1
-            self.scrollbarOpacity = CGFloat(remaining) / CGFloat(steps)
-            // Only invalidate the scrollbar strip (right edge)
-            let scrollbarRect = NSRect(
-                x: self.bounds.width - self.scrollbarWidth - 4,
-                y: 0,
-                width: self.scrollbarWidth + 4,
-                height: self.bounds.height
-            )
-            self.setNeedsDisplay(scrollbarRect)
-            if remaining <= 0 {
-                timer.invalidate()
+            // Timer fires on the main run loop, safe to use MainActor.assumeIsolated.
+            // Use nonisolated(unsafe) to move `timer` across the Sendable boundary.
+            nonisolated(unsafe) let timer = timer
+            MainActor.assumeIsolated {
+                guard let self = self else { timer.invalidate(); return }
+                remaining -= 1
+                self.scrollbarOpacity = CGFloat(remaining) / CGFloat(steps)
+                // Only invalidate the scrollbar strip (right edge)
+                let scrollbarRect = NSRect(
+                    x: self.bounds.width - self.scrollbarWidth - 4,
+                    y: 0,
+                    width: self.scrollbarWidth + 4,
+                    height: self.bounds.height
+                )
+                self.setNeedsDisplay(scrollbarRect)
+                if remaining <= 0 {
+                    timer.invalidate()
+                }
             }
         }
     }
@@ -2107,15 +2114,17 @@ class EditorView: NSView {
             return
         }
         cursorTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.cursorVisible.toggle()
-            // Only dirty the cursor rect instead of the entire view.
-            // This avoids re-running syntax highlighting on every blink.
-            let cursorRect = self.cursorRectForBlink()
-            if cursorRect != .zero {
-                self.setNeedsDisplay(cursorRect)
-            } else {
-                self.needsDisplay = true
+            Task { @MainActor in
+                guard let self else { return }
+                self.cursorVisible.toggle()
+                // Only dirty the cursor rect instead of the entire view.
+                // This avoids re-running syntax highlighting on every blink.
+                let cursorRect = self.cursorRectForBlink()
+                if cursorRect != .zero {
+                    self.setNeedsDisplay(cursorRect)
+                } else {
+                    self.needsDisplay = true
+                }
             }
         }
     }

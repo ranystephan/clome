@@ -116,7 +116,9 @@ final class EmptyStateView: NSView {
         guard animTimer == nil else { return }
         startTime = CACurrentMediaTime()
         animTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            self?.needsDisplay = true
+            Task { @MainActor in
+                self?.needsDisplay = true
+            }
         }
     }
 

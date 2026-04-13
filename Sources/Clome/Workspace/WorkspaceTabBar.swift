@@ -598,7 +598,9 @@ class AddTabMenuView: NSView {
         // Delay collapse so moving between buttons doesn't flicker
         collapseTimer?.invalidate()
         collapseTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
-            self?.collapse()
+            Task { @MainActor in
+                self?.collapse()
+            }
         }
     }
 

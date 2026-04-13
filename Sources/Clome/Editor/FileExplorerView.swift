@@ -522,9 +522,10 @@ class FileExplorerView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
 
     private func refreshGitStatus() {
         guard let path = rootPath else { return }
+        let tracker = gitTracker
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            self?.gitTracker.refresh(for: path)
-            DispatchQueue.main.async {
+            tracker.refresh(for: path)
+            DispatchQueue.main.async { [weak self] in
                 // Don't reload while user is typing a new file/folder name
                 guard let self, self.pendingCreation == nil else { return }
                 // Only redraw visible rows to update git status colors.

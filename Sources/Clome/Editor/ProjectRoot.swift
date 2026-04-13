@@ -51,10 +51,12 @@ class ProjectRoot: Identifiable, Equatable {
         // with repeated file access during active editing (e.g., Claude Code sessions).
         fileChangeDebounceTimer?.invalidate()
         fileChangeDebounceTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
-            guard let self else { return }
-            self.fileTree.reload()
-            self.refreshGitStatus()
-            self.onFilesChanged?()
+            Task { @MainActor in
+                guard let self else { return }
+                self.fileTree.reload()
+                self.refreshGitStatus()
+                self.onFilesChanged?()
+            }
         }
     }
 

@@ -645,11 +645,13 @@ class BrowserPanel: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDeleg
         }
     }
 
-    override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey: Any]?, context: UnsafeMutableRawPointer?) {
-        if keyPath == "title", let pageTitle = webView?.title, !pageTitle.isEmpty {
-            title = pageTitle
-        } else if keyPath == "estimatedProgress", let wv = webView {
-            updateLoadingProgress(CGFloat(wv.estimatedProgress))
+    override nonisolated func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey: Any]?, context: UnsafeMutableRawPointer?) {
+        Task { @MainActor in
+            if keyPath == "title", let pageTitle = webView?.title, !pageTitle.isEmpty {
+                title = pageTitle
+            } else if keyPath == "estimatedProgress", let wv = webView {
+                updateLoadingProgress(CGFloat(wv.estimatedProgress))
+            }
         }
     }
 

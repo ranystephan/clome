@@ -1,6 +1,6 @@
 import SwiftUI
 import Firebase
-import FirebaseAuth
+@preconcurrency import FirebaseAuth
 import GoogleSignIn
 import AuthenticationServices
 

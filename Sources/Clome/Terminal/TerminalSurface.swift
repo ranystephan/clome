@@ -1043,15 +1043,17 @@ class TerminalSurface: NSView {
             toast.animator().alphaValue = 1
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            // Only auto-dismiss if this is still the active toast
-            guard self?.activeToast === toast else { return }
-            self?.activeToast = nil
-            NSAnimationContext.runAnimationGroup({ ctx in
-                ctx.duration = 0.4
-                toast.animator().alphaValue = 0
-            }, completionHandler: {
-                toast.removeFromSuperview()
-            })
+            Task { @MainActor in
+                // Only auto-dismiss if this is still the active toast
+                guard self?.activeToast === toast else { return }
+                self?.activeToast = nil
+                NSAnimationContext.runAnimationGroup({ ctx in
+                    ctx.duration = 0.4
+                    toast.animator().alphaValue = 0
+                }, completionHandler: {
+                    toast.removeFromSuperview()
+                })
+            }
         }
     }
 

@@ -1,6 +1,6 @@
 import Foundation
-import FirebaseAuth
-import FirebaseFirestore
+@preconcurrency import FirebaseAuth
+@preconcurrency import FirebaseFirestore
 import Combine
 import ClomeModels
 
