@@ -567,10 +567,12 @@ class SidebarView: NSView {
 
         // Auto-refresh every 5s while popover is open
         sessionsRefreshTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self, weak listView] _ in
-            guard let self, let listView else { return }
-            ClaudeSessionManager.shared.invalidateCache()
-            let sessions = self.loadClaudeSessions()
-            listView.reloadSessions(sessions)
+            Task { @MainActor in
+                guard let self, let listView else { return }
+                ClaudeSessionManager.shared.invalidateCache()
+                let sessions = self.loadClaudeSessions()
+                listView.reloadSessions(sessions)
+            }
         }
     }
 
@@ -1269,7 +1271,7 @@ class SidebarView: NSView {
                     let editorCard = NewTabCard(icon: "doc.text", label: "File")
                     editorCard.onClick = { [weak self] in
                         self?.workspaceManager.switchTo(index: capturedWsIndex)
-                        try? workspace.addEditorTab()
+                        _ = try? workspace.addEditorTab()
                         self?.revealedNewTab.remove(workspace.id)
                         self?.reloadWorkspaces()
                         self?.notifyTabsChanged()

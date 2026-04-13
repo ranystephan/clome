@@ -301,9 +301,9 @@ class Workspace: Identifiable {
         if lowerPath.hasSuffix(".pdf") {
             addPDFTab(path: path)
         } else if lowerPath.hasSuffix(".ipynb") {
-            try? addNotebookTab(path: path)
+            _ = try? addNotebookTab(path: path)
         } else {
-            try? addEditorTab(path: path)
+            _ = try? addEditorTab(path: path)
         }
     }
 

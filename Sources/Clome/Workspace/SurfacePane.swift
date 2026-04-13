@@ -3,7 +3,7 @@ import WebKit
 
 /// A pane that holds multiple surfaces (terminal, browser, etc.) with a tab bar.
 /// This is the "Surface" level in the Window → Workspace → Pane → Surface hierarchy.
-class SurfacePane: NSView, @preconcurrency TabBarDelegate, BrowserPanelDelegate {
+class SurfacePane: NSView, TabBarDelegate, BrowserPanelDelegate {
     private let tabBar = TabBarView()
     private let contentView = NSView()
     private var surfaces: [NSView] = []

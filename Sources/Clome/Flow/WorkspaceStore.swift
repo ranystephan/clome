@@ -448,7 +448,7 @@ final class WorkspaceStore: ObservableObject {
         bindingListener = bindingRef.addSnapshotListener { [weak self] snapshot, error in
             Task { @MainActor in
                 guard let self else { return }
-                if let error { return }
+                if error != nil { return }
                 guard let snapshot, snapshot.exists, let data = snapshot.data() else {
                     self.activeCalendarBinding = .personalDefault
                     return

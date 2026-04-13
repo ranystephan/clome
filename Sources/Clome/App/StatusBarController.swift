@@ -533,7 +533,7 @@ class StatusBarPopoverViewController: NSViewController {
             }
         }
 
-        addFooterButton("Quit", color: SB.textMuted, icon: "power") { _ = NSApp.terminate(nil) }
+        addFooterButton("Quit", color: SB.textMuted, icon: "power") { NSApp.terminate(nil) }
     }
 
     private func addFooterButton(_ title: String, color: NSColor, icon: String, action: @escaping () -> Void) {

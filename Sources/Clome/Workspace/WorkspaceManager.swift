@@ -192,7 +192,7 @@ class WorkspaceManager {
                 print("[Session] Skipping editor tab: file not found at \(savedTab.resourcePath)")
                 return
             }
-            try? workspace.addEditorTab(path: savedTab.resourcePath)
+            _ = try? workspace.addEditorTab(path: savedTab.resourcePath)
 
         case .project:
             // Saved .project tabs are restored as project roots + editor tabs
@@ -210,7 +210,7 @@ class WorkspaceManager {
                let paths = try? JSONSerialization.jsonObject(with: data) as? [String] {
                 for filePath in paths {
                     guard FileManager.default.fileExists(atPath: filePath) else { continue }
-                    try? workspace.addEditorTab(path: filePath)
+                    _ = try? workspace.addEditorTab(path: filePath)
                 }
             }
 
@@ -228,7 +228,7 @@ class WorkspaceManager {
                 print("[Session] Skipping notebook tab: file not found at \(savedTab.resourcePath)")
                 return
             }
-            try? workspace.addNotebookTab(path: savedTab.resourcePath)
+            _ = try? workspace.addNotebookTab(path: savedTab.resourcePath)
 
         case .diff:
             break  // Transient, skip

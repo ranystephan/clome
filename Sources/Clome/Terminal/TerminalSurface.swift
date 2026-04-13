@@ -1078,7 +1078,7 @@ class TerminalSurface: NSView {
         guard let surface else { return }
         // Escape any backslashes in the text so they survive ghostty's
         // string.parse (which interprets \x sequences).
-        var escaped = text.replacingOccurrences(of: "\\", with: "\\\\")
+        let escaped = text.replacingOccurrences(of: "\\", with: "\\\\")
         let action = "text:\(escaped)\\x0d"
         let ok = action.withCString { ptr in
             ghostty_surface_binding_action(surface, ptr, UInt(action.utf8.count))
