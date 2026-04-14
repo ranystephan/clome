@@ -75,6 +75,7 @@ jobs:
           xcodebuild -project Clome.xcodeproj -scheme Clome \
             -configuration Release \
             -derivedDataPath build/DerivedData \
+            SWIFT_VERSION=5 \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
             build
@@ -96,18 +97,10 @@ jobs:
 
           mkdir -p dist
 
-          # Create DMG with install script
+          # Create DMG
           DMG_NAME="Clome-${TAG}-${ARCH}.dmg"
           mkdir -p dmg-staging
           cp -R "$APP_PATH" dmg-staging/
-
-          printf '#!/bin/bash\nAPP="Clome.app"\nDEST="/Applications/$APP"\nSRC="$(cd "$(dirname "$0")" && pwd)/$APP"\n[ -d "$DEST" ] && rm -rf "$DEST"\ncp -R "$SRC" "$DEST"\nxattr -cr "$DEST"\nopen "$DEST"\n' > dmg-staging/.install.sh
-          chmod +x dmg-staging/.install.sh
-
-          # Create a visible double-clickable installer
-          printf '#!/bin/bash\ncd "$(dirname "$0")"\n./.install.sh\n' > "dmg-staging/Install Clome.command"
-          chmod +x "dmg-staging/Install Clome.command"
-
           ln -s /Applications dmg-staging/Applications
           hdiutil create -volname "Clome" -srcfolder dmg-staging \
             -ov -format UDZO "dist/${DMG_NAME}"
@@ -130,14 +123,6 @@ jobs:
           name: Clome v${{ steps.package.outputs.version }}
           prerelease: true
           generate_release_notes: true
-          body: |
-            ## Installation
-
-            1. Download the `.dmg` file below
-            2. Open the DMG
-            3. Double-click **"Install Clome"** — installs to Applications and opens it
-
-            You can also drag Clome.app to Applications manually, then run `xattr -cr /Applications/Clome.app` in Terminal before opening.
           files: |
             ${{ steps.package.outputs.dmg }}
             ${{ steps.package.outputs.zip }}
