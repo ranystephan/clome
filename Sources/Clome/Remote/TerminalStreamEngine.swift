@@ -47,7 +47,7 @@ final class TerminalStreamEngine {
     // MARK: - Configuration
 
     /// Frames per second when terminal output is actively changing.
-    var activeFPS: Double = 30.0
+    var activeFPS: Double = 60.0
 
     /// Frames per second when all terminals are idle.
     var idleFPS: Double = 2.0

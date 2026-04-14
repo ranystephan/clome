@@ -1,5 +1,8 @@
 import AppKit
 import SwiftUI
+import Firebase
+@preconcurrency import FirebaseAuth
+import GoogleSignIn
 
 /// Zen Browser-inspired sidebar with workspaces and tab list.
 class SidebarView: NSView {
@@ -172,7 +175,7 @@ class SidebarView: NSView {
         addSubview(scrollView)
 
         stackView.orientation = .vertical
-        stackView.spacing = 6
+        stackView.spacing = 8
         stackView.alignment = .centerX
         stackView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -193,7 +196,7 @@ class SidebarView: NSView {
         let footerDivider = NSView()
         footerDivider.translatesAutoresizingMaskIntoConstraints = false
         footerDivider.wantsLayer = true
-        footerDivider.layer?.backgroundColor = ClomeMacColor.border.withAlphaComponent(0.6).cgColor
+        footerDivider.layer?.backgroundColor = ClomeMacColor.border.cgColor
         addSubview(footerDivider)
         NSLayoutConstraint.activate([
             footerDivider.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -261,13 +264,13 @@ class SidebarView: NSView {
             explorerHeightConstraint!,
 
             // Separator
-            separator.topAnchor.constraint(equalTo: explorer.bottomAnchor, constant: 8),
+            separator.topAnchor.constraint(equalTo: explorer.bottomAnchor, constant: 12),
             separator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             separator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             separator.heightAnchor.constraint(equalToConstant: 1),
 
             // Source control
-            scSection.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 8),
+            scSection.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 12),
             scSection.leadingAnchor.constraint(equalTo: leadingAnchor),
             scSection.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollViewBottomConstraint,
@@ -281,24 +284,24 @@ class SidebarView: NSView {
             bottomBar.leadingAnchor.constraint(equalTo: leadingAnchor),
             bottomBar.trailingAnchor.constraint(equalTo: trailingAnchor),
             bottomBar.bottomAnchor.constraint(equalTo: bottomAnchor),
-            bottomBar.heightAnchor.constraint(equalToConstant: 36),
+            bottomBar.heightAnchor.constraint(equalToConstant: 40),
 
             // All three footer buttons share the exact same hit target so they
             // line up vertically and read as a single control group.
             shelfBtn.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 8),
             shelfBtn.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
-            shelfBtn.widthAnchor.constraint(equalToConstant: 26),
-            shelfBtn.heightAnchor.constraint(equalToConstant: 22),
+            shelfBtn.widthAnchor.constraint(equalToConstant: 28),
+            shelfBtn.heightAnchor.constraint(equalToConstant: 28),
 
             sessionsBtn.leadingAnchor.constraint(equalTo: shelfBtn.trailingAnchor, constant: 2),
             sessionsBtn.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
-            sessionsBtn.widthAnchor.constraint(equalToConstant: 26),
-            sessionsBtn.heightAnchor.constraint(equalToConstant: 22),
+            sessionsBtn.widthAnchor.constraint(equalToConstant: 28),
+            sessionsBtn.heightAnchor.constraint(equalToConstant: 28),
 
             remoteBtn.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -8),
             remoteBtn.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
-            remoteBtn.widthAnchor.constraint(equalToConstant: 26),
-            remoteBtn.heightAnchor.constraint(equalToConstant: 22),
+            remoteBtn.widthAnchor.constraint(equalToConstant: 28),
+            remoteBtn.heightAnchor.constraint(equalToConstant: 28),
         ])
     }
 
@@ -320,7 +323,7 @@ class SidebarView: NSView {
         btn.target = self
         btn.action = action
         btn.wantsLayer = true
-        btn.layer?.cornerRadius = 5
+        btn.layer?.cornerRadius = 6
         btn.layer?.cornerCurve = .continuous
         return btn
     }
@@ -428,6 +431,30 @@ class SidebarView: NSView {
         updateRemoteButtonAppearance()
     }
 
+    /// Triggers Google Sign-In directly from the remote control button so that
+    /// users can activate Remote Anywhere without first opening the Flow panel.
+    private func triggerRemoteSignIn() {
+        guard let clientID = FirebaseApp.app()?.options.clientID else { return }
+        let config = GIDConfiguration(clientID: clientID)
+        GIDSignIn.sharedInstance.configuration = config
+        guard let window = self.window else { return }
+
+        GIDSignIn.sharedInstance.signIn(withPresenting: window) { result, error in
+            let idToken = result?.user.idToken?.tokenString
+            let accessToken = result?.user.accessToken.tokenString
+            Task { @MainActor in
+                guard let idToken, let accessToken else { return }
+                let credential = GoogleAuthProvider.credential(
+                    withIDToken: idToken,
+                    accessToken: accessToken
+                )
+                try? await Auth.auth().signIn(with: credential)
+                // RemoteServer observes auth state changes and will automatically
+                // activate Remote Anywhere once sign-in completes.
+            }
+        }
+    }
+
     private func updateRemoteButtonAppearance() {
         // Native footer buttons communicate state through tint only — no card
         // background or border, matching the way Mail's status-bar buttons
@@ -463,6 +490,12 @@ class SidebarView: NSView {
             isPairingMode: server.isPairingMode,
             cloudStatusSummary: server.cloudStatusSummary,
             isCloudHostingEnabled: server.isCloudHostingEnabled,
+            isSignedIn: Auth.auth().currentUser != nil,
+            onSignIn: { [weak self] in
+                self?.remotePopover?.performClose(nil)
+                self?.remotePopover = nil
+                self?.triggerRemoteSignIn()
+            },
             onStartPairing: { [weak self] in
                 _ = RemoteServer.shared.startPairing()
                 self?.refreshRemoteState()
@@ -764,12 +797,12 @@ class SidebarView: NSView {
             ])
 
             // ── Workspace header ──
-            let header = SidebarRow(height: 30)
+            let header = SidebarRow(height: 36)
             let folderIcon = NSImageView()
             let chevronIcon = NSImageView()
             let plusIcon = NSImageView()
             header.configure { view in
-                let tc = isActive ? NSColor(white: 0.92, alpha: 1.0) : NSColor(white: 0.55, alpha: 1.0)
+                let tc: NSColor = isActive ? ClomeMacColor.textPrimary : ClomeMacColor.textSecondary
 
                 // Folder icon — visible by default, hides on hover
                 let folderCfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
@@ -778,29 +811,29 @@ class SidebarView: NSView {
                 folderIcon.image = NSImage(systemSymbolName: folderName, accessibilityDescription: nil)?.withSymbolConfiguration(folderCfg)
                 folderIcon.contentTintColor = isActive ? workspace.color.nsColor : workspace.color.nsColor.withAlphaComponent(0.6)
                 folderIcon.imageScaling = .scaleProportionallyDown
-                view.addSub(folderIcon, leading: 10, centerY: true, width: 16, height: 14)
+                view.addSub(folderIcon, leading: 12, centerY: true, width: 16, height: 14)
 
                 // Chevron — same position as folder, hidden by default, replaces folder on hover
                 let chevCfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
                 let chevName = isExpanded ? "chevron.down" : "chevron.right"
                 chevronIcon.translatesAutoresizingMaskIntoConstraints = false
                 chevronIcon.image = NSImage(systemSymbolName: chevName, accessibilityDescription: nil)?.withSymbolConfiguration(chevCfg)
-                chevronIcon.contentTintColor = NSColor(white: 0.55, alpha: 1.0)
+                chevronIcon.contentTintColor = ClomeMacColor.textTertiary
                 chevronIcon.imageScaling = .scaleProportionallyDown
                 chevronIcon.alphaValue = 0
-                view.addSub(chevronIcon, leading: 10, centerY: true, width: 16, height: 14)
+                view.addSub(chevronIcon, leading: 12, centerY: true, width: 16, height: 14)
 
                 let title = NSTextField(labelWithString: workspace.name)
                 title.font = .systemFont(ofSize: 12, weight: .medium)
                 title.textColor = tc
                 title.lineBreakMode = .byTruncatingTail
-                view.addSub(title, leading: 32, centerY: true, trailingOffset: 28)
+                view.addSub(title, leading: 34, centerY: true, trailingOffset: 28)
 
                 // Small "+" icon on the right, hidden until hover
                 let cfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
                 plusIcon.translatesAutoresizingMaskIntoConstraints = false
                 plusIcon.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New tab")?.withSymbolConfiguration(cfg)
-                plusIcon.contentTintColor = NSColor(white: 0.50, alpha: 1.0)
+                plusIcon.contentTintColor = ClomeMacColor.textTertiary
                 plusIcon.imageScaling = .scaleProportionallyDown
                 plusIcon.alphaValue = 0
                 view.addSub(plusIcon, trailing: 6, centerY: true, width: 20, height: 20)
@@ -844,10 +877,10 @@ class SidebarView: NSView {
             }
 
             wsStack.addArrangedSubview(header)
-            let hLead = header.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 4)
+            let hLead = header.leadingAnchor.constraint(equalTo: wsStack.leadingAnchor, constant: 6)
             hLead.priority = .defaultHigh
             hLead.isActive = true
-            let hTrail = header.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -4)
+            let hTrail = header.trailingAnchor.constraint(equalTo: wsStack.trailingAnchor, constant: -6)
             hTrail.priority = .defaultHigh
             hTrail.isActive = true
 
@@ -860,7 +893,7 @@ class SidebarView: NSView {
 
                 let tabsStack = NSStackView()
                 tabsStack.orientation = .vertical
-                tabsStack.spacing = 1
+                tabsStack.spacing = 2
                 tabsStack.alignment = .leading
                 tabsStack.translatesAutoresizingMaskIntoConstraints = false
                 tabsContainer.addSubview(tabsStack)
@@ -883,10 +916,10 @@ class SidebarView: NSView {
                     if tab.isSplit {
                         // ── Split tab: plain text header with collapse/expand + close ──
                         let isSplitCollapsed = collapsedSplitTabs.contains(tab.id)
-                        let splitHeader = SidebarRow(height: 26)
+                        let splitHeader = SidebarRow(height: 28)
                         let splitCloseBtn = NSButton()
                         splitHeader.configure { view in
-                            let tc = isTabActive ? NSColor(white: 0.55, alpha: 1.0) : NSColor(white: 0.40, alpha: 1.0)
+                            let tc: NSColor = isTabActive ? ClomeMacColor.textSecondary : ClomeMacColor.textTertiary
 
                             let chevron = NSImageView()
                             let chevCfg = NSImage.SymbolConfiguration(pointSize: 8, weight: .medium)
@@ -907,7 +940,7 @@ class SidebarView: NSView {
                             splitCloseBtn.title = ""
                             let closeCfg = NSImage.SymbolConfiguration(pointSize: 9, weight: .medium)
                             splitCloseBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")?.withSymbolConfiguration(closeCfg)
-                            splitCloseBtn.contentTintColor = NSColor(white: 0.4, alpha: 1.0)
+                            splitCloseBtn.contentTintColor = ClomeMacColor.textTertiary
                             splitCloseBtn.alphaValue = 0
                             splitCloseBtn.target = self
                             splitCloseBtn.action = #selector(closeTabButtonTapped(_:))
@@ -956,8 +989,8 @@ class SidebarView: NSView {
                         }
 
                         tabsStack.addArrangedSubview(splitHeader)
-                        splitHeader.leadingAnchor.constraint(equalTo: tabsStack.leadingAnchor, constant: 2).isActive = true
-                        splitHeader.trailingAnchor.constraint(equalTo: tabsStack.trailingAnchor, constant: -2).isActive = true
+                        splitHeader.leadingAnchor.constraint(equalTo: tabsStack.leadingAnchor, constant: 4).isActive = true
+                        splitHeader.trailingAnchor.constraint(equalTo: tabsStack.trailingAnchor, constant: -4).isActive = true
 
                         // ── Pane group (collapsible) ──
                         if !isSplitCollapsed {
@@ -1063,7 +1096,7 @@ class SidebarView: NSView {
                             // share the same legibility level.
                             let tc: NSColor = isTabActive
                                 ? NSColor.white
-                                : NSColor(white: 0.72, alpha: 1.0)
+                                : ClomeMacColor.textSecondary
 
                             let icon = NSImageView()
                             if let favicon = tab.favicon {
@@ -1087,7 +1120,7 @@ class SidebarView: NSView {
                                 let pinIcon = NSImageView()
                                 let pinCfg = NSImage.SymbolConfiguration(pointSize: 8, weight: .bold)
                                 pinIcon.image = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Pinned")?.withSymbolConfiguration(pinCfg)
-                                pinIcon.contentTintColor = isTabActive ? NSColor.white : NSColor(white: 0.55, alpha: 1.0)
+                                pinIcon.contentTintColor = isTabActive ? NSColor.white : ClomeMacColor.textSecondary
                                 view.addSub(pinIcon, leading: 2, centerY: true, width: 9, height: 9)
                             }
 
@@ -1103,7 +1136,7 @@ class SidebarView: NSView {
                             tabCloseBtn.title = ""
                             let closeCfg = NSImage.SymbolConfiguration(pointSize: 9, weight: .medium)
                             tabCloseBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")?.withSymbolConfiguration(closeCfg)
-                            tabCloseBtn.contentTintColor = NSColor(white: 0.5, alpha: 1.0)
+                            tabCloseBtn.contentTintColor = ClomeMacColor.textTertiary
                             tabCloseBtn.alphaValue = 0
                             tabCloseBtn.target = self
                             tabCloseBtn.action = #selector(closeTabButtonTapped(_:))
@@ -1362,13 +1395,13 @@ class SidebarView: NSView {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         let iconCfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .bold)
         iconView.image = NSImage(systemSymbolName: terminal.programIcon, accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
-        iconView.contentTintColor = isActive ? .white : NSColor(white: 0.6, alpha: 1.0)
+        iconView.contentTintColor = isActive ? .white : ClomeMacColor.textSecondary
         card.addSubview(iconView)
 
         let titleLabel = NSTextField(labelWithString: programName)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        titleLabel.textColor = isActive ? .white : NSColor(white: 0.7, alpha: 1.0)
+        titleLabel.textColor = isActive ? .white : ClomeMacColor.textPrimary
         titleLabel.lineBreakMode = .byTruncatingTail
         card.addSubview(titleLabel)
 
@@ -1380,7 +1413,7 @@ class SidebarView: NSView {
         closeBtn.title = ""
         let closeCfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
         closeBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")?.withSymbolConfiguration(closeCfg)
-        closeBtn.contentTintColor = isActive ? NSColor(white: 1.0, alpha: 0.8) : NSColor(white: 0.6, alpha: 1.0)
+        closeBtn.contentTintColor = isActive ? NSColor(white: 1.0, alpha: 0.8) : ClomeMacColor.textSecondary
         closeBtn.alphaValue = 0
         closeBtn.target = self
         closeBtn.action = #selector(closeTabButtonTapped(_:))
@@ -1445,7 +1478,7 @@ class SidebarView: NSView {
             let previewLabel = NSTextField(labelWithString: preview)
             previewLabel.translatesAutoresizingMaskIntoConstraints = false
             previewLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-            previewLabel.textColor = isActive ? NSColor(white: 1.0, alpha: 0.7) : NSColor(white: 0.55, alpha: 1.0)
+            previewLabel.textColor = isActive ? NSColor(white: 1.0, alpha: 0.7) : ClomeMacColor.textSecondary
             previewLabel.lineBreakMode = .byTruncatingTail
             previewLabel.maximumNumberOfLines = 3
             previewLabel.cell?.wraps = true
@@ -1480,7 +1513,7 @@ class SidebarView: NSView {
             let infoLabel = NSTextField(labelWithString: infoText)
             infoLabel.translatesAutoresizingMaskIntoConstraints = false
             infoLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-            infoLabel.textColor = isActive ? NSColor(white: 1.0, alpha: 0.7) : NSColor(white: 0.50, alpha: 1.0)
+            infoLabel.textColor = isActive ? NSColor(white: 1.0, alpha: 0.7) : ClomeMacColor.textTertiary
             infoLabel.lineBreakMode = .byTruncatingTail
             card.addSubview(infoLabel)
 
@@ -1549,13 +1582,13 @@ class SidebarView: NSView {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         let iconCfg = NSImage.SymbolConfiguration(pointSize: 10, weight: isFocused ? .semibold : .regular)
         iconView.image = NSImage(systemSymbolName: terminal.programIcon, accessibilityDescription: nil)?.withSymbolConfiguration(iconCfg)
-        iconView.contentTintColor = isFocused ? NSColor.controlAccentColor : NSColor(white: 0.50, alpha: 1.0)
+        iconView.contentTintColor = isFocused ? NSColor.controlAccentColor : ClomeMacColor.textSecondary
         card.addSubview(iconView)
 
         let titleLabel = NSTextField(labelWithString: programName)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = .systemFont(ofSize: 11, weight: isFocused ? .medium : .regular)
-        titleLabel.textColor = isFocused ? NSColor(white: 0.85, alpha: 1.0) : NSColor(white: 0.50, alpha: 1.0)
+        titleLabel.textColor = isFocused ? ClomeMacColor.textPrimary : ClomeMacColor.textSecondary
         titleLabel.lineBreakMode = .byTruncatingTail
         card.addSubview(titleLabel)
 
@@ -1615,7 +1648,7 @@ class SidebarView: NSView {
             let previewLabel = NSTextField(labelWithString: preview)
             previewLabel.translatesAutoresizingMaskIntoConstraints = false
             previewLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-            previewLabel.textColor = NSColor(white: 0.40, alpha: 1.0)
+            previewLabel.textColor = ClomeMacColor.textSecondary
             previewLabel.lineBreakMode = .byTruncatingTail
             previewLabel.maximumNumberOfLines = 2
             previewLabel.cell?.wraps = true
@@ -1636,7 +1669,7 @@ class SidebarView: NSView {
             let infoLabel = NSTextField(labelWithString: branch)
             infoLabel.translatesAutoresizingMaskIntoConstraints = false
             infoLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-            infoLabel.textColor = NSColor(white: 0.35, alpha: 1.0)
+            infoLabel.textColor = ClomeMacColor.textTertiary
             infoLabel.lineBreakMode = .byTruncatingTail
             card.addSubview(infoLabel)
 
@@ -2414,6 +2447,8 @@ private struct RemotePopoverContent: View {
     let isPairingMode: Bool
     let cloudStatusSummary: String
     let isCloudHostingEnabled: Bool
+    let isSignedIn: Bool
+    let onSignIn: (() -> Void)?
     let onStartPairing: () -> Void
     let onStopPairing: () -> Void
     let onDisconnectAll: () -> Void
@@ -2501,6 +2536,19 @@ private struct RemotePopoverContent: View {
                     Text(cloudStatusSummary)
                         .font(.system(size: 12))
                         .foregroundStyle(textSecondary)
+                    if !isSignedIn, let onSignIn {
+                        Button(action: onSignIn) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "person.circle.fill")
+                                    .font(.system(size: 12, weight: .medium))
+                                Text("Sign in with Google")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            .foregroundStyle(accent)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 2)
+                    }
                 }
             }
 

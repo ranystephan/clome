@@ -355,9 +355,9 @@ final class RemoteServer: NSObject, @unchecked Sendable {
             self?.broadcastNotification(notification)
         }
 
-        // Start clipboard change polling (2s interval)
+        // Start clipboard change polling (0.5s interval for responsive paste)
         clipboardChangeCount = NSPasteboard.general.changeCount
-        clipboardPollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        clipboardPollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let current = NSPasteboard.general.changeCount
@@ -1154,15 +1154,11 @@ final class RemoteServer: NSObject, @unchecked Sendable {
                     return
                 }
                 if let data = content {
-                    print("[RemoteServer] Received \(data.count) bytes on pending connection \(connectionId)")
                     self.pendingReceiveBuffers[connectionId, default: Data()].append(data)
                     while let extracted = RemoteFrame.extract(from: self.pendingReceiveBuffers[connectionId] ?? Data()) {
                         self.pendingReceiveBuffers[connectionId] = Data((self.pendingReceiveBuffers[connectionId] ?? Data()).dropFirst(extracted.consumed))
                         if let envelope = try? JSONDecoder().decode(RemoteEnvelope.self, from: extracted.payload) {
-                            print("[RemoteServer] Decoded message type: \(envelope.type) on pending connection")
                             self.handlePendingMessage(envelope, connectionId: connectionId, connection: connection)
-                        } else {
-                            print("[RemoteServer] Failed to decode envelope from pending connection")
                         }
                     }
                 }
@@ -1615,17 +1611,13 @@ final class RemoteServer: NSObject, @unchecked Sendable {
         let paneKey = "\(workspaceIndex):\(tabIndex)"
 
         if let specialKey = input.specialKey {
-            print("[RemoteServer] Injecting special key: \(specialKey), mods: \(input.modifiers)")
-
             if specialKey == .enter && !input.modifiers.ctrl && !input.modifiers.alt && !input.modifiers.shift {
                 // If we have pending text, combine it with Enter into a single pty write.
                 // This avoids the issue where bracketed paste (from injectText) + separate
                 // Enter don't reliably submit in apps like Claude Code.
                 if let pendingText = pendingTextForEnter.removeValue(forKey: paneKey) {
-                    print("[RemoteServer] Combining pending text '\(pendingText)' with Enter via injectTextAndReturn")
                     terminal.injectTextAndReturn(pendingText)
                 } else {
-                    print("[RemoteServer] Standalone Enter via injectReturn()")
                     terminal.injectReturn()
                 }
                 return
@@ -1633,7 +1625,6 @@ final class RemoteServer: NSObject, @unchecked Sendable {
 
             // Flush any pending text before other special keys
             if let pendingText = pendingTextForEnter.removeValue(forKey: paneKey) {
-                print("[RemoteServer] Flushing pending text '\(pendingText)' before special key")
                 terminal.injectText(pendingText)
             }
 
@@ -1644,7 +1635,6 @@ final class RemoteServer: NSObject, @unchecked Sendable {
             }
             injectGhosttyKeyPress(keycode: info.keycode, unshiftedCodepoint: info.codepoint, mods: mods, surface: surface)
         } else if let text = input.text, !text.isEmpty {
-            print("[RemoteServer] Buffering text: '\(text)' (\(text.count) chars) — waiting for Enter")
             // Buffer text — if Enter arrives next, we combine them into a single pty write.
             // If something else arrives, we flush it as a normal paste.
             pendingTextForEnter[paneKey] = text

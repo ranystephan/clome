@@ -82,7 +82,9 @@ jobs:
 
       - name: Ad-hoc codesign
         run: |
-          codesign --force --deep --sign - build/DerivedData/Build/Products/Release/Clome.app
+          codesign --force --deep --sign - \
+            --entitlements Resources/ClomeRelease.entitlements \
+            build/DerivedData/Build/Products/Release/Clome.app
 
       - name: Package DMG and ZIP
         id: package
