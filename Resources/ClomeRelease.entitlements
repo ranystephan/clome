@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Production entitlements for Developer ID distribution.
+         Keep these scoped to capabilities the shipped app actually needs. -->
+
+    <!-- WebKit/JavaScriptCore require JIT under Hardened Runtime. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!-- WebKit may allocate executable memory while running JS on macOS. -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- Preserve compatibility with bundled frameworks and WebKit helper processes. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- Audio recording — needed for WebRTC microphone access in browser panel. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- Camera capture — needed for WebRTC camera access in browser panel. -->
+    <key>com.apple.security.device.camera</key>
+    <true/>
+
+    <!-- Calendar access — needed for Flow panel calendar view. -->
+    <key>com.apple.security.personal-information.calendars</key>
+    <true/>
+
+    <!-- Reminders access — needed for Flow calendar reminders display. -->
+    <key>com.apple.security.personal-information.reminders</key>
+    <true/>
+</dict>
+</plist>
