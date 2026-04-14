@@ -77,8 +77,11 @@ jobs:
             -derivedDataPath build/DerivedData \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
             build
+
+      - name: Ad-hoc codesign
+        run: |
+          codesign --force --deep --sign - build/DerivedData/Build/Products/Release/Clome.app
 
       - name: Package DMG and ZIP
         id: package
@@ -93,10 +96,31 @@ jobs:
 
           mkdir -p dist
 
-          # Create DMG
+          # Create DMG with install script
           DMG_NAME="Clome-${TAG}-${ARCH}.dmg"
           mkdir -p dmg-staging
           cp -R "$APP_PATH" dmg-staging/
+
+          cat > dmg-staging/.install.sh <<'SCRIPT'
+#!/bin/bash
+APP="Clome.app"
+DEST="/Applications/$APP"
+SRC="$(cd "$(dirname "$0")" && pwd)/$APP"
+[ -d "$DEST" ] && rm -rf "$DEST"
+cp -R "$SRC" "$DEST"
+xattr -cr "$DEST"
+open "$DEST"
+SCRIPT
+          chmod +x dmg-staging/.install.sh
+
+          # Create a visible double-clickable installer
+          cat > "dmg-staging/Install Clome.command" <<'CMD'
+#!/bin/bash
+cd "$(dirname "$0")"
+./.install.sh
+CMD
+          chmod +x "dmg-staging/Install Clome.command"
+
           ln -s /Applications dmg-staging/Applications
           hdiutil create -volname "Clome" -srcfolder dmg-staging \
             -ov -format UDZO "dist/${DMG_NAME}"
@@ -123,9 +147,10 @@ jobs:
             ## Installation
 
             1. Download the `.dmg` file below
-            2. Open the DMG and drag **Clome** to Applications
-            3. Right-click Clome in Applications and select **Open**
-            4. Click **Open** in the dialog to confirm
+            2. Open the DMG
+            3. Double-click **"Install Clome"** — installs to Applications and opens it
+
+            You can also drag Clome.app to Applications manually, then run `xattr -cr /Applications/Clome.app` in Terminal before opening.
           files: |
             ${{ steps.package.outputs.dmg }}
             ${{ steps.package.outputs.zip }}
