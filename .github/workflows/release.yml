@@ -79,14 +79,13 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build
 
-      - name: Ad-hoc codesign
+      - name: Codesign and remove quarantine
         run: |
-          # Sign frameworks first (inside-out), then the app bundle
-          find build/DerivedData/Build/Products/Release/Clome.app/Contents/Frameworks \
-            -name '*.framework' -o -name '*.dylib' | while read fw; do
-            codesign --force --sign - "$fw" 2>/dev/null || true
-          done
-          codesign --force --sign - build/DerivedData/Build/Products/Release/Clome.app
+          APP="build/DerivedData/Build/Products/Release/Clome.app"
+          # Ad-hoc sign with hardened runtime disabled
+          codesign --force --deep --sign - "$APP"
+          # Remove any quarantine attributes before packaging
+          xattr -cr "$APP"
 
       - name: Package DMG and ZIP
         id: package
@@ -101,11 +100,40 @@ jobs:
 
           mkdir -p dist
 
-          # Create DMG
+          # Create installer script for DMG
           DMG_NAME="Clome-${TAG}-${ARCH}.dmg"
           mkdir -p dmg-staging
           cp -R "$APP_PATH" dmg-staging/
-          ln -s /Applications dmg-staging/Applications
+
+          # Create Install script that copies app and strips quarantine
+          cat > "dmg-staging/Install Clome.command" <<'INSTALL'
+          #!/bin/bash
+          set -e
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+          APP_NAME="Clome.app"
+          DEST="/Applications/$APP_NAME"
+
+          echo "Installing Clome..."
+
+          # Remove old version if present
+          if [ -d "$DEST" ]; then
+            rm -rf "$DEST"
+          fi
+
+          # Copy to Applications
+          cp -R "$SCRIPT_DIR/$APP_NAME" "$DEST"
+
+          # Remove quarantine attribute so macOS doesn't block it
+          xattr -cr "$DEST"
+
+          echo "Clome installed successfully!"
+          echo "Opening Clome..."
+          open "$DEST"
+          INSTALL
+          # Remove leading whitespace from heredoc
+          sed -i '' 's/^          //' "dmg-staging/Install Clome.command"
+          chmod +x "dmg-staging/Install Clome.command"
+
           hdiutil create -volname "Clome" -srcfolder dmg-staging \
             -ov -format UDZO "dist/${DMG_NAME}"
           rm -rf dmg-staging
@@ -131,14 +159,10 @@ jobs:
             ## Installation
 
             1. Download the `.dmg` file below
-            2. Open the DMG and drag **Clome** to Applications
-            3. Before opening, run this command in Terminal to remove the quarantine flag:
-               ```
-               xattr -cr /Applications/Clome.app
-               ```
-            4. Open Clome from Applications
+            2. Open the DMG
+            3. Double-click **"Install Clome"** — this copies the app to `/Applications` and opens it
 
-            > **Note:** This build is ad-hoc signed (not notarized with Apple). macOS Gatekeeper will block it unless you remove the quarantine attribute with the command above.
+            > **Note:** The install script is needed because this build is not yet notarized with Apple. It copies Clome to Applications and removes the macOS quarantine flag automatically.
           files: |
             ${{ steps.package.outputs.dmg }}
             ${{ steps.package.outputs.zip }}
