@@ -101,24 +101,11 @@ jobs:
           mkdir -p dmg-staging
           cp -R "$APP_PATH" dmg-staging/
 
-          cat > dmg-staging/.install.sh <<'SCRIPT'
-#!/bin/bash
-APP="Clome.app"
-DEST="/Applications/$APP"
-SRC="$(cd "$(dirname "$0")" && pwd)/$APP"
-[ -d "$DEST" ] && rm -rf "$DEST"
-cp -R "$SRC" "$DEST"
-xattr -cr "$DEST"
-open "$DEST"
-SCRIPT
+          printf '#!/bin/bash\nAPP="Clome.app"\nDEST="/Applications/$APP"\nSRC="$(cd "$(dirname "$0")" && pwd)/$APP"\n[ -d "$DEST" ] && rm -rf "$DEST"\ncp -R "$SRC" "$DEST"\nxattr -cr "$DEST"\nopen "$DEST"\n' > dmg-staging/.install.sh
           chmod +x dmg-staging/.install.sh
 
           # Create a visible double-clickable installer
-          cat > "dmg-staging/Install Clome.command" <<'CMD'
-#!/bin/bash
-cd "$(dirname "$0")"
-./.install.sh
-CMD
+          printf '#!/bin/bash\ncd "$(dirname "$0")"\n./.install.sh\n' > "dmg-staging/Install Clome.command"
           chmod +x "dmg-staging/Install Clome.command"
 
           ln -s /Applications dmg-staging/Applications
