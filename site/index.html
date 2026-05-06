@@ -1,0 +1,881 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clome</title>
+    <meta name="description" content="A local-first desktop workspace. Notes, mail, terminals, knowledge graphs, and agents." />
+    <meta name="theme-color" content="#0a0a0a" />
+    <meta property="og:title" content="Clome" />
+    <meta property="og:description" content="A local-first desktop workspace." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://clome.dev" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <link rel="preconnect" href="https://esm.sh" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Poppins:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,500&display=swap"
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0a0a0a;
+        --bg-2: #111;
+        --fg: #f5f5f3;
+        --muted: #8c8c87;
+        --dim: #4a4a45;
+        --line: rgba(255, 255, 255, 0.07);
+        --line-2: rgba(255, 255, 255, 0.14);
+        --accent: #77a7c5; /* sky blue. used sparingly. */
+        --accent-soft: rgba(119, 167, 197, 0.4);
+
+        --max: 1240px;
+        --gutter: clamp(20px, 4vw, 56px);
+
+        --mono:
+          "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        --sans:
+          "Poppins", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI",
+          Helvetica, Arial, sans-serif;
+        --display: var(--sans);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+
+      html {
+        background: var(--bg);
+      }
+
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        font-family: var(--sans);
+        font-size: 16px;
+        line-height: 1.6;
+        letter-spacing: -0.005em;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      img,
+      svg,
+      canvas {
+        display: block;
+        max-width: 100%;
+      }
+
+      ::selection {
+        background: var(--accent);
+        color: #0a0a0a;
+      }
+
+      .mono {
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .row {
+        width: 100%;
+        max-width: var(--max);
+        margin: 0 auto;
+        padding-left: var(--gutter);
+        padding-right: var(--gutter);
+      }
+
+      /* ========== nav (intentionally minimal) ========== */
+      nav.top {
+        position: fixed;
+        z-index: 30;
+        inset: 0 0 auto;
+        height: 56px;
+        display: flex;
+        align-items: center;
+        background: linear-gradient(
+          180deg,
+          rgba(10, 10, 10, 0.78),
+          rgba(10, 10, 10, 0)
+        );
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+
+      nav.top .row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      nav.top a:hover {
+        color: var(--accent);
+      }
+
+      nav.top .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--fg);
+      }
+
+      nav.top .brand:hover {
+        color: var(--accent);
+      }
+
+      nav.top .brand-mark {
+        width: 22px;
+        height: 22px;
+        /* svg ships black; invert on dark bg */
+        filter: invert(1);
+      }
+
+      nav.top .brand:hover .brand-mark {
+        filter: invert(72%) sepia(28%) saturate(394%) hue-rotate(165deg)
+          brightness(91%) contrast(82%);
+        /* approximate sky blue tint via filter chain */
+      }
+
+      nav.top .ver {
+        color: var(--dim);
+      }
+
+      /* ========== hero ========== */
+      .hero {
+        position: relative;
+        min-height: 100svh;
+        display: grid;
+        grid-template-rows: 1fr auto;
+        overflow: hidden;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .hero-shader {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        contain: strict;
+      }
+
+      .hero-shader::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(
+            120% 90% at 30% 110%,
+            rgba(10, 10, 10, 0.55) 35%,
+            rgba(10, 10, 10, 0) 70%
+          ),
+          linear-gradient(
+            180deg,
+            rgba(10, 10, 10, 0.05) 0%,
+            rgba(10, 10, 10, 0) 25%,
+            rgba(10, 10, 10, 0) 70%,
+            rgba(10, 10, 10, 0.4) 100%
+          );
+      }
+
+      /* film grain overlay over the shader */
+      .hero-grain {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+        opacity: 0.06;
+        mix-blend-mode: overlay;
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 1 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+      }
+
+      .hero-content {
+        position: relative;
+        z-index: 2;
+        align-self: end;
+        padding: 0 0 clamp(28px, 5vh, 56px);
+      }
+
+      .hero-content .row {
+        display: grid;
+        gap: clamp(16px, 2.4vh, 28px);
+        max-width: 88ch;
+        margin-left: 0;
+        margin-right: auto;
+      }
+
+      .hero-stamp {
+        display: grid;
+        grid-template-columns: auto auto 1fr auto;
+        gap: 18px;
+        align-items: center;
+        padding-bottom: 14px;
+        border-bottom: 1px solid var(--line);
+        font-family: var(--mono);
+        font-size: 0.75rem;
+        letter-spacing: 0;
+        color: var(--muted);
+      }
+
+      .hero-stamp b {
+        font-weight: 500;
+        color: var(--fg);
+      }
+
+      .hero-stamp .sep {
+        color: var(--dim);
+      }
+
+      h1.wordmark {
+        margin: 0;
+        font-family: var(--sans);
+        font-weight: 800;
+        font-size: clamp(5rem, 18vw, 17rem);
+        line-height: 0.9;
+        letter-spacing: -0.055em;
+        color: var(--fg);
+      }
+
+      .hero-lede {
+        max-width: 56ch;
+        margin: 0;
+        font-family: var(--sans);
+        font-weight: 400;
+        font-size: clamp(1.1rem, 1.6vw, 1.35rem);
+        line-height: 1.5;
+        letter-spacing: -0.012em;
+        color: var(--fg);
+      }
+
+      .hero-lede em {
+        font-style: normal;
+        color: var(--muted);
+      }
+
+      .hero-lede .prompt {
+        font-family: var(--mono);
+        color: var(--accent);
+        margin-right: 0.6em;
+        user-select: none;
+      }
+
+      .hero-bottom {
+        position: relative;
+        z-index: 2;
+        padding: clamp(20px, 3.5vh, 36px) clamp(20px, 3.2vw, 48px)
+          clamp(24px, 4vh, 44px);
+      }
+
+      .hero-bottom .row {
+        max-width: none;
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px 24px;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .hero-stack-line {
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        letter-spacing: 0;
+        color: var(--muted);
+      }
+
+      .hero-stack-line .sep {
+        color: var(--dim);
+        margin: 0 0.4em;
+      }
+
+      .hero-actions {
+        display: inline-flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        height: 38px;
+        padding: 0 16px;
+        border: 1px solid var(--line-2);
+        border-radius: 4px;
+        background: transparent;
+        color: var(--fg);
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        letter-spacing: 0;
+        transition: background 180ms ease, border-color 180ms ease,
+          color 180ms ease;
+      }
+
+      .pill:hover {
+        background: rgba(245, 245, 243, 0.07);
+        border-color: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      .pill.solid:hover {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #0a0a0a;
+      }
+
+      .pill.solid {
+        background: var(--fg);
+        color: #0a0a0a;
+        border-color: var(--fg);
+      }
+
+      .pill.solid:hover {
+        background: #fff;
+        border-color: #fff;
+      }
+
+      .pill .arrow {
+        display: inline-block;
+      }
+
+      /* ========== manifesto ========== */
+      .manifesto {
+        padding: clamp(96px, 14vh, 200px) 0 clamp(96px, 14vh, 200px);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .manifesto .row {
+        display: grid;
+        grid-template-columns: minmax(0, 18ch) minmax(0, 60ch);
+        gap: clamp(28px, 6vw, 96px);
+        align-items: start;
+      }
+
+      .manifesto .col-label {
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted);
+        padding-top: 0.55em;
+      }
+
+      .manifesto p {
+        margin: 0;
+        font-family: var(--sans);
+        font-weight: 400;
+        font-size: clamp(1.15rem, 1.6vw, 1.4rem);
+        line-height: 1.55;
+        letter-spacing: -0.012em;
+        color: var(--fg);
+      }
+
+      .manifesto p em {
+        font-style: normal;
+        color: var(--muted);
+      }
+
+      .manifesto p + p {
+        margin-top: 1.2em;
+      }
+
+      .manifesto h3 {
+        margin: 0 0 1.1em;
+        font-family: var(--mono);
+        font-weight: 500;
+        font-size: 0.9rem;
+        letter-spacing: 0;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .manifesto h3 .hash {
+        color: var(--dim);
+        margin-right: 0.4em;
+      }
+
+      /* ========== plates (real screenshots) ========== */
+      .plate {
+        padding: clamp(72px, 12vh, 140px) 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .plate .row {
+        display: grid;
+        grid-template-columns: minmax(0, 18ch) 1fr;
+        gap: clamp(28px, 6vw, 96px);
+        align-items: start;
+      }
+
+      .plate .meta {
+        position: sticky;
+        top: 96px;
+        display: grid;
+        gap: 14px;
+      }
+
+      .plate .meta .index {
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        letter-spacing: 0.16em;
+        color: var(--muted);
+      }
+
+      .plate .meta h2 {
+        margin: 0;
+        font-family: var(--sans);
+        font-weight: 600;
+        font-size: clamp(1.35rem, 1.8vw, 1.65rem);
+        line-height: 1.2;
+        letter-spacing: -0.018em;
+        color: var(--fg);
+      }
+
+      .plate .meta p {
+        margin: 0;
+        font-family: var(--sans);
+        font-size: 0.95rem;
+        line-height: 1.6;
+        color: var(--muted);
+      }
+
+      .plate .shot {
+        position: relative;
+        border: 1px solid var(--line-2);
+        background: var(--bg-2);
+        overflow: hidden;
+        aspect-ratio: 16 / 10.2;
+      }
+
+      .plate .shot img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: top left;
+      }
+
+      .plate .shot .placeholder {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: var(--dim);
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        background:
+          radial-gradient(120% 80% at 0% 0%, rgba(255, 255, 255, 0.04), transparent 60%),
+          repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.02) 0 6px, transparent 6px 12px),
+          var(--bg-2);
+      }
+
+      /* ========== sigil (liquid metal of mark) ========== */
+      .sigil {
+        position: relative;
+        padding: clamp(120px, 18vh, 240px) 0;
+        border-bottom: 1px solid var(--line);
+        overflow: hidden;
+      }
+
+      .sigil .row {
+        display: grid;
+        place-items: center;
+        gap: 24px;
+      }
+
+      .sigil-stage {
+        position: relative;
+        width: clamp(260px, 42vw, 520px);
+        aspect-ratio: 1 / 1;
+      }
+
+      .sigil-shader {
+        position: absolute;
+        inset: 0;
+      }
+
+      .sigil-caption {
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      /* ========== stack (one-line ticker) ========== */
+      .stack {
+        padding: clamp(40px, 6vh, 64px) 0;
+        border-bottom: 1px solid var(--line);
+        background: rgba(245, 245, 243, 0.025);
+      }
+
+      .stack .row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0 clamp(18px, 2.4vw, 32px);
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        letter-spacing: 0;
+        color: var(--muted);
+      }
+
+      .stack .row b {
+        color: var(--fg);
+        font-weight: 600;
+      }
+
+      .stack .row .sep {
+        color: var(--dim);
+      }
+
+      .stack .row .tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .stack .row .tag .k {
+        color: var(--dim);
+      }
+
+      /* ========== footer ========== */
+      footer.site {
+        position: relative;
+        padding: clamp(140px, 22vh, 220px) 0 clamp(48px, 8vh, 80px);
+        overflow: hidden;
+        isolation: isolate;
+      }
+
+      .footer-shader {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+      }
+
+      .footer-shader::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+          linear-gradient(
+            180deg,
+            rgba(10, 10, 10, 0.85) 0%,
+            rgba(10, 10, 10, 0.35) 30%,
+            rgba(10, 10, 10, 0.55) 100%
+          );
+      }
+
+      footer.site .row {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 24px;
+        align-items: end;
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+        padding: 22px clamp(20px, 3vw, 32px);
+        background: rgba(10, 10, 10, 0.42);
+        backdrop-filter: blur(18px) saturate(130%);
+        -webkit-backdrop-filter: blur(18px) saturate(130%);
+        border: 1px solid var(--line-2);
+        border-radius: 6px;
+      }
+
+      footer.site .clone {
+        background: rgba(0, 0, 0, 0.45);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+      }
+
+      footer.site .lhs {
+        display: grid;
+        gap: 14px;
+      }
+
+      footer.site .clone {
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--fg);
+        padding: 12px 14px;
+        border: 1px solid var(--line-2);
+        background: rgba(245, 245, 243, 0.03);
+        max-width: 480px;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+
+      footer.site .rhs {
+        text-align: right;
+      }
+
+      footer.site a:hover {
+        color: var(--accent);
+      }
+
+      /* ========== mobile ========== */
+      @media (max-width: 760px) {
+        .manifesto .row,
+        .plate .row,
+        .stack .row {
+          grid-template-columns: 1fr;
+        }
+
+        .plate .meta {
+          position: static;
+        }
+
+        nav.top .row {
+          font-size: 0.7rem;
+        }
+
+        h1.wordmark {
+          font-size: clamp(4rem, 26vw, 8rem);
+        }
+
+        .hero-meta .row {
+          grid-template-columns: 1fr;
+          gap: 14px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+        *,
+        *::before,
+        *::after {
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="top" aria-label="Primary">
+      <div class="row">
+        <a class="brand" href="#top" aria-label="clome home">
+          <img src="clome-logo.svg" alt="" class="brand-mark" />
+          <span>clome</span>
+        </a>
+        <span class="ver">open-source · macOS · alpha</span>
+        <a href="https://github.com/ranystephan/clome" target="_blank" rel="noreferrer">GitHub →</a>
+      </div>
+    </nav>
+
+    <main id="top">
+      <!-- HERO -->
+      <section class="hero" aria-labelledby="wm">
+        <div class="hero-shader" data-shader="hero" aria-hidden="true"></div>
+        <div class="hero-grain" aria-hidden="true"></div>
+
+        <div class="hero-content">
+          <div class="row">
+            <div class="hero-stamp">
+              <span><b>clome</b></span>
+              <span class="sep">/</span>
+              <span>an open-source agentic desktop</span>
+              <span>v0.1 · alpha · macOS</span>
+            </div>
+            <h1 class="wordmark" id="wm">clome</h1>
+            <p class="hero-lede">
+              <span class="prompt">$</span>local agents, explicit tools, source-first.
+              the repo is the spec — <em>clone it, register a tool, fork the whole thing.</em>
+            </p>
+          </div>
+        </div>
+
+        <div class="hero-bottom">
+          <div class="row">
+            <div class="hero-stack-line">
+              mit<span class="sep">·</span>tauri<span class="sep">·</span>rust<span class="sep">·</span>solid<span class="sep">·</span>mlx<span class="sep">·</span>ghostty
+            </div>
+            <div class="hero-actions">
+              <a class="pill solid" href="https://github.com/ranystephan/clome" target="_blank" rel="noreferrer">view source <span class="arrow">→</span></a>
+              <a class="pill" href="#what">cat readme.md</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- MANIFESTO -->
+      <section class="manifesto" id="what" aria-labelledby="manifesto-title">
+        <div class="row">
+          <div class="col-label">readme.md</div>
+          <div>
+            <h3 id="manifesto-title"><span class="hash">#</span> what it is</h3>
+            <p>
+              an open desktop for running agents on your own machine. one app,
+              one repo, no service in the middle.
+            </p>
+            <p>
+              every agent has a name, a model, and a small list of capabilities.
+              every capability is a named tool — readable, swappable, removable.
+              <em>the agent can only do what those tools allow.</em>
+            </p>
+            <p>
+              the vault — notes, mail, graph, terminal output — lives on disk.
+              it is the agent's context surface. nothing is hidden behind a
+              service. nothing phones home.
+            </p>
+            <p>
+              <em>clone the repo. register a tool. write your own agent. ship
+              a pr.</em>
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- PLATES (real screenshots) -->
+      <section class="plate" aria-labelledby="p1">
+        <div class="row">
+          <header class="meta">
+            <div class="index">01 // agents</div>
+            <h2 id="p1">agents bound to a room</h2>
+            <p>
+              each chat picks an agent. each agent picks a model and the tools
+              it can call. tool calls and vault reads surface inline as the
+              turn happens.
+            </p>
+          </header>
+          <figure class="shot">
+            <img id="shot-1" src="img/01-agents.png" alt="" onerror="this.style.display='none'" />
+            <div class="placeholder">awaiting capture · 01 agents</div>
+          </figure>
+        </div>
+      </section>
+
+      <section class="plate" aria-labelledby="p2">
+        <div class="row">
+          <header class="meta">
+            <div class="index">02 // capabilities</div>
+            <h2 id="p2">capabilities, not catch-alls</h2>
+            <p>
+              tools are explicit, named, gated. a mail-read tool is not a
+              file-write tool. the agent does only what you've registered —
+              and you can read every tool's source.
+            </p>
+          </header>
+          <figure class="shot">
+            <img id="shot-2" src="img/02-capabilities.png" alt="" onerror="this.style.display='none'" />
+            <div class="placeholder">awaiting capture · 02 capabilities</div>
+          </figure>
+        </div>
+      </section>
+
+      <section class="plate" aria-labelledby="p3">
+        <div class="row">
+          <header class="meta">
+            <div class="index">03 // vault</div>
+            <h2 id="p3">the vault is the context</h2>
+            <p>
+              notes with wikilinks, mail indexed locally, a knowledge graph,
+              terminal output. all on disk. all addressable. all readable by
+              the agent through a tool you can audit.
+            </p>
+          </header>
+          <figure class="shot">
+            <img id="shot-3" src="img/03-vault.png" alt="" onerror="this.style.display='none'" />
+            <div class="placeholder">awaiting capture · 03 vault</div>
+          </figure>
+        </div>
+      </section>
+
+      <section class="plate" aria-labelledby="p4">
+        <div class="row">
+          <header class="meta">
+            <div class="index">04 // open</div>
+            <h2 id="p4">the repo is the app</h2>
+            <p>
+              no service to call. no saas to depend on. clone it, register a
+              new tool, write your own agent, fork the whole thing. mit
+              licensed.
+            </p>
+          </header>
+          <figure class="shot">
+            <img id="shot-4" src="img/04-open.png" alt="" onerror="this.style.display='none'" />
+            <div class="placeholder">awaiting capture · 04 open</div>
+          </figure>
+        </div>
+      </section>
+
+      <!-- SIGIL: liquid metal logo -->
+      <section class="sigil" aria-hidden="true">
+        <div class="row">
+          <div class="sigil-stage">
+            <div class="sigil-shader" data-shader="sigil"></div>
+          </div>
+          <div class="sigil-caption">— clome —</div>
+        </div>
+      </section>
+
+      <!-- STACK -->
+      <section class="stack" aria-labelledby="stack-title">
+        <div class="row">
+          <span class="tag"><span class="k">license</span> <b>mit</b></span>
+          <span class="sep">·</span>
+          <span class="tag"><span class="k">shell</span> <b>tauri 2</b></span>
+          <span class="sep">·</span>
+          <span class="tag"><span class="k">core</span> <b>rust</b></span>
+          <span class="sep">·</span>
+          <span class="tag"><span class="k">ui</span> <b>solid</b></span>
+          <span class="sep">·</span>
+          <span class="tag"><span class="k">store</span> <b>sqlite</b></span>
+          <span class="sep">·</span>
+          <span class="tag"><span class="k">inference</span> <b>mlx · local</b></span>
+          <span class="sep">·</span>
+          <span class="tag"><span class="k">search</span> <b>bm25 + embeddings</b></span>
+          <span class="sep">·</span>
+          <span class="tag"><span class="k">terminal</span> <b>ghostty</b></span>
+          <span id="stack-title" hidden>stack</span>
+        </div>
+      </section>
+
+      <footer class="site">
+        <div class="footer-shader" data-shader="footer" aria-hidden="true"></div>
+        <div class="row">
+          <div class="lhs">
+            <div>open source. source-first. expect breaking changes.</div>
+            <code class="clone"><span style="color:var(--dim)">$</span> git clone https://github.com/ranystephan/clome &amp;&amp; cd clome &amp;&amp; bun install &amp;&amp; bun run tauri dev</code>
+          </div>
+          <div class="rhs">
+            <a href="https://github.com/ranystephan/clome" target="_blank" rel="noreferrer">github.com/ranystephan/clome ↗</a>
+          </div>
+        </div>
+      </footer>
+    </main>
+
+    <script type="module" src="./shaders.js?v=13"></script>
+  </body>
+</html>

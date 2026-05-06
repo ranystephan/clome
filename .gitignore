@@ -1,0 +1,47 @@
+# Dependencies
+node_modules
+src-tauri/target
+src-tauri/.fastembed_cache
+
+# Builds
+dist
+dist-site
+
+# OS
+.DS_Store
+
+# Editor
+.vscode
+.idea
+.zed
+
+# Claude Code workspace state
+.claude/settings.local.json
+
+# Dev-only secrets (OAuth client IDs etc). The .example sibling is
+# checked in; this file is per-developer.
+scripts/dev-env.sh
+
+# Ghostty source clone for the libghostty.a build — multi-GB,
+# regenerable via scripts/setup-ghostty.sh.
+src-tauri/vendor/ghostty/build/
+
+# The static lib itself is regenerable, just like Ghostty's own
+# release artifacts. Check it in only if you've negotiated a pinned
+# binary distribution.
+src-tauri/vendor/ghostty/macos/GhosttyKit.xcframework/macos-arm64_x86_64/libghostty.a
+
+# Heavy iOS variants of GhosttyKit not needed for desktop builds
+src-tauri/vendor/ghostty/macos/GhosttyKit.xcframework/ios-arm64/
+src-tauri/vendor/ghostty/macos/GhosttyKit.xcframework/ios-arm64-simulator/
+
+# Swift build cache for the EventKit bridge (regenerable)
+src-tauri/native/**/.build/
+swift/**/.build/
+
+# Logs
+*.log
+
+# Local env
+.env
+.env.local

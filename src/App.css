@@ -1,0 +1,4053 @@
+@import "tailwindcss";
+@import "katex/dist/katex.min.css";
+/* highlight.js stylesheet is injected dynamically based on theme — see
+   App.tsx createEffect that swaps github vs github-dark. Importing here
+   would force one variant globally and dark code on light bg looks bad. */
+
+@theme {
+  --font-sans: "Inter", "SF Pro Text", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+
+  --color-bg: oklch(0.165 0.006 280);
+  --color-bg-panel: oklch(0.145 0.005 280);
+  --color-bg-elev: oklch(0.235 0.007 280);
+  --color-bg-input: oklch(0.19 0.006 280);
+  --color-bg-hover: oklch(0.205 0.006 280);
+  --color-bg-hover-strong: oklch(0.255 0.008 280);
+
+  --color-border: oklch(0.225 0.008 280);
+  --color-border-strong: oklch(0.30 0.010 280);
+
+  --color-text: oklch(0.96 0.004 280);
+  --color-text-muted: oklch(0.78 0.008 280);
+  --color-text-dim: oklch(0.60 0.012 280);
+  --color-text-subtle: oklch(0.46 0.012 280);
+
+  --color-accent: oklch(0.72 0.10 250);
+
+  --color-good: oklch(0.74 0.11 145);
+  --color-warn: oklch(0.78 0.11 82);
+  --color-danger: oklch(0.66 0.18 25);
+
+  --radius-md: 0.5rem;
+  --radius-lg: 0.625rem;
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1.125rem;
+
+  /* Soft-3D shadow recipe — used by .btn-soft, .composer-pill, .surface-raised.
+     Layered: top inset highlight + bottom inset shade + outer drop. Tuned for
+     dark default; light theme overrides below. */
+  --raised-highlight: oklch(1 0 0 / 0.09);
+  --raised-shade: oklch(0 0 0 / 0.18);
+  --raised-drop: oklch(0 0 0 / 0.16);
+  --raised-drop-strong: oklch(0 0 0 / 0.22);
+  --raised-press-shade: oklch(0 0 0 / 0.30);
+  --raised-press-highlight: oklch(1 0 0 / 0.05);
+  --surface-edge: color-mix(in oklch, var(--color-border-strong) 74%, white 4%);
+  --surface-hairline: color-mix(in oklch, var(--color-border) 78%, transparent);
+  --surface-selected: color-mix(in oklch, var(--color-bg-hover-strong) 88%, var(--color-text) 3%);
+  --surface-sunken: color-mix(in oklch, var(--color-bg-input) 92%, black 8%);
+
+  /* Markdown fenced code block surface. github-dark hljs theme paints
+     dark token colors, so a darker-than-panel background keeps contrast. */
+  --code-block-bg: oklch(0.115 0.005 280);
+  --code-block-header-bg: oklch(0.155 0.006 280);
+}
+
+/* Light theme. Applied via `data-theme="light"` on <html>. CSS specificity
+   beats `:root` from @theme so these values override per-token without
+   touching Tailwind's class generation. Terminal background stays black
+   regardless — Ghostty surface owns its own palette. */
+:root[data-theme="light"] {
+  --color-bg: oklch(0.985 0.002 280);
+  --color-bg-panel: oklch(0.955 0.003 280);
+  --color-bg-elev: oklch(1 0 0);
+  --color-bg-input: oklch(0.965 0.003 280);
+  --color-bg-hover: oklch(0.94 0.004 280);
+  --color-bg-hover-strong: oklch(0.905 0.005 280);
+
+  --color-border: oklch(0.89 0.005 280);
+  --color-border-strong: oklch(0.78 0.008 280);
+
+  --color-text: oklch(0.18 0.012 280);
+  --color-text-muted: oklch(0.36 0.012 280);
+  --color-text-dim: oklch(0.50 0.012 280);
+  --color-text-subtle: oklch(0.62 0.010 280);
+
+  --color-accent: oklch(0.50 0.11 250);
+
+  --color-good: oklch(0.55 0.13 145);
+  --color-warn: oklch(0.60 0.14 75);
+  --color-danger: oklch(0.55 0.20 25);
+
+  /* Light theme: highlight from above is bright but subtle; bottom shade
+     stays dark but soft. Drop shadow much weaker than dark theme. */
+  --raised-highlight: oklch(1 0 0 / 0.85);
+  --raised-shade: oklch(0 0 0 / 0.06);
+  --raised-drop: oklch(0 0 0 / 0.06);
+  --raised-drop-strong: oklch(0 0 0 / 0.10);
+  --raised-press-shade: oklch(0 0 0 / 0.10);
+  --raised-press-highlight: oklch(1 0 0 / 0.40);
+  --surface-edge: oklch(0.86 0.005 280);
+  --surface-hairline: oklch(0.90 0.004 280);
+  --surface-selected: oklch(0.93 0.004 280);
+  --surface-sunken: oklch(0.945 0.004 280);
+
+  /* Light hljs theme paints dark tokens on light bg — match with a
+     soft tinted-paper surface, header slightly cooler. */
+  --code-block-bg: oklch(0.97 0.004 280);
+  --code-block-header-bg: oklch(0.94 0.005 280);
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-feature-settings: "ss01", "cv11";
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Kill the global outline — focus styles are per-component now,
+   so the composer pill highlights as a whole instead of drawing a
+   little rectangle inside it. */
+*:focus,
+*:focus-visible {
+  outline: none;
+}
+
+::selection {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+
+/* ── Quiet tactile primitives ─────────────────────────────────────
+   These are the house style: neutral, lightly physical, and consistent
+   across light/dark. Depth is hierarchy, not decoration. */
+
+.surface-raised {
+  border: 1px solid var(--surface-edge);
+  background: var(--color-bg-elev);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 12px 28px var(--raised-drop);
+}
+
+.surface-inset {
+  border: 1px solid var(--color-border);
+  background: var(--surface-sunken);
+  box-shadow: inset 0 1px 2px var(--raised-press-shade);
+}
+
+.control-soft,
+.control-ghost,
+.control-icon,
+.list-row {
+  transition:
+    background 0.14s ease,
+    border-color 0.14s ease,
+    box-shadow 0.14s ease,
+    color 0.14s ease,
+    transform 0.14s ease;
+}
+
+.control-soft {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border: 1px solid var(--surface-edge);
+  border-radius: 999px;
+  background: var(--color-bg-elev);
+  color: var(--color-text);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 7px 16px var(--raised-drop);
+}
+
+.control-soft:hover:not(:disabled) {
+  border-color: color-mix(in oklch, var(--surface-edge) 70%, var(--color-text-subtle));
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 9px 20px var(--raised-drop-strong);
+}
+
+.control-soft:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 1px 2px var(--raised-press-shade),
+    inset 0 -1px 0 var(--raised-press-highlight),
+    0 4px 10px var(--raised-drop);
+}
+
+.control-soft:disabled {
+  cursor: default;
+  opacity: 0.52;
+  transform: none;
+}
+
+.control-ghost {
+  border-radius: 0.5rem;
+  color: var(--color-text-dim);
+}
+
+.control-ghost:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.control-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.55rem;
+  color: var(--color-text-dim);
+}
+
+.control-icon:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.list-row {
+  border-radius: 0.58rem;
+  color: var(--color-text-muted);
+}
+
+.list-row:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.list-row--active {
+  color: var(--color-text);
+  background: var(--surface-selected);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, var(--raised-highlight) 80%, transparent),
+    inset 0 -1px 0 var(--raised-shade);
+}
+
+.section-label {
+  color: var(--color-text-subtle);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.empty-state {
+  color: var(--color-text-subtle);
+  font-size: 12.5px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.kbd-chip {
+  border: 1px solid var(--color-border);
+  border-radius: 0.38rem;
+  background: var(--color-bg-input);
+  color: var(--color-text-dim);
+  padding: 0.08rem 0.38rem;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade);
+}
+
+.app-shell {
+  position: relative;
+  background: var(--color-bg);
+}
+
+.app-sidebar {
+  border-right: 1px solid var(--surface-hairline);
+  box-shadow:
+    inset -1px 0 0 color-mix(in oklch, var(--raised-highlight) 45%, transparent),
+    8px 0 28px color-mix(in oklch, black 10%, transparent);
+}
+
+/* Hover catcher on the left edge — only mounted when the sidebar is
+   collapsed. Wider than 1px so a quick nudge actually triggers; narrow
+   enough to never interfere with normal pointer use. */
+.sidebar-peek-trigger {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 10px;
+  height: 100%;
+  z-index: 30;
+}
+
+/* Peek sidebar — floating panel, not full height. Insets from window
+   edges, rounded, drop-shadow only (no inset right edge — it isn't a
+   docked sidebar). Internal scroll for tall vaults. */
+.app-sidebar--peek {
+  position: absolute;
+  top: 0.6rem;
+  left: 0.55rem;
+  bottom: auto;
+  max-height: min(560px, calc(100vh - 1.6rem));
+  z-index: 50;
+  border: 1px solid var(--surface-edge);
+  border-radius: 0.85rem;
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, var(--raised-highlight) 55%, transparent),
+    0 18px 44px color-mix(in oklch, black 30%, transparent),
+    0 4px 12px color-mix(in oklch, black 18%, transparent);
+  animation: sidebar-peek-in 0.16s ease-out;
+}
+
+:root[data-theme="light"] .app-sidebar--peek {
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, white 90%, transparent),
+    0 18px 44px color-mix(in oklch, black 14%, transparent),
+    0 4px 12px color-mix(in oklch, black 8%, transparent);
+}
+
+/* Trim chrome that only makes sense for the docked sidebar:
+   – traffic-light spacer (peek floats below the title bar already)
+   – footer status strip (profile + settings live in main UI / cmd-K)
+   – resize handle (peek is fixed-width, ephemeral) */
+.app-sidebar--peek > [data-tauri-drag-region]:first-child,
+.app-sidebar--peek .app-sidebar-footer,
+.app-sidebar--peek .group\/resize {
+  display: none;
+}
+
+/* Peek's first remaining child gets a touch of top padding so the
+   workspace row doesn't kiss the rounded edge. */
+.app-sidebar--peek .sidebar-header {
+  padding-top: 0.6rem;
+}
+
+@keyframes sidebar-peek-in {
+  from {
+    transform: translateX(-12px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-sidebar--peek {
+    animation: none;
+  }
+}
+
+:root[data-theme="light"] .app-sidebar {
+  box-shadow:
+    inset -1px 0 0 color-mix(in oklch, white 80%, transparent),
+    8px 0 24px color-mix(in oklch, black 4%, transparent);
+}
+
+.app-sidebar-footer {
+  background: color-mix(in oklch, var(--color-bg-panel) 88%, var(--color-bg-elev));
+}
+
+.sidebar-header {
+  border-bottom: 0;
+}
+
+.workspace-switcher {
+  border-radius: 0.75rem;
+  color: var(--color-text-muted);
+  transition: background 0.14s ease, box-shadow 0.14s ease, color 0.14s ease;
+}
+
+.workspace-switcher:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.workspace-switcher__mark {
+  display: inline-flex;
+  width: 1.55rem;
+  height: 1.55rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: 0.52rem;
+  background: var(--color-bg-elev);
+  color: var(--color-text);
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 5px 12px color-mix(in oklch, var(--raised-drop) 72%, transparent);
+}
+
+.sidebar-status-card {
+  border: 1px solid var(--surface-hairline);
+  border-radius: 0.85rem;
+  background: color-mix(in oklch, var(--color-bg-elev) 58%, var(--color-bg-panel));
+  padding: 0.5rem;
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, var(--raised-highlight) 70%, transparent),
+    0 8px 20px color-mix(in oklch, var(--raised-drop) 70%, transparent);
+}
+
+.resource-usage-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.25rem;
+  margin-top: 0.28rem;
+  min-width: 0;
+}
+
+.resource-usage-pill {
+  display: inline-flex;
+  min-width: 0;
+  height: 1.15rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  border: 1px solid var(--surface-hairline);
+  border-radius: 0.42rem;
+  background: color-mix(in oklch, var(--color-bg-input) 72%, transparent);
+  color: var(--color-text-dim);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.resource-usage-pill__label {
+  flex: 0 0 auto;
+  color: var(--color-text-subtle);
+  font-size: 8.5px;
+  font-weight: 700;
+}
+
+.resource-usage-pill__value {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resource-usage-pill--ok {
+  border-color: color-mix(in oklch, var(--color-good) 22%, var(--surface-hairline));
+}
+
+.resource-usage-pill--warn {
+  border-color: color-mix(in oklch, var(--color-warn) 42%, var(--surface-hairline));
+  background: color-mix(in oklch, var(--color-warn) 10%, var(--color-bg-input));
+}
+
+.resource-usage-pill--warn .resource-usage-pill__value {
+  color: color-mix(in oklch, var(--color-warn) 72%, var(--color-text));
+}
+
+.resource-usage-pill--danger {
+  border-color: color-mix(in oklch, var(--color-danger) 48%, var(--surface-hairline));
+  background: color-mix(in oklch, var(--color-danger) 11%, var(--color-bg-input));
+}
+
+.resource-usage-pill--danger .resource-usage-pill__value {
+  color: color-mix(in oklch, var(--color-danger) 74%, var(--color-text));
+}
+
+.resource-usage-pill--muted {
+  opacity: 0.76;
+}
+
+.activity-row {
+  border-radius: 0.55rem;
+  color: var(--color-text-muted);
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.activity-row:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.activity-row__icon {
+  display: inline-flex;
+  width: 1.15rem;
+  height: 1.15rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-bg-input);
+  color: var(--color-text-dim);
+  box-shadow: inset 0 1px 0 var(--raised-highlight);
+}
+
+.activity-row__link {
+  color: var(--color-text-muted);
+  border-bottom: 1px solid color-mix(in oklch, var(--color-text-muted) 35%, transparent);
+}
+
+.activity-row__link:hover {
+  color: var(--color-text);
+  border-bottom-color: var(--color-text);
+}
+
+.source-dot {
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, white 30%, transparent),
+    0 0 0 1px color-mix(in oklch, black 18%, transparent);
+}
+
+.source-chip {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-input);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade);
+}
+
+.notes-section-head {
+  margin-top: 0.12rem;
+}
+
+.notes-list {
+  scrollbar-gutter: stable;
+}
+
+.note-row {
+  min-height: 2.55rem;
+  margin-bottom: 0.12rem;
+}
+
+.note-row__button {
+  padding: 0.42rem 2rem 0.42rem 0.55rem;
+}
+
+.note-row__source {
+  display: inline-flex;
+  width: 1.35rem;
+  height: 1.35rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: 0.48rem;
+  background: var(--color-bg-input);
+  box-shadow: inset 0 1px 0 var(--raised-highlight);
+}
+
+.note-row__body {
+  display: block;
+  min-width: 0;
+  flex: 1;
+}
+
+.note-row__title,
+.note-row__meta {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-row__title {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 540;
+  line-height: 1.25;
+}
+
+.note-row__meta {
+  margin-top: 0.08rem;
+  color: var(--color-text-subtle);
+  font-size: 10.5px;
+  line-height: 1.15;
+}
+
+.note-row:hover .note-row__title,
+.note-row--active .note-row__title {
+  color: var(--color-text);
+}
+
+.note-row__actions {
+  position: absolute;
+  right: 0.28rem;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 1px solid var(--color-border);
+  border-radius: 0.55rem;
+  background: color-mix(in oklch, var(--color-bg-elev) 86%, transparent);
+  padding: 0.08rem;
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    0 6px 14px color-mix(in oklch, var(--raised-drop) 72%, transparent);
+}
+
+.notes-empty-state {
+  margin: 0.6rem 0.35rem;
+  border: 1px solid var(--surface-hairline);
+  border-radius: 0.9rem;
+  background: color-mix(in oklch, var(--color-bg-input) 54%, transparent);
+  padding: 1rem 0.8rem;
+  text-align: center;
+  box-shadow: inset 0 1px 0 color-mix(in oklch, var(--raised-highlight) 52%, transparent);
+}
+
+.notes-empty-state__glyph {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: 0.7rem;
+  background: var(--color-bg-elev);
+  color: var(--color-text-dim);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 8px 18px color-mix(in oklch, var(--raised-drop) 70%, transparent);
+  margin-bottom: 0.55rem;
+}
+
+.notes-empty-state--compact {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.78rem;
+  color: var(--color-text-subtle);
+  font-size: 12px;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*:hover::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  background-clip: padding-box;
+}
+
+/* ── Markdown content ────────────────────────────────────────── */
+
+.md-content {
+  color: var(--color-text);
+  font-size: 15px;
+  line-height: 1.65;
+  /* Allow code blocks / wide tables to be bounded by the chat bubble
+     instead of forcing the bubble to grow past chat-column width. */
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Note page-mode body — writing-surface typography. The note tab
+   shows up here when the user opens a note in its own tab; the side
+   inspector keeps the tighter chat-row scale instead. */
+.note-page-body .md-content {
+  font-size: 16.5px;
+  line-height: 1.72;
+}
+.note-page-body .md-content h1 { font-size: 1.55em; margin-top: 1.6em; }
+.note-page-body .md-content h2 { font-size: 1.3em;  margin-top: 1.5em; }
+.note-page-body .md-content h3 { font-size: 1.12em; margin-top: 1.4em; }
+.note-page-body .md-content p  { margin: 0 0 1em 0; }
+.note-page-body .cm-editor {
+  font-size: 16px;
+  line-height: 1.7;
+}
+.note-page-body .cm-content {
+  padding: 4px 0;
+}
+
+.md-content p {
+  margin: 0 0 0.85em 0;
+}
+.md-content > *:last-child { margin-bottom: 0; }
+
+.md-content h1, .md-content h2, .md-content h3,
+.md-content h4, .md-content h5, .md-content h6 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.4em 0 0.5em 0;
+}
+.md-content h1 { font-size: 1.4em; }
+.md-content h2 { font-size: 1.25em; }
+.md-content h3 { font-size: 1.1em; }
+.md-content h4 { font-size: 1em; }
+
+.md-content strong { font-weight: 600; color: var(--color-text); }
+.md-content em { font-style: italic; }
+.md-content a {
+  color: var(--color-accent);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in oklch, var(--color-accent) 35%, transparent);
+}
+.md-content a:hover {
+  border-bottom-color: var(--color-accent);
+}
+
+.md-content ul, .md-content ol {
+  margin: 0 0 0.85em 0;
+  padding-left: 1.5em;
+}
+.md-content ul { list-style: disc; }
+.md-content ol { list-style: decimal; }
+.md-content li { margin: 0.2em 0; }
+.md-content li > p { margin: 0; }
+
+.md-content blockquote {
+  margin: 0 0 0.85em 0;
+  padding: 0.1em 0 0.1em 1em;
+  border-left: 3px solid var(--color-border-strong);
+  color: var(--color-text-muted);
+}
+
+.md-content hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 1.5em 0;
+}
+
+/* Inline code */
+.md-content code:not(pre > code) {
+  background: var(--color-bg-elev);
+  border: 1px solid var(--color-border);
+  border-radius: 0.375rem;
+  padding: 0.1em 0.4em;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  color: var(--color-text);
+}
+
+/* Code blocks */
+.md-content .code-block {
+  position: relative;
+  margin: 0 0 0.85em 0;
+  border-radius: 0.625rem;
+  overflow: hidden;
+  background: var(--code-block-bg);
+  border: 1px solid var(--color-border);
+  max-width: 100%;
+  min-width: 0;
+}
+.md-content .code-block__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4em 0.75em;
+  background: var(--code-block-header-bg);
+  border-bottom: 1px solid var(--color-border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-dim);
+}
+.md-content .code-block__lang {
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+}
+.md-content .code-block__copy {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--color-text-dim);
+  padding: 0.15em 0.5em;
+  border-radius: 0.3rem;
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.md-content .code-block__copy:hover {
+  color: var(--color-text);
+  background: var(--color-bg-hover-strong);
+}
+.md-content .code-block pre {
+  margin: 0;
+  padding: 0.85em 1em;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  background: transparent;
+}
+.md-content .code-block pre code.hljs {
+  background: transparent;
+  padding: 0;
+}
+
+/* Wikilink chip — used both inline in markdown and in plain text segments */
+.wikilink-chip {
+  display: inline;
+  margin: 0 1px;
+  padding: 0.1em 0.4em;
+  border-radius: 0.375rem;
+  background: color-mix(in oklch, var(--color-accent) 15%, transparent);
+  color: var(--color-accent);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s;
+  border: none;
+  font-size: inherit;
+  font-family: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+}
+.wikilink-chip:hover {
+  background: color-mix(in oklch, var(--color-accent) 25%, transparent);
+}
+
+/* Typed reference chips — `[[email:...|Subject]]` etc. Mirror the
+   per-kind palette used in the graph canvas so the eye can scan
+   "this is an email link" at a glance. The `::before` glyph is a
+   tiny visual marker; we keep it inline-friendly so the chip still
+   sits cleanly in flowing prose. */
+.wikilink-chip--email {
+  background: color-mix(in oklch, oklch(0.72 0.12 230) 16%, transparent);
+  color: oklch(0.78 0.13 230);
+}
+.wikilink-chip--email:hover {
+  background: color-mix(in oklch, oklch(0.72 0.12 230) 28%, transparent);
+}
+.wikilink-chip--email::before {
+  content: "✉ ";
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+.wikilink-chip--event {
+  background: color-mix(in oklch, oklch(0.74 0.13 145) 16%, transparent);
+  color: oklch(0.78 0.13 145);
+}
+.wikilink-chip--event::before {
+  content: "◆ ";
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+.wikilink-chip--project {
+  background: color-mix(in oklch, var(--color-warn) 16%, transparent);
+  color: var(--color-warn);
+}
+.wikilink-chip--project::before {
+  content: "◇ ";
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+.wikilink-chip--file {
+  background: color-mix(in oklch, oklch(0.72 0.11 300) 16%, transparent);
+  color: oklch(0.78 0.11 300);
+}
+.wikilink-chip--file::before {
+  content: "▤ ";
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+
+/* Tool-call chip — replaces ```clome-tool fenced JSON in agent messages */
+.tool-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4em;
+  margin: 0.4em 0;
+  padding: 0.3em 0.7em;
+  border-radius: 0.5rem;
+  background: var(--color-bg-elev);
+  border: 1px solid var(--color-border);
+  font-size: 0.92em;
+  line-height: 1.5;
+  vertical-align: baseline;
+}
+.tool-chip__icon {
+  color: var(--color-accent);
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+}
+.tool-chip__verb {
+  color: var(--color-text-muted);
+  font-size: 0.95em;
+}
+.tool-chip__arrow {
+  color: var(--color-text-subtle);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.tool-chip__target {
+  color: var(--color-text);
+  font-weight: 500;
+}
+.tool-chip__meta {
+  color: var(--color-text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
+/* Pulse the chip while the sidecar is running so the user sees the
+   tool isn't done yet. The class is toggled from App.tsx in response
+   to chat:tool_start / chat:tool_end events. */
+.tool-chip--running {
+  animation: tool-chip-pulse 1.4s ease-in-out infinite;
+}
+@keyframes tool-chip-pulse {
+  0%, 100% {
+    border-color: var(--color-border);
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-accent) 0%, transparent);
+  }
+  50% {
+    border-color: color-mix(in oklch, var(--color-accent) 60%, var(--color-border));
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-accent) 18%, transparent);
+  }
+}
+
+/* Three-dot "thinking" indicator. Used both as the empty-message
+   placeholder before the first token arrives, and as a footer pulse
+   between iters while the model is fetching/processing. */
+.thinking-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 1.2em;
+  vertical-align: middle;
+}
+.thinking-dots > span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-text-dim);
+  animation: thinking-bounce 1.2s infinite ease-in-out both;
+}
+.thinking-dots > span:nth-child(1) { animation-delay: -0.32s; }
+.thinking-dots > span:nth-child(2) { animation-delay: -0.16s; }
+.thinking-dots > span:nth-child(3) { animation-delay: 0s; }
+@keyframes thinking-bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40%           { transform: scale(1);   opacity: 1; }
+}
+
+/* ── Room routing / composer palette ──────────────────────────── */
+
+.room-button,
+.soft-send-button,
+.room-compute-button,
+.room-mode-pill {
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  background: var(--color-bg-elev);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 8px 18px var(--raised-drop);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease,
+    background 0.12s ease;
+}
+.room-button:hover,
+.soft-send-button:hover,
+.room-compute-button:hover,
+.room-mode-pill:hover {
+  color: var(--color-text);
+  border-color: color-mix(in oklch, var(--color-border-strong) 72%, var(--color-text-subtle));
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 10px 22px var(--raised-drop-strong);
+}
+.room-button:active,
+.soft-send-button:active,
+.room-compute-button:active,
+.room-mode-pill:active {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 1px 2px var(--raised-press-shade),
+    inset 0 -1px 0 var(--raised-press-highlight),
+    0 4px 10px var(--raised-drop);
+}
+
+.soft-send-button {
+  color: var(--color-text);
+  background: var(--color-bg-elev);
+}
+.soft-send-button:disabled {
+  cursor: default;
+  color: var(--color-text-subtle);
+  opacity: 0.55;
+  transform: none;
+}
+.soft-send-button--secondary {
+  color: var(--color-text-dim);
+}
+
+.room-menu,
+.mention-menu {
+  border-radius: 0.9rem;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-elev);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, white 7%, transparent),
+    inset 0 -1px 0 color-mix(in oklch, black 18%, transparent),
+    0 18px 40px color-mix(in oklch, black 34%, transparent);
+  animation: menu-rise 0.16s ease-out both;
+  transform-origin: top right;
+}
+.mention-menu {
+  transform-origin: bottom left;
+}
+@keyframes menu-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.room-mode-pill,
+.room-compute-button,
+.mention-menu__section,
+.mention-menu__row {
+  display: flex;
+  align-items: center;
+}
+
+.room-mode-pill {
+  gap: 0.35rem;
+  color: var(--color-text-muted);
+  padding: 0.22rem 0.5rem;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.room-menu__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.8rem 0.6rem;
+  border-bottom: 1px solid var(--color-border);
+}
+.room-menu__title {
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+.room-menu__subtitle {
+  margin-top: 0.08rem;
+  color: var(--color-text-subtle);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.room-selected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.38rem;
+  max-height: 4.8rem;
+  overflow-y: auto;
+  padding: 0.65rem 0.75rem 0.55rem;
+  border-bottom: 1px solid var(--color-border);
+}
+.room-selected-pill {
+  display: inline-flex;
+  max-width: 9.5rem;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-bg-input);
+  color: var(--color-text-muted);
+  padding: 0.22rem 0.48rem 0.22rem 0.58rem;
+  font-size: 11.5px;
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, white 5%, transparent),
+    inset 0 -1px 0 color-mix(in oklch, black 12%, transparent);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.room-selected-pill:hover {
+  color: var(--color-text);
+  background: var(--color-bg-hover);
+}
+
+.room-search {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.65rem 0.75rem 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.6rem;
+  background: var(--color-bg-input);
+  color: var(--color-text-subtle);
+  padding: 0.42rem 0.55rem;
+  box-shadow: inset 0 1px 2px color-mix(in oklch, black 16%, transparent);
+}
+.room-search input {
+  min-width: 0;
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+}
+.room-search input::placeholder {
+  color: var(--color-text-subtle);
+}
+.room-search button {
+  display: inline-flex;
+  color: var(--color-text-subtle);
+}
+
+.room-agent-list {
+  max-height: 15.5rem;
+  overflow-y: auto;
+  padding: 0.15rem 0.45rem 0.55rem;
+}
+
+.model-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 4.2rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-input);
+  padding: 0.16rem 0.42rem;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, white 5%, transparent),
+    inset 0 -1px 0 color-mix(in oklch, black 14%, transparent);
+}
+.model-status--checking {
+  color: var(--color-text-subtle);
+}
+.model-status--ready {
+  color: oklch(0.74 0.11 145);
+}
+.model-status--fallback {
+  color: oklch(0.76 0.09 82);
+}
+.model-status--missing,
+.model-status--offline {
+  color: oklch(0.72 0.10 30);
+}
+
+.model-status-dot {
+  width: 0.48rem;
+  height: 0.48rem;
+  border-radius: 999px;
+  background: var(--color-text-subtle);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, white 18%, transparent),
+    0 0 0 1px color-mix(in oklch, black 22%, transparent);
+  flex: none;
+}
+.model-status-dot.model-status--checking {
+  background: var(--color-text-subtle);
+}
+.model-status-dot.model-status--ready {
+  background: oklch(0.74 0.11 145);
+}
+.model-status-dot.model-status--fallback {
+  background: oklch(0.76 0.09 82);
+}
+.model-status-dot.model-status--missing,
+.model-status-dot.model-status--offline {
+  background: oklch(0.72 0.10 30);
+}
+
+.room-compute-button {
+  justify-content: center;
+  color: var(--color-text-dim);
+  padding: 0.35rem 0.45rem;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.room-compute-button--active {
+  color: var(--color-text);
+  background: var(--color-bg-hover-strong);
+  box-shadow:
+    inset 0 1px 2px color-mix(in oklch, black 24%, transparent),
+    inset 0 -1px 0 color-mix(in oklch, white 5%, transparent),
+    0 3px 8px color-mix(in oklch, black 14%, transparent);
+}
+
+.room-agent-row {
+  display: grid;
+  grid-template-columns: 1.2rem minmax(0, 1fr) auto;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 0.55rem;
+  color: var(--color-text-muted);
+  padding: 0.48rem 0.5rem;
+  text-align: left;
+  font-size: 12.5px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.room-agent-row:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+.room-agent-row:active {
+  background: var(--color-bg-input);
+}
+.room-agent-row--selected {
+  color: var(--color-text);
+  background: var(--color-bg-hover-strong);
+}
+.room-agent-row__check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-accent);
+}
+.room-agent-row__body {
+  min-width: 0;
+  display: block;
+}
+.room-agent-row__name,
+.room-agent-row__model {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.room-agent-row__name {
+  color: inherit;
+  font-weight: 550;
+  line-height: 1.25;
+}
+.room-agent-row__model {
+  margin-top: 0.05rem;
+  color: var(--color-text-subtle);
+  font-size: 10.5px;
+  font-weight: 400;
+}
+
+.room-compute {
+  border-top: 1px solid var(--color-border);
+  padding: 0.65rem 0.75rem 0.7rem;
+}
+.room-compute__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  color: var(--color-text-subtle);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.room-compute__fallback {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--color-text-subtle);
+  font-weight: 600;
+  text-transform: none;
+}
+
+.room-manage-button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.45rem;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-dim);
+  padding: 0.58rem 0.8rem;
+  text-align: left;
+  font-size: 12px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.room-manage-button:hover {
+  color: var(--color-text);
+  background: var(--color-bg-hover);
+}
+
+.mention-menu__section {
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem 0.35rem;
+  color: var(--color-text-subtle);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.mention-menu__row {
+  width: 100%;
+  gap: 0.62rem;
+  padding: 0.52rem 0.75rem;
+  text-align: left;
+  font-size: 13px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.mention-menu__row:hover {
+  background: var(--color-bg-hover);
+}
+.mention-menu__agent-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--color-accent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, white 20%, transparent),
+    0 1px 2px color-mix(in oklch, black 28%, transparent);
+  flex: none;
+}
+.mention-menu__meta {
+  max-width: 7rem;
+  color: var(--color-text-subtle);
+  font-size: 10.5px;
+}
+
+.turn-plan-card {
+  display: inline-flex;
+  max-width: 100%;
+  margin: 0 0 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: color-mix(in oklch, var(--color-bg-input) 78%, transparent);
+  padding: 0.28rem 0.38rem;
+  box-shadow: inset 0 1px 0 var(--raised-highlight);
+  animation: turn-plan-enter 0.24s ease-out both;
+}
+@keyframes turn-plan-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.turn-plan-card__head,
+.turn-plan-card__identity,
+.turn-plan-card__compute,
+.turn-plan-card__step {
+  display: flex;
+  align-items: center;
+}
+.turn-plan-card__head {
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.turn-plan-card__identity {
+  min-width: 0;
+  gap: 0.55rem;
+}
+.turn-plan-card__avatar {
+  display: inline-flex;
+  width: 1.35rem;
+  height: 1.35rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-input);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, white 6%, transparent),
+    inset 0 -1px 0 color-mix(in oklch, black 14%, transparent);
+  flex: none;
+}
+.turn-plan-card__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+.turn-plan-card__sub,
+.turn-plan-card__reason {
+  color: var(--color-text-dim);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+.turn-plan-card__compute {
+  flex: none;
+  gap: 0.35rem;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  padding: 0.12rem 0.42rem;
+  font-size: 10.5px;
+  font-weight: 650;
+}
+.turn-plan-card__reason {
+  display: none;
+}
+.turn-plan-card__warning {
+  margin-top: 0.5rem;
+  border-left: 2px solid var(--color-text-subtle);
+  color: var(--color-text-muted);
+  background: var(--color-bg-input);
+  padding: 0.38rem 0.55rem;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+.turn-plan-card__steps {
+  display: none;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.62rem;
+}
+.turn-plan-card__step {
+  gap: 0.3rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-input);
+  color: var(--color-text-muted);
+  padding: 0.22rem 0.5rem;
+  font-size: 10.5px;
+  line-height: 1.2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .room-menu,
+  .mention-menu,
+  .turn-plan-card {
+    animation: none;
+  }
+}
+
+/* ── Rich tool cards (calendar / reminders) ──────────────────────
+   Outer element is <span> with display:block — they render inside
+   markdown-it's <p> wrappers, and a real <div> would force the
+   browser to close the surrounding paragraph and break text flow.
+
+   The visual model is "annotation in the margin": a thin colored
+   left edge identifies the action category (calendar / reminder /
+   destructive / error), a tight head row shows the kind + count,
+   and the body presents day-grouped event rows. No heavy chrome. */
+
+.tcard {
+  display: grid;
+  grid-template-columns: 3px 1fr;
+  margin: 0.7em 0;
+  border-radius: 0.6rem;
+  background: color-mix(in oklch, var(--color-bg-elev) 75%, var(--color-bg-panel));
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+  font-size: 0.95em;
+  line-height: 1.5;
+  /* default edge is neutral; per-kind classes override */
+  --tcard-edge: var(--color-border-strong);
+}
+.tcard--cal       { --tcard-edge: oklch(0.72 0.13 245); } /* blue — matches accent family */
+.tcard--rem       { --tcard-edge: oklch(0.74 0.13 145); } /* green */
+.tcard--mail      { --tcard-edge: oklch(0.72 0.12 230); } /* blue */
+.tcard--file      { --tcard-edge: oklch(0.72 0.11 300); } /* violet */
+.tcard--del       { --tcard-edge: oklch(0.65 0.12 30);  } /* dim red */
+.tcard--err       { --tcard-edge: oklch(0.7 0.18 30);   } /* hot red */
+.tcard--denied    { --tcard-edge: oklch(0.62 0.04 280); } /* neutral gray — refusal, not failure */
+.tcard--graph     { --tcard-edge: oklch(0.72 0.10 250); } /* accent — graph retrieval */
+
+/* Graph result rows — rendered inside tcard--graph for a graph_search /
+   graph_neighbors result. Each row is a node hit; the wikilink chip
+   on the right routes back into the inspector via MarkdownContent's
+   delegate. */
+.graph-row {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 3px 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-text);
+}
+.graph-row__glyph {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--color-text-subtle);
+  text-align: center;
+}
+.graph-row__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.graph-row__meta {
+  font-size: 10.5px;
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+.graph-row .wikilink-chip {
+  font-size: 10.5px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.graph-row--more {
+  color: var(--color-text-subtle);
+  font-style: italic;
+  padding-top: 4px;
+}
+
+.tcard__edge {
+  display: block;
+  background: var(--tcard-edge);
+  /* full-height via stretch from the grid */
+  align-self: stretch;
+}
+
+.tcard__inner {
+  display: block;
+  padding: 0.55em 0.85em 0.65em 0.85em;
+  min-width: 0;
+}
+
+/* Head row: "Calendar · This week"   [count] */
+.tcard__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6em;
+  margin-bottom: 0.45em;
+}
+.tcard__kind {
+  color: var(--color-text-muted);
+  font-size: 0.82em;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+.tcard__kind--mini {
+  display: block;
+  margin-bottom: 0.3em;
+}
+.tcard__count {
+  color: var(--color-text-dim);
+  font-size: 0.82em;
+  font-variant-numeric: tabular-nums;
+}
+.tcard__count--empty {
+  color: var(--color-text-subtle);
+  font-style: italic;
+  text-transform: none;
+}
+
+.tcard__body {
+  display: block;
+}
+
+/* Day group (also used for reminder list groups) */
+.tcard__day + .tcard__day {
+  margin-top: 0.6em;
+}
+.tcard__day-label {
+  display: flex;
+  align-items: center;
+  gap: 0.45em;
+  padding: 0 0.15em 0.25em 0.15em;
+  font-size: 0.82em;
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: 0.01em;
+}
+.tcard__day-events {
+  display: block;
+}
+
+/* ── Event row (list_events) ──────────────────────────────────── */
+
+.evt {
+  display: grid;
+  grid-template-columns: auto 4.2rem 1fr;
+  gap: 0.5em;
+  align-items: baseline;
+  padding: 0.32em 0.4em;
+  border-radius: 0.4rem;
+  transition: background 0.12s ease;
+}
+.evt:hover {
+  background: color-mix(in oklch, var(--color-bg-hover) 60%, transparent);
+}
+.evt + .evt {
+  margin-top: 0.05em;
+}
+
+.evt__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  align-self: center;
+  flex-shrink: 0;
+  background: var(--color-text-subtle);
+}
+.evt__time {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.84em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.evt__time--all {
+  color: var(--color-text-dim);
+  font-family: var(--font-sans);
+  font-size: 0.82em;
+  font-style: italic;
+}
+.evt__title {
+  color: var(--color-text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.evt__meta {
+  grid-column: 3;
+  margin-top: 0.05em;
+  color: var(--color-text-dim);
+  font-size: 0.82em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Reminder row ─────────────────────────────────────────────── */
+
+.rem {
+  display: grid;
+  grid-template-columns: 1.1em 1fr auto;
+  gap: 0.5em;
+  align-items: baseline;
+  padding: 0.32em 0.4em;
+  border-radius: 0.4rem;
+  transition: background 0.12s ease;
+}
+.rem:hover {
+  background: color-mix(in oklch, var(--color-bg-hover) 60%, transparent);
+}
+.rem + .rem {
+  margin-top: 0.05em;
+}
+.rem__check {
+  color: var(--color-text-dim);
+  font-size: 1em;
+  line-height: 1;
+}
+.rem__title {
+  color: var(--color-text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rem__title--done {
+  text-decoration: line-through;
+  color: var(--color-text-muted);
+}
+.rem__due {
+  color: var(--color-text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Mail row ─────────────────────────────────────────────────── */
+
+.mail {
+  display: grid;
+  grid-template-columns: 3.4rem 1fr;
+  gap: 0.2em 0.65em;
+  padding: 0.42em 0.4em;
+  border-radius: 0.4rem;
+  transition: background 0.12s ease;
+}
+.mail:hover {
+  background: color-mix(in oklch, var(--color-bg-hover) 60%, transparent);
+}
+.mail + .mail {
+  margin-top: 0.05em;
+}
+.mail__id {
+  grid-row: span 3;
+  align-self: start;
+  color: var(--color-text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.78em;
+  font-variant-numeric: tabular-nums;
+}
+.mail__subject {
+  color: var(--color-text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mail__meta {
+  display: block;
+  color: var(--color-text-dim);
+  font-size: 0.82em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mail__snippet {
+  display: block;
+  color: var(--color-text-muted);
+  font-size: 0.9em;
+  overflow: hidden;
+}
+
+/* ── Filesystem row ───────────────────────────────────────────── */
+
+.file-row {
+  display: grid;
+  grid-template-columns: 1em 1fr auto;
+  gap: 0.5em;
+  align-items: baseline;
+  padding: 0.3em 0.4em;
+  border-radius: 0.4rem;
+  transition: background 0.12s ease;
+}
+.file-row:hover {
+  background: color-mix(in oklch, var(--color-bg-hover) 60%, transparent);
+}
+.file-row__glyph {
+  color: var(--color-text-dim);
+  font-family: var(--font-mono);
+}
+.file-row__name {
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-row__meta {
+  color: var(--color-text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.78em;
+  white-space: nowrap;
+}
+.file-snippet {
+  display: block;
+  margin-top: 0.45em;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  overflow: hidden;
+}
+
+/* ── Detail cards (create_event / create_reminder / delete_event) */
+
+.tcard--detail .tcard__detail-title {
+  display: block;
+  color: var(--color-text);
+  font-size: 1.05em;
+  font-weight: 600;
+  margin-bottom: 0.2em;
+}
+.tcard--detail .tcard__detail-title--strike {
+  text-decoration: line-through;
+  color: var(--color-text-muted);
+}
+.tcard__detail-when {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45em;
+  color: var(--color-text-muted);
+  font-size: 0.92em;
+}
+.tcard__time-strong {
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.tcard__bullet {
+  color: var(--color-text-subtle);
+}
+
+.tcard__pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35em;
+  margin-top: 0.45em;
+}
+.tcard__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0.15em 0.55em;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--color-bg-elev) 50%, var(--color-bg-hover-strong));
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.82em;
+  white-space: nowrap;
+}
+.tcard__pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--color-text-subtle);
+}
+
+.tcard__err {
+  display: block;
+  margin-top: 0.2em;
+  color: oklch(0.74 0.16 30);
+  font-size: 0.9em;
+}
+
+.tcard__denied-msg {
+  display: block;
+  margin-top: 0.35em;
+  color: var(--color-text-muted);
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+.tcard__denied-msg code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  padding: 0.05em 0.35em;
+  border-radius: 0.3rem;
+  background: var(--color-bg-elev);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+.tcard__denied-msg strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+/* Compact "running [tool]…" pill used during the gap between a tool
+   call and the model's follow-up turn. (Legacy class — phase-strip
+   below replaces this for the unified live status.) */
+.tool-running-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  margin-top: 0.25em;
+  padding: 0.25em 0.7em;
+  border-radius: 999px;
+  background: var(--color-bg-elev);
+  border: 1px solid var(--color-border);
+  font-size: 0.85em;
+  color: var(--color-text-muted);
+}
+.tool-running-pill .thinking-dots > span {
+  width: 4px;
+  height: 4px;
+  background: var(--color-accent);
+}
+
+/* Phase strip — single live status line per agent message.
+   Modes:
+     * thinking : pre-first-token wait or between-iter gap.
+     * writing  : tokens streaming. Shows char count.
+     * tool     : sidecar / tauri tool executing.
+   Each mode tints the pulse; the rest of the strip stays neutral so
+   the eye can read "label · detail · elapsed" without competing
+   color noise. */
+.phase-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  margin-top: 0.4em;
+  padding: 0.25em 0.7em;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--color-bg-elev) 92%, transparent);
+  border: 1px solid var(--color-border);
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.phase-strip__label {
+  font-weight: 500;
+  color: var(--color-text);
+  letter-spacing: -0.01em;
+}
+.phase-strip__sep {
+  color: var(--color-text-subtle);
+}
+.phase-strip__detail,
+.phase-strip__elapsed {
+  color: var(--color-text-muted);
+}
+.phase-strip__pulse {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.phase-strip__pulse > span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-text-subtle);
+  animation: phase-pulse 1s ease-in-out infinite both;
+}
+.phase-strip__pulse > span:nth-child(1) { animation-delay: -0.32s; }
+.phase-strip__pulse > span:nth-child(2) { animation-delay: -0.16s; }
+.phase-strip__pulse > span:nth-child(3) { animation-delay: 0s; }
+@keyframes phase-pulse {
+  0%, 80%, 100% { transform: scale(0.55); opacity: 0.45; }
+  40%           { transform: scale(1.0);  opacity: 1; }
+}
+/* Per-phase tint on the pulse — calm gray for thinking, accent
+   for writing, mail-blue for tool calls (matches the tcard family
+   so the eye can map the status to the work it triggers). */
+.phase-strip--thinking .phase-strip__pulse > span {
+  background: var(--color-text-subtle);
+}
+.phase-strip--writing .phase-strip__pulse > span {
+  background: var(--color-accent);
+}
+.phase-strip--tool .phase-strip__pulse > span {
+  background: oklch(0.72 0.12 230);
+}
+/* Subtle sweeping bg for the "tool" phase — communicates "work is
+   happening on the system, not just in the model". 4-second cycle
+   so it's a pulse, not a distraction. */
+.phase-strip--tool {
+  background: linear-gradient(
+    100deg,
+    color-mix(in oklch, oklch(0.72 0.12 230) 12%, var(--color-bg-elev)) 0%,
+    color-mix(in oklch, oklch(0.72 0.12 230) 22%, var(--color-bg-elev)) 50%,
+    color-mix(in oklch, oklch(0.72 0.12 230) 12%, var(--color-bg-elev)) 100%
+  );
+  background-size: 200% 100%;
+  animation: phase-strip-sweep 3.6s linear infinite;
+  border-color: color-mix(in oklch, oklch(0.72 0.12 230) 40%, var(--color-border));
+}
+@keyframes phase-strip-sweep {
+  0%   { background-position: 200% 0; }
+  100% { background-position: 0 0; }
+}
+
+/* ── Chat surface ─────────────────────────────────────────────── */
+
+.chat-scroll {
+  background: var(--color-bg);
+}
+
+.chat-column {
+  padding-top: 0.75rem;
+}
+
+.chat-message {
+  border: 1px solid transparent;
+}
+
+.chat-message--user {
+  border-color: var(--color-border);
+  background: var(--color-bg-elev);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 6px 14px color-mix(in oklch, var(--raised-drop) 72%, transparent);
+}
+
+.chat-message--agent {
+  background: transparent;
+}
+
+.composer-pill {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ── Workspace tabs / native terminal host ────────────────────── */
+
+.workspace-tabs {
+  display: flex;
+  min-height: 2.72rem;
+  align-items: center;
+  gap: 0.55rem;
+  background: color-mix(in oklch, var(--color-bg) 92%, var(--color-bg-panel));
+  box-shadow: inset 0 1px 0 color-mix(in oklch, var(--raised-highlight) 55%, transparent);
+  padding: 0.42rem 0.7rem 0.42rem 0.62rem;
+  user-select: none;
+}
+
+/* When the sidebar is collapsed, the topbar becomes the leftmost element
+   of the window. Reserve room for the macOS traffic-light cluster
+   (≈13px offset + ~52px wide + ~13px breathing room ≈ 78px) so the
+   "Show vault" button isn't hidden behind them. */
+.workspace-tabs--no-sidebar {
+  padding-left: 4.875rem;
+}
+
+.app-topbar {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.workspace-tabs__list {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 0.3rem;
+  overflow: hidden;
+}
+
+.topbar-tab-rail {
+  border: 1px solid color-mix(in oklch, var(--color-border) 76%, transparent);
+  border-radius: 0.85rem;
+  background: color-mix(in oklch, var(--color-bg-input) 64%, transparent);
+  padding: 0.18rem;
+  box-shadow: inset 0 1px 2px color-mix(in oklch, var(--raised-press-shade) 70%, transparent);
+}
+
+.topbar-empty-space {
+  flex: 1;
+  min-width: 0;
+  height: 2rem;
+}
+
+.topbar-room-button {
+  height: 2rem;
+  border-radius: 0.85rem;
+  border-color: color-mix(in oklch, var(--color-border) 76%, transparent);
+  background: color-mix(in oklch, var(--color-bg-input) 64%, transparent);
+  box-shadow: inset 0 1px 2px color-mix(in oklch, var(--raised-press-shade) 60%, transparent);
+}
+
+.topbar-room-button:hover {
+  background: var(--color-bg-elev);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 6px 14px color-mix(in oklch, var(--raised-drop) 68%, transparent);
+}
+
+.topbar-room-button:active {
+  box-shadow: inset 0 1px 2px var(--raised-press-shade);
+}
+
+.workspace-tabs__icon {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.55rem;
+  color: var(--color-text-dim);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.workspace-tabs__icon:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.workspace-tab {
+  display: inline-flex;
+  min-width: 4rem;
+  max-width: 12rem;
+  height: 1.9rem;
+  align-items: center;
+  overflow: hidden;
+  border-radius: 0.55rem;
+  color: var(--color-text-dim);
+  font-size: 0.75rem;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.workspace-tab:hover {
+  background: color-mix(in oklch, var(--color-bg-hover) 76%, transparent);
+  color: var(--color-text);
+}
+/* Active tab: faintly recessed — inset highlight + bottom shade reads as
+   "this surface owns the focus" without leaning on a heavy background. */
+.workspace-tab--active {
+  color: var(--color-text);
+  background: var(--color-bg-elev);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 6px 14px color-mix(in oklch, var(--raised-drop) 78%, transparent);
+}
+
+/* Reorder drop indicator. The target tab gets a vertical accent line
+   on its left edge while a drag is hovering over it. Subtle but
+   unmistakable. */
+.workspace-tab--dragover {
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+
+.workspace-tab__button {
+  display: inline-flex;
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.15rem 0 0.55rem;
+}
+
+.workspace-tab__title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-tab__close {
+  display: inline-flex;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-right: 0.25rem;
+  flex: 0 0 1.15rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.3rem;
+  color: var(--color-text-subtle);
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.workspace-tab:hover .workspace-tab__close,
+.workspace-tab--active .workspace-tab__close {
+  opacity: 1;
+}
+
+.workspace-tab__close:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.terminal-mux {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: black;
+}
+
+.terminal-split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: black;
+}
+
+.terminal-split--row {
+  flex-direction: row;
+}
+
+.terminal-split--column {
+  flex-direction: column;
+}
+
+.terminal-split__child {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Splitter handle. The element itself is the visible 1px line — no
+   flex padding around it, so adjacent panes touch. Hit area is an
+   overflowing pseudo-element (±3px) so the user doesn't need to pixel-
+   target the line. */
+.terminal-split__splitter {
+  position: relative;
+  flex: 0 0 1px;
+  background: color-mix(in oklch, var(--color-border) 72%, black);
+  user-select: none;
+  z-index: 5;
+  transition: background 0.12s ease;
+}
+.terminal-split--row > .terminal-split__splitter {
+  cursor: col-resize;
+}
+.terminal-split--column > .terminal-split__splitter {
+  cursor: row-resize;
+}
+.terminal-split__splitter::before {
+  content: "";
+  position: absolute;
+  /* transparent hit-area extension; doesn't affect layout */
+}
+.terminal-split--row > .terminal-split__splitter::before {
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
+.terminal-split--column > .terminal-split__splitter::before {
+  left: 0;
+  right: 0;
+  top: -3px;
+  bottom: -3px;
+}
+.terminal-split__splitter:hover,
+.terminal-split__splitter--dragging {
+  background: var(--color-accent);
+}
+
+.terminal-pane {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: black;
+}
+
+.terminal-pane__bar {
+  position: relative;
+  display: flex;
+  height: 1.7rem;
+  flex: 0 0 1.7rem;
+  align-items: center;
+  gap: 0.45rem;
+  border-bottom: 1px solid color-mix(in oklch, var(--color-border) 70%, transparent);
+  background: color-mix(in oklch, var(--color-bg) 92%, var(--color-bg-panel));
+  box-shadow: inset 0 1px 0 color-mix(in oklch, var(--raised-highlight) 55%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--color-text-dim);
+  padding: 0 0.3rem 0 0.55rem;
+  user-select: none;
+}
+
+/* Active pane indicator: top accent stripe on the bar. Replaces the
+   full-pane inset outline — Ghostty NSView (zPosition 1000) covers
+   the canvas area so an outline can only paint the bar edges, which
+   visibly clips the bar 2px narrower than the terminal below. */
+.terminal-pane--active > .terminal-pane__bar {
+  color: var(--color-text);
+  background: color-mix(in oklch, var(--color-bg-elev) 90%, var(--color-bg-panel));
+  box-shadow:
+    inset 0 2px 0 var(--color-accent),
+    inset 0 -1px 0 var(--raised-shade);
+}
+
+.terminal-pane__identity {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 0.45rem;
+  overflow: hidden;
+}
+
+.terminal-pane__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+}
+
+.terminal-pane__detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-subtle);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.4rem;
+  background: color-mix(in oklch, var(--color-bg-input) 60%, transparent);
+  box-shadow: inset 0 1px 1px color-mix(in oklch, var(--raised-press-shade) 55%, transparent);
+}
+
+.terminal-pane__running {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.2rem;
+  color: var(--color-accent);
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.terminal-pane__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.15rem;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.terminal-pane:hover > .terminal-pane__bar .terminal-pane__actions,
+.terminal-pane--active > .terminal-pane__bar .terminal-pane__actions {
+  opacity: 1;
+}
+
+.terminal-pane__actions button {
+  display: inline-flex;
+  width: 1.3rem;
+  height: 1.3rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.4rem;
+  color: var(--color-text-subtle);
+  transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.terminal-pane__actions button:hover {
+  background: var(--color-bg-elev);
+  color: var(--color-text);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade);
+}
+
+.terminal-pane__actions button:active {
+  box-shadow: inset 0 1px 2px var(--raised-press-shade);
+}
+
+.native-terminal-host {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: black;
+}
+
+.native-terminal-host__fallback {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  opacity: 1;
+  transition: opacity 0.08s ease;
+}
+
+.native-terminal-host[data-ready="true"] .native-terminal-host__fallback {
+  opacity: 0;
+}
+
+/* Note editor (CodeMirror 6) — blend with inspector chrome */
+.note-editor {
+  min-height: 12rem;
+}
+.note-editor .cm-editor {
+  min-height: 12rem;
+  background: transparent;
+}
+.note-editor .cm-content {
+  min-height: 12rem;
+}
+.note-editor .cm-line {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* [[wikilink]] decoration — same accent treatment as the rendered chip */
+.note-editor .cm-wikilink {
+  color: var(--color-accent);
+  background: color-mix(in oklch, var(--color-accent) 14%, transparent);
+  border-radius: 0.3rem;
+  padding: 0 0.2em;
+}
+
+/* Fenced code block — line-level shading inside source mode */
+.note-editor .cm-codeblock-line {
+  background-color: color-mix(in oklch, var(--color-text) 4%, transparent);
+}
+.note-editor .cm-codeblock-line.cm-codeblock-fence {
+  background-color: color-mix(in oklch, var(--color-text) 7%, transparent);
+}
+
+/* LaTeX math — both inline ($x$, \(x\)) and display ($$…$$, \[…\]) */
+.note-editor .cm-math {
+  color: oklch(0.82 0.14 290);
+  background: color-mix(in oklch, oklch(0.82 0.14 290) 12%, transparent);
+  border-radius: 0.25rem;
+  padding: 0 0.15em;
+}
+.note-editor .cm-math.cm-math-display {
+  background: color-mix(in oklch, oklch(0.82 0.14 290) 18%, transparent);
+}
+
+/* KaTeX scale tweak — defaults run a bit large */
+.md-content .katex { font-size: 1.05em; }
+.md-content .katex-display {
+  margin: 0.85em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* Block math wrapper from our custom math_block rule */
+.md-content .math-block {
+  margin: 0.85em 0;
+  text-align: center;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.md-content .math-block .katex { font-size: 1.1em; }
+
+.katex-error {
+  color: oklch(0.7 0.18 30);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: color-mix(in oklch, var(--color-bg-elev) 70%, oklch(0.4 0.1 30) 30%);
+  padding: 0.1em 0.4em;
+  border-radius: 0.25rem;
+}
+
+/* ── Soft-raised button system ─────────────────────────────────────
+   Canonical pill button. Variants:
+     .btn-soft           — neutral pill (default)
+     .btn-soft--sm       — compact size for modal footers
+     .btn-soft--icon     — square icon button (primary chrome)
+     .btn-soft--icon-sm  — square icon button (compact)
+     .btn-soft--primary  — filled, high-contrast affirmative action
+     .btn-soft--danger   — soft red destructive action
+     .btn-soft--ghost    — transparent until hover, keeps press state */
+
+.btn-soft {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  background: var(--color-bg-elev);
+  color: var(--color-text);
+  padding: 0.42rem 0.95rem;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  line-height: 1.2;
+  letter-spacing: 0;
+  white-space: nowrap;
+  user-select: none;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 8px 18px var(--raised-drop);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease,
+    background 0.12s ease;
+}
+.btn-soft:hover:not(:disabled) {
+  border-color: color-mix(in oklch, var(--color-border-strong) 72%, var(--color-text-subtle));
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 10px 22px var(--raised-drop-strong);
+}
+.btn-soft:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 1px 2px var(--raised-press-shade),
+    inset 0 -1px 0 var(--raised-press-highlight),
+    0 4px 10px var(--raised-drop);
+}
+.btn-soft:disabled {
+  cursor: default;
+  color: var(--color-text-subtle);
+  opacity: 0.55;
+  transform: none;
+}
+.btn-soft--sm {
+  padding: 0.32rem 0.78rem;
+  font-size: 11.5px;
+}
+.btn-soft--icon {
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+}
+.btn-soft--icon-sm {
+  width: 1.85rem;
+  height: 1.85rem;
+  padding: 0;
+}
+
+.btn-soft--primary {
+  color: var(--color-bg);
+  background: var(--color-text);
+  border-color: color-mix(in oklch, var(--color-text) 72%, var(--color-bg) 28%);
+}
+.btn-soft--primary:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--color-text) 94%, var(--color-bg) 6%);
+  border-color: color-mix(in oklch, var(--color-text) 82%, var(--color-bg) 18%);
+}
+.btn-soft--primary:disabled {
+  color: color-mix(in oklch, var(--color-bg) 70%, var(--color-text) 30%);
+}
+
+.btn-soft--danger {
+  color: oklch(0.98 0.01 25);
+  background: var(--color-danger);
+  border-color: color-mix(in oklch, var(--color-danger) 60%, black 40%);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.20),
+    inset 0 -1px 0 oklch(0 0 0 / 0.30),
+    0 8px 18px color-mix(in oklch, var(--color-danger) 30%, transparent);
+}
+.btn-soft--danger:hover:not(:disabled) {
+  border-color: color-mix(in oklch, var(--color-danger) 70%, black 30%);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.22),
+    inset 0 -1px 0 oklch(0 0 0 / 0.32),
+    0 10px 22px color-mix(in oklch, var(--color-danger) 38%, transparent);
+}
+.btn-soft--danger:active:not(:disabled) {
+  box-shadow:
+    inset 0 1px 2px oklch(0 0 0 / 0.32),
+    inset 0 -1px 0 oklch(1 0 0 / 0.10),
+    0 4px 10px color-mix(in oklch, var(--color-danger) 28%, transparent);
+}
+
+.btn-soft--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-text-dim);
+  box-shadow: none;
+}
+.btn-soft--ghost:hover:not(:disabled) {
+  background: var(--color-bg-elev);
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 8px 18px var(--raised-drop);
+}
+
+/* ── Composer (chat input) ────────────────────────────────────────
+   Multi-line textarea wrapped in a soft-raised pill. Subtle resting
+   lift; on focus the lift deepens and the border-strong activates. */
+.composer-pill {
+  display: flex;
+  align-items: flex-end;
+  border: 1px solid var(--color-border);
+  border-radius: 18px;
+  background: var(--color-bg-elev);
+  padding: 0.78rem 1rem;
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 6px 16px var(--raised-drop);
+  transition:
+    border-color 0.14s ease,
+    box-shadow 0.14s ease,
+    transform 0.14s ease;
+}
+.composer-pill:focus-within {
+  border-color: var(--color-border-strong);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 10px 26px var(--raised-drop-strong);
+}
+
+/* ── Floating action chip (e.g. scroll-to-bottom) ─────────────── */
+.fab-soft {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--color-bg-elev) 92%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--color-text-dim);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 10px 24px var(--raised-drop-strong);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.fab-soft:hover {
+  color: var(--color-text);
+  border-color: color-mix(in oklch, var(--color-border-strong) 72%, var(--color-text-subtle));
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 12px 28px var(--raised-drop-strong);
+}
+.fab-soft:active {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 1px 2px var(--raised-press-shade),
+    inset 0 -1px 0 var(--raised-press-highlight),
+    0 6px 14px var(--raised-drop);
+}
+
+/* ── Inset input pill ─────────────────────────────────────────────
+   Visual inverse of .btn-soft: data sits in this surface instead of
+   on top of it. Subtle inset shadow, no outer drop. */
+.input-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.6rem;
+  background: var(--color-bg-input);
+  color: var(--color-text);
+  padding: 0.42rem 0.65rem;
+  box-shadow: inset 0 1px 2px var(--raised-press-shade);
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+.input-pill:is(input, textarea, select) {
+  display: block;
+  width: 100%;
+}
+.input-pill:focus-within {
+  border-color: var(--color-border-strong);
+  box-shadow:
+    inset 0 1px 3px var(--raised-press-shade),
+    0 0 0 3px color-mix(in oklch, var(--color-accent) 14%, transparent);
+}
+.input-pill > input,
+.input-pill > textarea {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: inherit;
+  font: inherit;
+}
+.input-pill > input::placeholder,
+.input-pill > textarea::placeholder {
+  color: var(--color-text-subtle);
+}
+
+/* ── Modal shell ──────────────────────────────────────────────────
+   Two-piece: scrim (fixed full-bleed dim) + card (raised surface).
+   Card uses a heavier soft-3D recipe than buttons — modal is rare,
+   should feel decisively elevated. */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  background: color-mix(in oklch, var(--color-bg) 70%, transparent);
+  backdrop-filter: blur(6px) saturate(1.05);
+  -webkit-backdrop-filter: blur(6px) saturate(1.05);
+  animation: modal-scrim-in 0.14s ease-out both;
+}
+@keyframes modal-scrim-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.modal-card {
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-2xl);
+  background: var(--color-bg-elev);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 28px 64px oklch(0 0 0 / 0.45),
+    0 4px 12px oklch(0 0 0 / 0.20);
+  animation: modal-card-in 0.18s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.modal-card > header,
+.modal-card > footer {
+  background: color-mix(in oklch, var(--color-bg-elev) 88%, var(--color-bg-panel));
+}
+:root[data-theme="light"] .modal-card {
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 22px 48px oklch(0 0 0 / 0.18),
+    0 4px 12px oklch(0 0 0 / 0.08);
+}
+
+.inspector-pane {
+  background: color-mix(in oklch, var(--color-bg) 94%, var(--color-bg-panel));
+}
+
+/* ── Mail view (three-pane) ──────────────────────────────────────── */
+
+.mail-view {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--color-bg-panel) 24%, transparent),
+      transparent 7rem
+    ),
+    var(--color-bg);
+  color: var(--color-text);
+  user-select: text;
+}
+
+.mail-mailboxes {
+  display: flex;
+  flex: 0 0 var(--mail-sidebar-width, 14rem);
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.5rem 0.45rem 0.6rem;
+  background: color-mix(in oklch, var(--color-bg-panel) 62%, var(--color-bg));
+  box-shadow:
+    inset -1px 0 0 color-mix(in oklch, var(--surface-hairline) 76%, transparent),
+    inset 1px 0 0 color-mix(in oklch, var(--raised-highlight) 32%, transparent);
+  position: relative;
+  scrollbar-gutter: stable;
+}
+.mail-shell--no-sidebar .mail-mailboxes {
+  display: none;
+}
+
+.mail-mailboxes__header {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.15rem 0.45rem 0.45rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-dim);
+}
+
+.mail-mailboxes__section {
+  padding: 0.72rem 0.55rem 0.26rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-subtle);
+}
+
+.mail-mailbox-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2rem;
+  padding: 0.34rem 0.55rem;
+  border-radius: 0.58rem;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  transition:
+    background 0.12s ease,
+    box-shadow 0.12s ease,
+    color 0.12s ease,
+    transform 0.12s ease;
+}
+
+.mail-mailbox-row:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.mail-mailbox-row--active {
+  background: var(--surface-selected);
+  color: var(--color-text);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, var(--raised-highlight) 70%, transparent),
+    inset 0 -1px 0 var(--raised-shade);
+}
+
+.mail-mailbox-row__dot {
+  display: inline-block;
+  width: 0.32rem;
+  height: 0.32rem;
+  border-radius: 999px;
+  background: var(--color-text-subtle);
+  flex-shrink: 0;
+  margin-left: 0.2rem;
+}
+
+.mail-mailbox-row__badge {
+  flex-shrink: 0;
+  min-width: 1.25rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-align: center;
+  background: var(--color-accent);
+  color: oklch(1 0 0);
+}
+
+.mail-mailbox-row__count {
+  flex-shrink: 0;
+  font-size: 0.66rem;
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.mail-messages {
+  display: flex;
+  flex: 0 0 var(--mail-messages-width, 22rem);
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  background: color-mix(in oklch, var(--color-bg) 94%, var(--color-bg-panel));
+  box-shadow:
+    inset -1px 0 0 color-mix(in oklch, var(--surface-hairline) 72%, transparent),
+    inset 1px 0 0 color-mix(in oklch, var(--raised-highlight) 28%, transparent);
+  position: relative;
+}
+
+.mail-messages > .flex-1 {
+  padding: 0.35rem 0.45rem 0.5rem;
+  scrollbar-gutter: stable;
+}
+
+/* Drag handles for pane resizing. 6px hit area, 1px visible line on
+   hover/active. Mirrors the inspector-pane resize behavior in
+   App.tsx. */
+.mail-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  z-index: 5;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+.mail-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 100%;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+.mail-resize-handle:hover::after,
+.mail-resize-handle--active::after {
+  background: var(--color-accent);
+}
+.mail-resize-handle--active {
+  background: color-mix(in oklch, var(--color-accent) 12%, transparent);
+}
+
+.mail-msg-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.46rem;
+  min-height: 4.35rem;
+  margin-bottom: 0.12rem;
+  padding: 0.58rem 0.62rem 0.58rem 0.5rem;
+  border-radius: 0.68rem;
+  text-align: left;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  transition:
+    background 0.12s ease,
+    box-shadow 0.12s ease,
+    color 0.12s ease,
+    transform 0.12s ease;
+}
+
+.mail-msg-row:hover {
+  background: color-mix(in oklch, var(--color-bg-hover) 82%, transparent);
+  color: var(--color-text);
+}
+
+.mail-msg-row--active {
+  background: var(--surface-selected);
+  color: var(--color-text);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, var(--raised-highlight) 68%, transparent),
+    inset 0 -1px 0 color-mix(in oklch, var(--raised-shade) 80%, transparent),
+    0 7px 16px color-mix(in oklch, var(--raised-drop) 46%, transparent);
+}
+
+.mail-msg-row__left {
+  display: flex;
+  width: 0.62rem;
+  padding-top: 0.38rem;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.mail-msg-row__unread-dot {
+  display: block;
+  width: 0.44rem;
+  height: 0.44rem;
+  border-radius: 999px;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-accent) 13%, transparent);
+}
+
+.mail-msg-row__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.16rem;
+}
+
+.mail-msg-row__top {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.mail-msg-row__sender {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: currentColor;
+}
+
+.mail-msg-row--unread .mail-msg-row__sender {
+  font-weight: 700;
+}
+
+.mail-msg-row__date {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.mail-msg-row__subject {
+  font-size: 0.79rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  line-height: 1.25;
+}
+
+.mail-msg-row--unread .mail-msg-row__subject {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.mail-msg-row__snippet {
+  font-size: 0.72rem;
+  color: var(--color-text-subtle);
+  line-height: 1.32;
+}
+
+.mail-preview {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: color-mix(in oklch, var(--color-bg) 96%, var(--color-bg-panel));
+}
+
+.mail-preview__inner {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  /* Outer scrollable surface. The iframe sits inside at its natural
+     content height (no internal scroll), so the user scrolls one
+     container — not two nested ones with fighting wheel events.
+     Mimics Apple Mail / Mimestream / Gmail-web behavior. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mail-preview__header {
+  flex-shrink: 0;
+  padding: 1rem 1.35rem 0.95rem;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--color-bg-panel) 40%, transparent),
+      transparent
+    );
+}
+
+.mail-preview__subject {
+  margin: 0 0 0.7rem;
+  max-width: 58rem;
+  font-size: 1.12rem;
+  font-weight: 650;
+  line-height: 1.3;
+  color: var(--color-text);
+}
+
+.mail-preview__meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  max-width: 58rem;
+  column-gap: 0.72rem;
+  row-gap: 0.24rem;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  color: var(--color-text-muted);
+}
+
+.mail-preview__meta > div {
+  display: contents;
+}
+
+.mail-preview__label {
+  color: var(--color-text-subtle);
+  font-weight: 500;
+  text-transform: lowercase;
+  padding-right: 0.2rem;
+}
+
+.mail-preview__body {
+  flex: 0 0 auto;
+  display: block;
+  width: calc(100% - 2.7rem);
+  min-height: 5rem;
+  max-width: 58rem;
+  margin: 0.1rem auto 1rem;
+  border: none;
+  border-radius: 0.72rem;
+  background: oklch(1 0 0);
+  color-scheme: light;
+  box-shadow:
+    0 0 0 1px color-mix(in oklch, var(--surface-hairline) 72%, transparent),
+    0 12px 28px color-mix(in oklch, var(--raised-drop) 48%, transparent);
+  /* Height is set imperatively from the contentDocument's scrollHeight
+     so the iframe never scrolls internally — only the parent
+     .mail-preview__inner does. ResizeObserver keeps it in sync as
+     images load, fonts swap, etc. */
+}
+
+:root[data-theme="dark"] .mail-preview__body {
+  /* Most HTML emails assume light background. Keep iframe light even
+     in dark mode so emails are readable; the surrounding chrome adapts. */
+  background: oklch(0.99 0 0);
+}
+
+.mail-empty {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  color: var(--color-text-subtle);
+  font-size: 12.5px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+/* Bad email-ref banner — surfaces when a clickable [[email:...]] in
+   agent chat points at a thread_id we can't find in mail.db. Pinned
+   to the top of the mail tab; auto-dismisses after 6s. */
+.mail-bad-ref-banner {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  max-width: min(560px, 92vw);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 12px;
+  border: 1px solid color-mix(in oklch, var(--color-warn) 55%, transparent);
+  background: color-mix(in oklch, var(--color-warn) 14%, var(--color-bg-panel));
+  color: var(--color-text);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px -8px rgb(0 0 0 / 0.35);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.mail-bad-ref-banner__title {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.mail-bad-ref-banner__detail {
+  flex: 1;
+  min-width: 0;
+  color: var(--color-text-muted);
+}
+.mail-bad-ref-banner__detail code {
+  background: color-mix(in oklch, var(--color-bg-elev) 90%, transparent);
+  padding: 0 4px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+}
+.mail-bad-ref-banner__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.mail-bad-ref-banner__close:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+/* ── Mail surface — Phase R1 additions ──────────────────────────── */
+
+/* Top-level shell: full row, edges fed by the panel chrome. */
+.mail-shell {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--color-bg-panel) 22%, transparent),
+      transparent 9rem
+    ),
+    var(--color-bg);
+  color: var(--color-text);
+  user-select: text;
+  position: relative;
+}
+
+/* Sidebar header: "MAIL" label + add-account button */
+.mail-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.18rem 0.35rem 0.42rem 0.45rem;
+  flex-shrink: 0;
+}
+
+/* Account group: parent of folder rows. Hover surfaces the action
+   buttons (sync ↻, remove ✕) — same pattern as .note-row. */
+.mail-account-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.6rem;
+  padding: 0.43rem 0.48rem 0.43rem 0.55rem;
+  border-radius: 0.66rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    box-shadow 0.12s ease,
+    color 0.12s ease;
+  position: relative;
+}
+.mail-account-row:hover {
+  background: color-mix(in oklch, var(--color-bg-hover) 82%, transparent);
+  color: var(--color-text);
+}
+.mail-account-row--active {
+  color: var(--color-text);
+  font-weight: 550;
+  background: color-mix(in oklch, var(--surface-selected) 62%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in oklch, var(--raised-highlight) 58%, transparent);
+}
+.mail-provider-mark {
+  display: inline-flex;
+  width: 1.32rem;
+  height: 1.32rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: 0.46rem;
+  background: var(--color-bg-input);
+  color: var(--color-text-dim);
+  font-size: 0.58rem;
+  font-weight: 780;
+  line-height: 1;
+  box-shadow: inset 0 1px 0 color-mix(in oklch, var(--raised-highlight) 62%, transparent);
+}
+.mail-provider-mark img {
+  display: block;
+  width: 0.95rem;
+  height: 0.95rem;
+  object-fit: contain;
+}
+.mail-provider-mark--gmail {
+  background: color-mix(in oklch, white 96%, var(--color-bg-input));
+  border-color: color-mix(in oklch, oklch(0.70 0.02 250) 42%, var(--color-border));
+}
+.mail-provider-mark--outlook {
+  border-color: color-mix(in oklch, #0078d4 50%, var(--color-border));
+  background: color-mix(in oklch, #0078d4 14%, var(--color-bg-input));
+}
+.mail-provider-mark--icloud {
+  border-color: color-mix(in oklch, #7fb5ff 50%, var(--color-border));
+  background: color-mix(in oklch, #7fb5ff 16%, var(--color-bg-input));
+}
+.mail-provider-mark--fastmail {
+  border-color: color-mix(in oklch, #2f73ff 48%, var(--color-border));
+  background: color-mix(in oklch, #2f73ff 14%, var(--color-bg-input));
+}
+.mail-provider-mark--yahoo {
+  border-color: color-mix(in oklch, #720e9e 52%, var(--color-border));
+  background: color-mix(in oklch, #720e9e 14%, var(--color-bg-input));
+}
+.mail-provider-mark--imap {
+  border-color: var(--surface-hairline);
+}
+.mail-provider-mark--yahoo img {
+  width: 1rem;
+}
+.mail-account-row__email {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mail-account-row__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18rem;
+  flex-shrink: 0;
+  opacity: 0;
+  transform: translateX(2px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.mail-account-row:hover .mail-account-row__actions,
+.mail-account-row:focus-within .mail-account-row__actions {
+  opacity: 1;
+  transform: translateX(0);
+}
+.mail-account-row__sync-spin {
+  flex-shrink: 0;
+  color: var(--color-text-subtle);
+}
+
+/* Folder row inside an expanded account. Indented; gentle vertical
+   rhythm matching .note-row's compact form. */
+.mail-folder-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 1.9rem;
+  margin-top: 0.05rem;
+  padding: 0.31rem 0.52rem 0.31rem 1.48rem;
+  border-radius: 0.58rem;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    box-shadow 0.12s ease,
+    color 0.12s ease;
+}
+.mail-folder-row:hover {
+  background: color-mix(in oklch, var(--color-bg-hover) 82%, transparent);
+  color: var(--color-text);
+}
+.mail-folder-row--active {
+  background: var(--surface-selected);
+  color: var(--color-text);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, var(--raised-highlight) 62%, transparent),
+    inset 0 -1px 0 color-mix(in oklch, var(--raised-shade) 70%, transparent);
+}
+.mail-folder-row__icon {
+  flex-shrink: 0;
+  color: var(--color-text-subtle);
+}
+.mail-folder-row--active .mail-folder-row__icon {
+  color: var(--color-text-muted);
+}
+.mail-folder-row__name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mail-folder-row__count {
+  flex-shrink: 0;
+  font-size: 0.66rem;
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Unified Inbox special row — mirrors the active workspace-tab accent. */
+.mail-unified-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.25rem;
+  padding: 0.43rem 0.55rem;
+  margin: 0.24rem 0 0.45rem;
+  border-radius: 0.66rem;
+  font-size: 0.82rem;
+  font-weight: 540;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    box-shadow 0.12s ease,
+    color 0.12s ease;
+}
+.mail-unified-row:hover {
+  background: color-mix(in oklch, var(--color-bg-hover) 82%, transparent);
+  color: var(--color-text);
+}
+.mail-unified-row--active {
+  background: var(--surface-selected);
+  color: var(--color-text);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, var(--raised-highlight) 62%, transparent),
+    inset 0 -1px 0 color-mix(in oklch, var(--raised-shade) 70%, transparent);
+}
+
+/* Header of the message list pane: title + count + search toggle */
+.mail-messages-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.48rem 0.58rem 0.42rem 0.78rem;
+  background: color-mix(in oklch, var(--color-bg) 90%, var(--color-bg-panel));
+  min-height: 2.5rem;
+}
+.mail-messages-header__title {
+  flex: 1;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mail-messages-header__search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 0.65rem;
+  background: var(--surface-sunken);
+  padding: 0.32rem 0.45rem;
+  box-shadow: inset 0 1px 2px var(--raised-press-shade);
+}
+.mail-messages-header__search input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 13px;
+  color: var(--color-text);
+}
+.mail-messages-header__search input::placeholder {
+  color: var(--color-text-subtle);
+}
+
+/* "Load 100 older" pagination button at the foot of the message list. */
+.mail-load-older {
+  display: flex;
+  width: calc(100% - 0.3rem);
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  margin: 0.35rem 0.15rem 0.2rem;
+  padding: 0.62rem 0.75rem;
+  border: none;
+  border-radius: 0.62rem;
+  background: color-mix(in oklch, var(--color-bg-input) 50%, transparent);
+  color: var(--color-text-subtle);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.mail-load-older:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+.mail-load-older:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Reading-pane sticky toolbar: Reply / Forward / flag / move actions */
+.mail-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.12rem;
+  padding: 0.48rem 0.9rem 0.4rem;
+  background: color-mix(in oklch, var(--color-bg) 78%, transparent);
+  backdrop-filter: blur(14px) saturate(1.04);
+  -webkit-backdrop-filter: blur(14px) saturate(1.04);
+  box-shadow: inset 0 -1px 0 color-mix(in oklch, var(--surface-hairline) 70%, transparent);
+}
+.mail-toolbar__divider {
+  width: 1px;
+  height: 1.1rem;
+  background: color-mix(in oklch, var(--color-border) 70%, transparent);
+  margin: 0 0.35rem;
+  flex-shrink: 0;
+}
+
+/* Reading-pane meta details (cc/bcc disclosure, recipient pills). */
+.mail-meta-detail {
+  margin-top: 0.42rem;
+  font-size: 0.74rem;
+  color: var(--color-text-subtle);
+}
+.mail-meta-detail summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--color-text-dim);
+  user-select: none;
+}
+.mail-meta-detail summary::-webkit-details-marker {
+  display: none;
+}
+.mail-meta-detail[open] summary {
+  margin-bottom: 0.25rem;
+}
+
+/* Remote-image banner above the iframe body. */
+.mail-banner-images {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.62rem;
+  box-sizing: border-box;
+  margin: 0.1rem 1.35rem 0.75rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid color-mix(in oklch, var(--color-warn) 26%, var(--color-border));
+  border-radius: 0.72rem;
+  background: color-mix(in oklch, var(--color-warn) 11%, var(--color-bg-input));
+  font-size: 0.74rem;
+  color: var(--color-text);
+  box-shadow: inset 0 1px 0 color-mix(in oklch, var(--raised-highlight) 55%, transparent);
+}
+.mail-banner-images__icon {
+  color: var(--color-warn);
+  flex-shrink: 0;
+}
+.mail-banner-images__text {
+  flex: 1 1 16rem;
+  min-width: 12rem;
+  line-height: 1.4;
+}
+
+/* Attachments footer. Each attachment is a chip. */
+.mail-attachments {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  box-sizing: border-box;
+  margin: 0.4rem 1.35rem 1rem;
+  padding: 0.72rem;
+  border: 1px solid var(--surface-hairline);
+  border-radius: 0.78rem;
+  background: color-mix(in oklch, var(--color-bg-input) 44%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in oklch, var(--raised-highlight) 52%, transparent);
+}
+.mail-attachments__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.mail-attachments__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 100%;
+  padding: 0.32rem 0.56rem;
+  border-radius: 0.55rem;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-input);
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  cursor: default;
+}
+.mail-attachments__chip:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+
+/* Compose modal — field rows. Section-label-style left columns, value
+   on the right, hairline between. */
+.mail-compose {
+  display: flex;
+  flex-direction: column;
+  width: 44rem;
+  max-width: 92vw;
+  height: 40rem;
+  max-height: 88vh;
+}
+.mail-compose__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.62rem 0.85rem;
+  border-bottom: 1px solid color-mix(in oklch, var(--surface-hairline) 76%, transparent);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.mail-compose__field {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.58rem 0.85rem;
+  border-bottom: 1px solid color-mix(in oklch, var(--surface-hairline) 72%, transparent);
+}
+.mail-compose__label {
+  flex-shrink: 0;
+  width: 4.2rem;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+}
+.mail-compose__field input,
+.mail-compose__field select {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 13px;
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}
+.mail-compose__field input::placeholder {
+  color: var(--color-text-subtle);
+}
+.mail-compose__add-cc {
+  border: none;
+  background: transparent;
+  padding: 0.5rem 0.85rem;
+  text-align: left;
+  font-size: 11.5px;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+  border-bottom: 1px solid color-mix(in oklch, var(--surface-hairline) 72%, transparent);
+}
+.mail-compose__add-cc:hover {
+  background: color-mix(in oklch, var(--color-bg-hover) 70%, transparent);
+  color: var(--color-text);
+}
+.mail-compose__body {
+  flex: 1;
+  resize: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 0.85rem 0.95rem;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--color-text);
+}
+.mail-compose__body::placeholder {
+  color: var(--color-text-subtle);
+}
+.mail-compose__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.85rem;
+  border-top: 1px solid color-mix(in oklch, var(--surface-hairline) 76%, transparent);
+}
+.mail-compose__hint {
+  font-size: 10.5px;
+  color: var(--color-text-subtle);
+  letter-spacing: 0.04em;
+}
+.mail-compose__error {
+  border-top: 1px solid color-mix(in oklch, var(--color-danger) 30%, var(--color-border));
+  background: color-mix(in oklch, var(--color-danger) 14%, var(--color-bg-elev));
+  padding: 0.55rem 0.85rem;
+  font-size: 0.74rem;
+  color: var(--color-text);
+}
+
+/* Add-account modal — narrow, single-pane card. */
+.mail-account-modal {
+  width: 28rem;
+  max-width: 92vw;
+  padding: 1.1rem 1.2rem 1.05rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+.mail-account-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.mail-account-modal__title {
+  font-size: 1rem;
+  font-weight: 650;
+  color: var(--color-text);
+}
+.mail-account-modal__hint {
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--color-text-subtle);
+}
+.mail-account-modal__error {
+  font-size: 0.78rem;
+  color: var(--color-danger);
+  line-height: 1.45;
+}
+.mail-account-modal__row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+/* Empty state with illustration above the message. */
+.mail-empty-with-icon {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  padding: 1.5rem;
+  color: var(--color-text-subtle);
+  font-size: 12.5px;
+  line-height: 1.55;
+  text-align: center;
+}
+.mail-empty-with-icon__icon {
+  color: var(--color-text-subtle);
+  opacity: 0.65;
+}
+
+/* Thread-context strip below the open message. Lists other messages
+   in the same thread (older + newer) so the user can navigate the
+   conversation without going back to the message list. */
+.mail-thread-context {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  margin: 0.35rem 1.35rem 1.2rem;
+  border: 1px solid var(--surface-hairline);
+  border-radius: 0.78rem;
+  background: color-mix(in oklch, var(--color-bg-input) 38%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in oklch, var(--raised-highlight) 50%, transparent);
+  overflow: hidden;
+}
+.mail-thread-context__header {
+  padding: 0.58rem 0.72rem 0.34rem;
+}
+.mail-thread-context__items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+  padding: 0 0.35rem 0.42rem;
+}
+.mail-thread-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.42rem 0.42rem;
+  border-radius: 0.55rem;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.mail-thread-row:hover {
+  background: color-mix(in oklch, var(--color-bg-hover) 82%, transparent);
+  color: var(--color-text);
+}
+.mail-thread-row__sender {
+  flex-shrink: 0;
+  width: 9rem;
+  font-size: 0.78rem;
+  font-weight: 540;
+  color: currentColor;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mail-thread-row__snippet {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.74rem;
+  color: var(--color-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mail-thread-row__date {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Outbox / send-undo toast — bottom-right floating card. Multiple
+   toasts stack vertically. */
+.mail-toasts {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 60;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+.mail-toast {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  min-width: 22rem;
+  max-width: 28rem;
+  padding: 0.7rem 0.95rem;
+  border-radius: 0.7rem;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-elev);
+  box-shadow:
+    inset 0 1px 0 var(--raised-highlight),
+    inset 0 -1px 0 var(--raised-shade),
+    0 18px 38px oklch(0 0 0 / 0.32),
+    0 4px 10px oklch(0 0 0 / 0.18);
+  pointer-events: auto;
+  position: relative;
+  overflow: hidden;
+  animation: mail-toast-in 0.18s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@keyframes mail-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.mail-toast--leaving {
+  animation: mail-toast-out 0.14s ease-out both;
+}
+@keyframes mail-toast-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(6px); }
+}
+.mail-toast__icon {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+.mail-toast--success .mail-toast__icon {
+  color: var(--color-good);
+}
+.mail-toast--error .mail-toast__icon {
+  color: var(--color-danger);
+}
+.mail-toast__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.mail-toast__title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.mail-toast__detail {
+  font-size: 0.7rem;
+  color: var(--color-text-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mail-toast__progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--color-accent);
+  transition: width 0.95s linear;
+}
+
+@keyframes modal-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .modal-scrim,
+  .modal-card {
+    animation: none;
+  }
+}
+
+/* ── Narrow window behavior ─────────────────────────────────────
+   Desktop app windows get squeezed often; the chrome should compress
+   before it starts visually fighting itself. */
+
+@media (max-width: 980px) {
+  .app-sidebar {
+    max-width: min(272px, 42vw);
+    min-width: 208px;
+  }
+
+  .mail-mailboxes {
+    flex-basis: min(var(--mail-sidebar-width, 14rem), 24vw);
+    min-width: 11rem;
+  }
+
+  .mail-messages {
+    flex-basis: min(var(--mail-messages-width, 22rem), 38vw);
+    min-width: 18rem;
+  }
+
+  .mail-preview__header {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .mail-preview__body,
+  .mail-banner-images,
+  .mail-attachments,
+  .mail-thread-context {
+    width: calc(100% - 2rem);
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .inspector-pane:not(.min-w-0) {
+    max-width: 42vw;
+  }
+
+  .chat-scroll,
+  .chat-footer {
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+  }
+
+  .room-menu,
+  .mention-menu {
+    width: min(22rem, calc(100vw - 2rem));
+  }
+}
+
+@media (max-width: 760px) {
+  .workspace-tabs {
+    min-height: 2.5rem;
+    gap: 0.38rem;
+    padding: 0.32rem 0.45rem;
+  }
+
+  .workspace-tabs--no-sidebar {
+    padding-left: 4.875rem;
+  }
+
+  .topbar-tab-rail {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .workspace-tab {
+    min-width: 2.35rem;
+    max-width: 8rem;
+  }
+
+  .workspace-tab:not(.workspace-tab--active) .workspace-tab__title {
+    display: none;
+  }
+
+  .workspace-tab:not(.workspace-tab--active) {
+    max-width: 2.35rem;
+  }
+
+  .workspace-tab__button {
+    justify-content: center;
+    padding: 0 0.45rem;
+  }
+
+  .workspace-tab--active .workspace-tab__button {
+    justify-content: flex-start;
+    padding-left: 0.55rem;
+  }
+
+  .topbar-room-button {
+    width: 2.35rem;
+    padding-left: 0;
+    padding-right: 0;
+    justify-content: center;
+  }
+
+  .topbar-room-button span,
+  .topbar-room-button .opacity-60 {
+    display: none;
+  }
+
+  .chat-scroll,
+  .chat-footer {
+    padding-left: 0.9rem;
+    padding-right: 0.9rem;
+  }
+
+  .chat-column,
+  .chat-composer-form {
+    max-width: none;
+  }
+
+  .composer-pill {
+    padding: 0.62rem 0.78rem;
+    border-radius: 16px;
+  }
+
+  .soft-send-button {
+    width: 2.45rem;
+    height: 2.45rem;
+  }
+
+  .modal-card {
+    max-width: calc(100vw - 1rem);
+  }
+
+  .mail-mailboxes {
+    display: none;
+  }
+
+  .mail-messages {
+    flex-basis: min(19rem, 44vw);
+    min-width: 15.5rem;
+  }
+
+  .mail-toolbar {
+    padding-left: 0.55rem;
+    padding-right: 0.55rem;
+    overflow-x: auto;
+  }
+
+  .mail-preview__meta {
+    grid-template-columns: 1fr;
+    row-gap: 0.3rem;
+  }
+
+  .mail-preview__label {
+    display: block;
+    margin-bottom: 0.08rem;
+  }
+
+  .mail-preview__body,
+  .mail-banner-images,
+  .mail-attachments,
+  .mail-thread-context {
+    width: calc(100% - 1rem);
+  }
+}
+
+@media (max-width: 620px) {
+  .app-sidebar {
+    max-width: 40vw;
+    min-width: 178px;
+  }
+
+  .workspace-switcher {
+    gap: 0.45rem;
+    padding-left: 0.45rem;
+    padding-right: 0.45rem;
+  }
+
+  .workspace-switcher__mark,
+  .note-row__meta,
+  .room-menu__subtitle,
+  .room-compute__fallback {
+    display: none;
+  }
+
+  .sidebar-status-card {
+    padding: 0.38rem;
+  }
+
+  .sidebar-status-card > .min-w-0 {
+    display: none;
+  }
+
+  .note-row {
+    min-height: 2.1rem;
+  }
+
+  .note-row__button {
+    padding-top: 0.34rem;
+    padding-bottom: 0.34rem;
+  }
+
+  .chat-message {
+    font-size: 14px;
+  }
+
+  .chat-footer {
+    padding-bottom: 0.9rem;
+  }
+}

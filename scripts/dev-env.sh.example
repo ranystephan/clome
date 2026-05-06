@@ -1,0 +1,28 @@
+# Sourceable dev environment for the Clome Tauri app.
+#
+# Usage:
+#   cp clome/scripts/dev-env.sh.example clome/scripts/dev-env.sh
+#   # …edit clome/scripts/dev-env.sh, paste your OAuth client IDs…
+#   source clome/scripts/dev-env.sh
+#   bun run tauri dev
+#
+# `dev-env.sh` (without .example) is gitignored so your real client
+# IDs never get committed. Each developer keeps their own copy.
+
+# OAuth client IDs — see clome/scripts/oauth-setup.md for registration.
+# Google's Desktop-app flow demands the client_secret in the token
+# exchange even with PKCE (their docs acknowledge it isn't actually
+# secret for installed apps). Microsoft public clients honour RFC 8252
+# and don't need a secret.
+export CLOME_GOOGLE_OAUTH_CLIENT_ID="REPLACE_GOOGLE_CLIENT_ID.apps.googleusercontent.com"
+export CLOME_GOOGLE_OAUTH_CLIENT_SECRET="REPLACE_GOOGLE_CLIENT_SECRET"
+export CLOME_MS_OAUTH_CLIENT_ID="REPLACE_MS_CLIENT_ID"
+
+# Required PATH for Bun + Cargo per CLAUDE.md.
+export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$PATH"
+
+echo "✓ Clome dev env loaded"
+[[ "$CLOME_GOOGLE_OAUTH_CLIENT_ID" == REPLACE_* ]] && \
+    echo "  ! CLOME_GOOGLE_OAUTH_CLIENT_ID still placeholder — Gmail won't work"
+[[ "$CLOME_MS_OAUTH_CLIENT_ID" == REPLACE_* ]] && \
+    echo "  ! CLOME_MS_OAUTH_CLIENT_ID still placeholder — Outlook won't work"
