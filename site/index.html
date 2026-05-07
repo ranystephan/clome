@@ -418,11 +418,27 @@
 
       /* ========== plates (real screenshots) ========== */
       .plate {
+        position: relative;
         padding: clamp(72px, 12vh, 140px) 0;
         border-bottom: 1px solid var(--line);
       }
 
-      .plate .row {
+      .plate-shader {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+      }
+
+      .plate-shader canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      .plate > .row {
+        position: relative;
+        z-index: 1;
         display: grid;
         grid-template-columns: minmax(0, 18ch) 1fr;
         gap: clamp(28px, 6vw, 96px);
@@ -483,7 +499,24 @@
         overflow: hidden;
       }
 
-      .sigil .row {
+      .cloud-shader {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        opacity: 0.42;
+        mix-blend-mode: screen;
+      }
+
+      .cloud-shader canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      .sigil > .row {
+        position: relative;
+        z-index: 1;
         display: grid;
         place-items: center;
         gap: 24px;
@@ -742,6 +775,7 @@
 
       <!-- PLATES (real screenshots) -->
       <section class="plate" aria-labelledby="p1">
+        <div class="plate-shader" data-shader="plate" aria-hidden="true"></div>
         <div class="row">
           <header class="meta">
             <div class="index">01 // agents</div>
@@ -759,6 +793,7 @@
       </section>
 
       <section class="plate" aria-labelledby="p2">
+        <div class="plate-shader" data-shader="plate" aria-hidden="true"></div>
         <div class="row">
           <header class="meta">
             <div class="index">02 // capabilities</div>
@@ -776,6 +811,7 @@
       </section>
 
       <section class="plate" aria-labelledby="p3">
+        <div class="plate-shader" data-shader="plate" aria-hidden="true"></div>
         <div class="row">
           <header class="meta">
             <div class="index">03 // vault</div>
@@ -793,6 +829,7 @@
       </section>
 
       <section class="plate" aria-labelledby="p4">
+        <div class="plate-shader" data-shader="plate" aria-hidden="true"></div>
         <div class="row">
           <header class="meta">
             <div class="index">04 // open</div>
@@ -811,6 +848,7 @@
 
       <!-- SIGIL: liquid metal logo -->
       <section class="sigil" aria-hidden="true">
+        <div class="cloud-shader" data-shader="cloud" aria-hidden="true"></div>
         <div class="row">
           <div class="sigil-stage">
             <div class="sigil-shader" data-shader="sigil"></div>

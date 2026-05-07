@@ -72,7 +72,9 @@ if (sigilEl) {
         sigilEl,
         liquidMetalFragmentShader,
         {
-          u_colorBack: getShaderColorFromString("#0a0a0a"),
+          // transparent so the cloud shader behind shows through everywhere
+          // except the logo glyph itself
+          u_colorBack: getShaderColorFromString("rgba(0,0,0,0)"),
           u_colorTint: getShaderColorFromString("#dfeaf2"),
           u_softness: 0.85,
           u_repetition: 3.5,
@@ -116,6 +118,314 @@ function loadImage(url) {
     img.onerror = (e) => reject(new Error("image load failed: " + url));
     img.src = url;
   });
+}
+
+// ---------- SIGIL CLOUD BG (ported from Framer Cloud — WebGL FBM) ----------
+// source: https://framer.com/m/Cloud-2n2V.js
+// sits behind the liquid-metal sigil. Screen-blended at low opacity so the
+// dark page tone stays intact and only highlights bleed through.
+const cloudEl = document.querySelector('[data-shader="cloud"]');
+if (cloudEl) initCloudShader(cloudEl, reduceMotion ? 0 : 1);
+
+function initCloudShader(container, speed) {
+  // GLSL ported verbatim from the Framer module. Uniform names preserved.
+  const fragmentShader = `
+    precision mediump float;
+    uniform float u_time;
+    uniform vec2 u_resolution;
+    uniform float u_density;
+    uniform float u_speed;
+    uniform float u_rotation;
+    uniform int u_layers;
+
+    float hash(vec2 p) {
+      p = fract(p * vec2(123.34, 456.21));
+      p += dot(p, p + 78.233);
+      return fract(p.x * p.y);
+    }
+    float noise(vec2 p) {
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
+                 mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+    }
+    float fbm(vec2 p, float density) {
+      float v = 0.0;
+      float a = 0.5;
+      vec2 shift = vec2(100);
+      for (int i = 0; i < 5; i++) {
+        if (float(i) >= density) break;
+        v += a * noise(p);
+        p = p * 2.0 + shift;
+        a *= 0.5;
+      }
+      return v;
+    }
+
+    void main() {
+      vec2 uv = gl_FragCoord.xy / u_resolution.xy;
+      uv -= 0.5;
+      uv = mat2(cos(u_rotation), -sin(u_rotation), sin(u_rotation), cos(u_rotation)) * uv;
+      uv += 0.5;
+
+      vec3 color = vec3(0.6, 0.8, 1.0);
+      float cloud = 0.0;
+      if (u_layers >= 1) {
+        float n1 = fbm(uv * 3.0 + u_time * u_speed * 0.05, u_density);
+        cloud += smoothstep(0.4, 0.6, n1);
+      }
+      if (u_layers >= 2) {
+        float n2 = fbm(uv * 3.0 + u_time * (u_speed * 0.1) * 0.07, u_density);
+        cloud += smoothstep(0.4, 0.6, n2);
+      }
+      if (u_layers == 3) {
+        float n3 = fbm(uv * 3.0 + u_time * (u_speed * 0.2) * 0.09, u_density);
+        cloud += smoothstep(0.4, 0.6, n3);
+      }
+      cloud /= float(u_layers);
+      color = mix(color, vec3(1.0), cloud);
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `;
+  const vertexShader = `
+    void main() {
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `;
+
+  const w = container.clientWidth || 800;
+  const h = container.clientHeight || 600;
+  const scene = new THREE.Scene();
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+  camera.position.z = 1;
+  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false });
+  renderer.setSize(w, h);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  container.appendChild(renderer.domElement);
+
+  const uniforms = {
+    u_time: { value: 0 },
+    u_resolution: { value: new THREE.Vector2(w, h) },
+    u_density: { value: 5.0 },
+    u_speed: { value: 1.0 },
+    u_rotation: { value: 0.0 },
+    u_layers: { value: 3 },
+  };
+  const material = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader,
+    fragmentShader,
+  });
+  scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material));
+
+  // initial paint (also the only frame if reduceMotion)
+  renderer.render(scene, camera);
+
+  const clock = new THREE.Clock();
+  let raf = 0;
+  let visible = false;
+  const tick = () => {
+    if (!visible || speed === 0) {
+      raf = 0;
+      return;
+    }
+    raf = requestAnimationFrame(tick);
+    uniforms.u_time.value += clock.getDelta() * speed;
+    renderer.render(scene, camera);
+  };
+
+  new IntersectionObserver(
+    (entries) => {
+      visible = entries[0].isIntersecting;
+      if (visible && speed > 0 && !raf) {
+        clock.getDelta(); // discard accumulated dt while off-screen
+        tick();
+      }
+    },
+    { rootMargin: "200px 0px" }
+  ).observe(container);
+
+  new ResizeObserver(() => {
+    const nw = container.clientWidth;
+    const nh = container.clientHeight;
+    renderer.setSize(nw, nh);
+    uniforms.u_resolution.value.set(nw, nh);
+  }).observe(container);
+}
+
+// ---------- PLATES (ASCII FlowTrail — ported from Framer Ascii_FlowTrail) ----------
+// source: https://framer.com/m/Ascii-FlowTrail-1wMf.js
+// 2D canvas, no WebGL — cursor leaves an ASCII trail across each plate.
+const plateEls = document.querySelectorAll('[data-shader="plate"]');
+plateEls.forEach((el) => initFlowTrail(el));
+
+function initFlowTrail(container) {
+  const canvas = document.createElement("canvas");
+  container.appendChild(canvas);
+  const ctx = canvas.getContext("2d");
+
+  // tuned for screenshot-section bg — sky tint, low overall opacity, soft trail
+  const opts = {
+    glyphSet: 3,            // 0 dots, 1 squares, 2 blocks, 3 patterned, 4 diamonds
+    scale: 50,              // % — character size
+    gamma: 0,
+    mix: 32,                // % — overall opacity
+    invertOrder: true,
+    radius: 28,             // % — trail influence radius
+    strength: 65,           // % — trail intensity
+    turbulence: 70,         // %
+    tint: "#77a7c5",        // sky accent
+    tail: 100,              // % — trail length
+    drawBlendMode: "Screen",
+    momentum: 60,           // % — smoothing
+  };
+
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let cw = 0, ch = 0;
+
+  const resize = () => {
+    const rect = container.getBoundingClientRect();
+    cw = rect.width;
+    ch = rect.height;
+    canvas.width = Math.max(1, Math.floor(cw * dpr));
+    canvas.height = Math.max(1, Math.floor(ch * dpr));
+    canvas.style.width = cw + "px";
+    canvas.style.height = ch + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+  resize();
+  new ResizeObserver(resize).observe(container);
+
+  const baseSets = [
+    "●•·. ",                  // dots
+    "■□▪▫ ",             // squares
+    "█▓▒░ ",             // blocks
+    "▣▤▥▦▧▨▩ ", // patterned
+    "◆◇◈○◉◊◌ ", // diamonds
+  ];
+  const baseChars = baseSets[opts.glyphSet] || "@%#*+=-:. ";
+  const chars = opts.invertOrder
+    ? [...baseChars].reverse().join("")
+    : baseChars;
+
+  const tintR = parseInt(opts.tint.slice(1, 3), 16);
+  const tintG = parseInt(opts.tint.slice(3, 5), 16);
+  const tintB = parseInt(opts.tint.slice(5, 7), 16);
+  const bayer = [[0,8,2,10],[12,4,14,6],[3,11,1,9],[15,7,13,5]];
+
+  let mouseX = -9999, mouseY = -9999;
+  let smoothX = -9999, smoothY = -9999;
+  let trail = [];
+  let time = 0;
+  let visible = false;
+  let raf = 0;
+
+  const onMove = (e) => {
+    const rect = container.getBoundingClientRect();
+    mouseX = e.clientX - rect.left;
+    mouseY = e.clientY - rect.top;
+    if (smoothX < -9000) {
+      smoothX = mouseX;
+      smoothY = mouseY;
+    }
+  };
+  window.addEventListener("pointermove", onMove, { passive: true });
+
+  const animate = () => {
+    if (!visible || reduceMotion) {
+      raf = 0;
+      return;
+    }
+    raf = requestAnimationFrame(animate);
+    time += 0.016;
+
+    ctx.clearRect(0, 0, cw, ch);
+
+    // momentum easing — original formula
+    if (smoothX > -9000) {
+      const k = 1 - (opts.momentum / 100) * 0.95;
+      smoothX += (mouseX - smoothX) * k;
+      smoothY += (mouseY - smoothY) * k;
+
+      // only push when smoothed cursor actually moved — avoids permanent
+      // glow when pointer rests on one plate while user reads another
+      const last = trail[trail.length - 1];
+      if (!last || Math.hypot(last.x - smoothX, last.y - smoothY) > 0.5) {
+        trail.push({ x: smoothX, y: smoothY, life: 1 });
+      }
+    }
+
+    const maxLength = Math.floor(opts.tail / 100 * 50) + 5;
+    while (trail.length > maxLength) trail.shift();
+    const decay = 0.02 * (1 - opts.tail / 100) + 0.01;
+    for (const p of trail) p.life -= decay;
+    trail = trail.filter((p) => p.life > 0);
+
+    if (trail.length === 0) return;
+
+    const charSize = Math.max(6, Math.floor(16 * opts.scale / 100));
+    ctx.font = `${charSize}px ui-monospace, "SF Mono", Menlo, monospace`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    const blend = opts.drawBlendMode;
+    const cols = Math.ceil(cw / charSize);
+    const rows = Math.ceil(ch / charSize);
+    const maxDist = (opts.radius / 100) * 150;
+
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const x = col * charSize + charSize / 2;
+        const y = row * charSize + charSize / 2;
+
+        let intensity = 0;
+        for (let i = 0; i < trail.length; i++) {
+          const p = trail[i];
+          const dx = x - p.x, dy = y - p.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist >= maxDist) continue;
+          const v = (1 - dist / maxDist) * p.life * (opts.strength / 100);
+          if (blend === "Add") intensity += v;
+          else if (blend === "Multiply") intensity *= v;
+          else if (blend === "Difference") intensity = Math.abs(intensity - v);
+          else if (blend === "Screen") intensity = 1 - (1 - intensity) * (1 - v);
+          else intensity = Math.max(intensity, v);
+        }
+        if (intensity <= 0) continue;
+
+        if (opts.turbulence > 0) {
+          intensity +=
+            Math.sin(x * 0.01 + time) *
+            Math.cos(y * 0.01 + time * 0.7) *
+            (opts.turbulence / 1000);
+        }
+        if (opts.gamma !== 0) {
+          intensity = Math.pow(Math.max(intensity, 0), 1 - opts.gamma);
+        }
+        if (opts.glyphSet === 3) {
+          const t = bayer[row & 3][col & 3] / 16;
+          intensity = intensity > t ? 1 : intensity * 0.5;
+        }
+
+        intensity = Math.max(0, Math.min(1, intensity));
+        if (intensity <= 0.01) continue;
+
+        const ci = Math.min(chars.length - 1, Math.floor(intensity * chars.length));
+        const alpha = intensity * (opts.mix / 100);
+        ctx.fillStyle = `rgba(${tintR}, ${tintG}, ${tintB}, ${alpha})`;
+        ctx.fillText(chars[ci], x, y);
+      }
+    }
+  };
+
+  new IntersectionObserver(
+    (entries) => {
+      visible = entries[0].isIntersecting;
+      if (visible && !reduceMotion && !raf) raf = requestAnimationFrame(animate);
+    },
+    { rootMargin: "120px 0px" }
+  ).observe(container);
 }
 
 // ---------- FOOTER (ASCII shader, ported from Framer/Framerusercontent) ----------
