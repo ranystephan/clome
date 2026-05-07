@@ -664,6 +664,7 @@
       @media (max-width: 760px) {
         .manifesto .row,
         .plate .row,
+        .plate > .row,
         .stack .row {
           grid-template-columns: 1fr;
         }
@@ -680,9 +681,62 @@
           font-size: clamp(4rem, 26vw, 8rem);
         }
 
-        .hero-meta .row {
+        /* hero stamp: 4-col grid → wrapping inline list */
+        .hero-stamp {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px 12px;
+          font-size: 0.7rem;
+        }
+        .hero-stamp .sep {
+          display: none;
+        }
+
+        /* hero-bottom actions: stack on narrow */
+        .hero-bottom .row {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+
+        /* footer: stack lhs/rhs vertically; let the clone box scroll */
+        footer.site .row {
           grid-template-columns: 1fr;
-          gap: 14px;
+          padding: 18px 16px;
+        }
+        footer.site .lhs {
+          min-width: 0;
+        }
+        footer.site .clone {
+          max-width: none;
+          font-size: 0.72rem;
+          padding: 10px 12px;
+        }
+        footer.site .rhs {
+          text-align: left;
+        }
+
+        /* nav: tighten the row gap a hair so version stamp doesn't wrap */
+        nav.top .row {
+          padding-left: 16px;
+          padding-right: 16px;
+        }
+
+        /* sigil: shrink the stage on small screens */
+        .sigil-stage {
+          width: clamp(220px, 70vw, 360px);
+        }
+      }
+
+      @media (max-width: 480px) {
+        h1.wordmark {
+          font-size: clamp(3.2rem, 22vw, 6rem);
+          letter-spacing: -0.045em;
+        }
+        .hero-lede {
+          font-size: 1rem;
+        }
+        nav.top .ver {
+          display: none;
         }
       }
 
